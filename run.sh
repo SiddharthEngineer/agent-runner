@@ -126,9 +126,20 @@ $problems"
 }
 cfg() { "${CFG[@]}" get "$toml" "$1" 2>/dev/null; }
 
-merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method
-    timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast >/dev/null 2>&1 \
-        && gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null
+merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed
+    local checks
+    if ! checks=$(timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast 2>&1); then
+        [[ $checks == *"no checks reported"* ]] && return 2
+        return 1
+    fi
+    gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null 2>&1 || return 3
+}
+merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, for a notice
+    case $1 in
+        2) echo "no CI checks on this repo, so it isn't merged without them" ;;
+        3) echo "CI is green but gh pr merge failed" ;;
+        *) echo "CI is red or timed out" ;;
+    esac
 }
 
 # 3a. Preprod stage (design D3): an approved `review` PR now on preprod gets its Human test steps run by the validator.
@@ -425,18 +436,24 @@ $verdict
         # Only if this PR itself held preprod: put preprod back on the base.
         [ "$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)" = "$repo"$'\t'"$pr" ] && "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
     else
-        final=review
-        gh pr edit "$pr" --repo "$GH_REPO" --add-label awaiting-preprod >/dev/null 2>&1 \
-            || { gh label create awaiting-preprod --repo "$GH_REPO" --force >/dev/null; gh pr edit "$pr" --repo "$GH_REPO" --add-label awaiting-preprod >/dev/null; }
-        gh pr comment "$pr" --repo "$GH_REPO" --body "Risk gate: \`$tier\`
+        # Not merged (gate tier low): the PR stays open, labelled ci-failed, and the item is blocked. Preprod is only
+        # for `review` PRs the validator approved, so a repo without [preprod] can't get stuck waiting for it.
+        merge_rc=$?
+        not_merged=$(merge_failure "$merge_rc")
+        final=blocked
+        gh pr edit "$pr" --repo "$GH_REPO" --add-label ci-failed >/dev/null 2>&1 \
+            || { gh label create ci-failed --repo "$GH_REPO" --force >/dev/null; gh pr edit "$pr" --repo "$GH_REPO" --add-label ci-failed >/dev/null; }
+        gh pr comment "$pr" --repo "$GH_REPO" --body "Not merged: $not_merged. Risk gate: \`$tier\`
 \`\`\`json
 $verdict
 \`\`\`" >/dev/null
     fi
-    python3 - "$result" "$final" <<'EOF'
+    python3 - "$result" "$final" "${not_merged:-}" <<'EOF'
 import json, sys
-path, final = sys.argv[1], sys.argv[2]
+path, final, not_merged = sys.argv[1], sys.argv[2], sys.argv[3]
 data = json.load(open(path)); data["status"] = final
+if not_merged:
+    data["summary"] = f"PR #{data['pr']} not merged: {not_merged}"
 json.dump(data, open(path, "w"))
 EOF
 fi
@@ -447,7 +464,11 @@ case "$new" in
     done|awaiting-preprod|awaiting-review)
         git -C "$AGENT_REPO" worktree remove --force "$wt" ;;
     blocked)
-        notify "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" ;;
+        if [ -n "${not_merged:-}" ]; then
+            notify "PR #$pr not merged: $not_merged" "https://github.com/$GH_REPO/pull/$pr stays open, labelled ci-failed. Fix it and merge by hand, or re-queue $key. Log: $log (on the VPS)."
+        else
+            notify "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)"
+        fi ;;
 esac
 
 # Cap the Docker build cache: a full validation can rebuild an image, and a busted dependency layer adds ~750 MB, so a
