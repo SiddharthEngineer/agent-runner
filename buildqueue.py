@@ -22,6 +22,7 @@ Usage:
   buildqueue.py answer <slug> TEXT   attach the user's answer and re-queue with fresh attempts, resuming the session
   buildqueue.py requeue <slug> --note TEXT   re-queue with a note, resuming the session, keeping the attempts used
                                      (the validator's `changes`); out of attempts → blocked
+                                     --fresh-attempts: attempts back to 0, a fresh session (triage's re-queue)
   buildqueue.py oldest <status> [--without KEY]   print the key of the least recently updated item with that status
                                      (and no KEY field), or exit 1
   buildqueue.py pause <hours>        stop starting runs (e.g. after a usage-limit exit)
@@ -285,6 +286,14 @@ def cmd_answer(args: argparse.Namespace) -> int:
 def cmd_requeue(args: argparse.Namespace) -> int:
     data = load()
     it = item(data, args.slug)
+    if args.fresh_attempts:
+        # Triage found a transient cause: one fresh set of attempts, and a fresh session (the old one is what went wrong).
+        it["notes"].append(f"Triage ({iso(now())}): {args.note}")
+        it.update(status="queued", attempts=0, not_before=iso(now()), updated=iso(now()))
+        it.pop("resume", None)
+        save(data)
+        print("queued")
+        return 0
     it["notes"].append(f"Validator ({iso(now())}): {args.note}")
     # Like `answer`, but the attempts already used still count: a third failed try ends in `blocked`.
     status = "queued" if it["attempts"] < MAX_ATTEMPTS else "blocked"
@@ -360,6 +369,7 @@ def main() -> int:
     p = sub.add_parser("requeue")
     p.add_argument("slug")
     p.add_argument("--note", required=True)
+    p.add_argument("--fresh-attempts", action="store_true")
     p.set_defaults(fn=cmd_requeue)
     p = sub.add_parser("oldest")
     p.add_argument("status")

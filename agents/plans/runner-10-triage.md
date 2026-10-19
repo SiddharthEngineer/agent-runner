@@ -25,7 +25,7 @@ the PR checks and comments; classify the cause as `transient` | `fixed-elsewhere
 write `{"action": "requeue"|"notify", "class": "...", "note": "...", "diagnosis": "..."}`. Requeue only `transient` or
 `fixed-elsewhere`. Settings: read-only (`Read`, `tail`, `grep`, `ls`, `gh pr view|checks|diff`, `gh run view --log-failed`), deny all writes.
 **Validate:** `pytest -q tests/test_review.py` → the template fills; the settings deny `Edit`, `Write` and `Bash(git push:*)`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 9dcabe5 (the settings deny all writes, so the agent replies with the JSON and run.sh saves it to the result file)
 
 ### Task 2: wire triage into `run.sh`
 **Runs:** unattended

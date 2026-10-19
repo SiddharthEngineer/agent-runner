@@ -127,6 +127,69 @@ $problems"
 }
 cfg() { "${CFG[@]}" get "$toml" "$1" 2>/dev/null; }
 
+# notify_blocked <title> <body> [<result file>]: the item is blocked. Once per item (no `triaged` flag yet, AGENT_TRIAGE
+# not 0, usage below the gate), a read-only Sonnet run triages it first: a transient or fixed-elsewhere cause re-queues it
+# with fresh attempts and a short notice; otherwise the notice carries the diagnosis. If triage can't run, the plain notice.
+notify_blocked() {
+    local title=$1 body=$2 last=${3:-} pr tresult tlog prompt action class note diagnosis
+    if [ -n "$DRY" ] || [ "${AGENT_TRIAGE:-1}" = 0 ] || [ -n "$("${Q[@]}" get "$key" triaged 2>/dev/null)" ] \
+        || ! python3 "$HERE/usage.py" check >/dev/null 2>&1; then
+        notify "$title" "$body"
+        return 0
+    fi
+    "${Q[@]}" set "$key" triaged=1
+    pr=$("${Q[@]}" get "$key" pr 2>/dev/null)
+    [ -z "$pr" ] && [ -f "$last" ] && pr=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pr") or "")' "$last" 2>/dev/null)
+    tresult=$STATE/results/$repo/$slug.triage.json
+    tlog=$STATE/logs/$(date -u +%Y%m%dT%H%MZ)-$repo-$slug.triage.log
+    mkdir -p "$(dirname "$tresult")"
+    rm -f "$tresult"
+    prompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(key=sys.argv[2], log_paths=sys.argv[3],
+result_json=sys.argv[4], pr_url=sys.argv[5], result_file=sys.argv[6]))' "$HERE/prompts/triage.md" "$key" \
+        "$(ls -t "$STATE/logs/"*"-$repo-$slug.log" "$STATE/logs/"*"-$repo-$slug.review.log" 2>/dev/null | head -n 2)" \
+        "$(cat "$last" 2>/dev/null || echo none)" "${pr:+https://github.com/$GH_REPO/pull/$pr}" "$tresult")
+    say "$key: triage start (log $tlog)"
+    (
+        cd "$STATE" || exit 1
+        AGENT_SLUG=$key timeout --kill-after=1m 15m claude -p "$prompt" --model claude-sonnet-5-5 --max-turns 30 \
+            --settings "$HERE/settings/triage.json" --permission-mode dontAsk --output-format json
+    ) > "$tlog" 2>&1
+    say "$key: triage exit $?"
+    # The reply is the JSON object (the settings deny writes, so run.sh saves it). The last JSON line with one wins.
+    python3 -c '
+import json, sys
+for line in reversed(open(sys.argv[1], errors="replace").read().splitlines()):
+    try:
+        text = json.loads(line).get("result", "")
+        data = json.loads(text[text.index("{"):text.rindex("}") + 1])
+    except (ValueError, AttributeError, TypeError):
+        continue
+    if isinstance(data, dict):
+        json.dump(data, open(sys.argv[2], "w"))
+        break
+' "$tlog" "$tresult"
+    tfield() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$tresult" "$1" 2>/dev/null; }
+    action=$(tfield action)
+    class=$(tfield class)
+    note=$(tfield note)
+    diagnosis=$(tfield diagnosis)
+    if [ "$action" = requeue ] && { [ "$class" = transient ] || [ "$class" = fixed-elsewhere ]; }; then
+        "${Q[@]}" requeue "$key" --note "${note:-re-queued by triage ($class)}" --fresh-attempts >/dev/null
+        say "$key: triage ($class), re-queued"
+        notify "re-queued after triage: $class" "${note:-no note}
+Was: $title. Triage log: $tlog (on the VPS)."
+    elif [ -n "$diagnosis" ]; then
+        say "$key: triage (${class:-no class}), notice with diagnosis"
+        notify "$title" "$body
+
+Triage (read-only Sonnet run, class \`${class:-unknown}\`):
+$diagnosis"
+    else
+        say "$key: triage wrote no verdict"
+        notify "$title" "$body"
+    fi
+}
+
 merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed
     local checks
     if ! checks=$(timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast 2>&1); then
@@ -350,7 +413,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
             fi ;;
         blocked)
             "${Q[@]}" set "$key" status=blocked
-            notify "validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" ;;
+            notify_blocked "validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" "$rresult" ;;
         *)  # no result: a failed validator attempt
             tries=$(( $("${Q[@]}" get "$key" review_attempts 2>/dev/null || echo 0) + 1 ))
             "${Q[@]}" set "$key" "review_attempts=$tries"
@@ -532,7 +595,7 @@ case "$new" in
         if [ -n "${not_merged:-}" ]; then
             notify "PR #$pr not merged: $not_merged" "https://github.com/$GH_REPO/pull/$pr stays open, labelled ci-failed. Fix it and merge by hand, or re-queue $key. Log: $log (on the VPS)."
         else
-            notify "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)"
+            notify_blocked "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" "$result"
         fi ;;
 esac
 
