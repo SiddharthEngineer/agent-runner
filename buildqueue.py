@@ -1,16 +1,20 @@
 #!/usr/bin/env python3
 """Build queue for unattended agent runs (machine-local, never committed).
 
-State lives in $STRELITZIA_AGENT_STATE (default ~/.local/state/strelitzia-agent):
-  queue.json   items keyed by plan slug
+State lives in $AGENT_RUNNER_STATE (default ~/.local/state/agent-runner; $STRELITZIA_AGENT_STATE is an alias
+until the cutover):
+  queue.json   items keyed `<repo>/<slug>` (a bare `<slug>` key from the old runner migrates to `$AGENT_DEFAULT_REPO/<slug>`)
   runs.jsonl   one line per started run (drives the optional daily cap)
 
+Every <slug> below may be a full `<repo>/<slug>` key, or a bare slug when exactly one repo has an item with it.
+
 Usage:
-  buildqueue.py add <slug> [--at 2026-10-12T02:00 | --in 3h] [--after <slug>] [--note TEXT]
-                                     --after: not runnable until that item is `done` (merged)
+  buildqueue.py add <slug> [--repo NAME] [--at 2026-10-12T02:00 | --in 3h] [--after <repo/slug>] [--note TEXT]
+                                     --repo: default $AGENT_DEFAULT_REPO (strelitzia)
+                                     --after: not runnable until that item is `done` (merged); any repo
   buildqueue.py list
   buildqueue.py cancel <slug>
-  buildqueue.py next                 print the next runnable slug, or exit 1 (cron pre-check; no Claude cost)
+  buildqueue.py next                 print the next runnable key, or exit 1 (cron pre-check; no Claude cost)
   buildqueue.py start <slug>         mark running, count an attempt, log the run
   buildqueue.py finish <slug> <result.json>   apply the agent's result (missing file = failed attempt)
   buildqueue.py set <slug> key=value [...]    used by inbox.py / preprod.sh / run.sh
@@ -35,10 +39,12 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import config  # noqa: E402
 
-
-CONFIG_DIR = Path.home() / ".config/strelitzia-agent"
-STATE = Path(os.environ.get("STRELITZIA_AGENT_STATE") or Path.home() / ".local/state/strelitzia-agent")
+STATE = Path(os.environ.get("AGENT_RUNNER_STATE") or os.environ.get("STRELITZIA_AGENT_STATE") or config.state_dir())
+DEFAULT_REPO = os.environ.get("AGENT_DEFAULT_REPO", "strelitzia")
+CONFIG_DIR = Path.home() / ".config/strelitzia-agent"  # inbox.load_env reads it; goes in Task 2
 QUEUE = STATE / "queue.json"
 RUNS = STATE / "runs.jsonl"
 MAX_ATTEMPTS = int(os.environ.get("AGENT_MAX_ATTEMPTS", "2"))
@@ -65,7 +71,44 @@ def iso(dt: datetime) -> str:
 def load() -> dict:
     if not QUEUE.exists():
         return {"paused_until": None, "items": {}}
-    return json.loads(QUEUE.read_text())
+    data = json.loads(QUEUE.read_text())
+    if migrate(data):
+        save(data)
+    return data
+
+
+def migrate(data: dict) -> bool:
+    """Bare `<slug>` keys and `after` values (old runner) become `<DEFAULT_REPO>/<slug>`. True if anything changed."""
+    changed = False
+    items = {}
+    for key, it in data["items"].items():
+        if "/" not in key:
+            key = f"{it.get('repo') or DEFAULT_REPO}/{key}"
+            changed = True
+        repo, _, slug = key.partition("/")
+        if it.get("repo") != repo or it.get("slug") != slug:
+            it.update(repo=repo, slug=slug)
+            changed = True
+        if it.get("after") and "/" not in it["after"]:
+            it["after"] = f"{repo}/{it['after']}"
+            changed = True
+        items[key] = it
+    data["items"] = items
+    return changed
+
+
+def resolve(data: dict, ref: str) -> str:
+    """The item key for `ref`: an exact key, or a bare slug that exactly one repo has."""
+    if ref in data["items"]:
+        return ref
+    if "/" in ref:
+        sys.exit(f"not queued: {ref}")
+    matches = sorted(k for k in data["items"] if k.partition("/")[2] == ref)
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        sys.exit(f"not queued: {ref}")
+    sys.exit(f"{ref} is ambiguous: {', '.join(matches)} (use the full key)")
 
 
 def save(data: dict) -> None:
@@ -75,11 +118,8 @@ def save(data: dict) -> None:
     tmp.replace(QUEUE)
 
 
-def item(data: dict, slug: str) -> dict:
-    try:
-        return data["items"][slug]
-    except KeyError:
-        sys.exit(f"not queued: {slug}")
+def item(data: dict, ref: str) -> dict:
+    return data["items"][resolve(data, ref)]
 
 
 def parse_when(at: str | None, delay: str | None) -> str:
@@ -104,23 +144,30 @@ def runs_last_day() -> int:
 
 def cmd_add(args: argparse.Namespace) -> int:
     data = load()
-    plan = Path("agents/plans") / f"{args.slug}.md"
-    existing = data["items"].get(args.slug)
+    repo, slug = args.slug.split("/", 1) if "/" in args.slug else (args.repo, args.slug)
+    key = f"{repo}/{slug}"
+    after = None
+    if args.after:
+        after = args.after if "/" in args.after else f"{repo}/{args.after}"
+    plan = Path("agents/plans") / f"{slug}.md"
+    existing = data["items"].get(key)
     if existing and existing["status"] in {"queued", "running"}:
-        sys.exit(f"{args.slug} is already {existing['status']}")
-    data["items"][args.slug] = {
+        sys.exit(f"{key} is already {existing['status']}")
+    data["items"][key] = {
+        "repo": repo,
+        "slug": slug,
         "plan": str(plan),
         "status": "queued",
         "not_before": parse_when(args.at, args.delay),
         "attempts": 0,
         "notes": [args.note] if args.note else [],
-        **({"after": args.after} if args.after else {}),
+        **({"after": after} if after else {}),
         "added": iso(now()),
         "updated": iso(now()),
     }
     save(data)
-    after = f", after {args.after}" if args.after else ""
-    print(f"queued {args.slug} (not before {data['items'][args.slug]['not_before']}{after})")
+    after_text = f", after {after}" if after else ""
+    print(f"queued {key} (not before {data['items'][key]['not_before']}{after_text})")
     return 0
 
 
@@ -131,7 +178,7 @@ def cmd_list(_: argparse.Namespace) -> int:
     print(f"runs in last 24h: {runs_last_day()}" + (f"/{MAX_RUNS_PER_DAY}" if MAX_RUNS_PER_DAY else " (no daily cap)"))
     for slug, it in sorted(data["items"].items(), key=lambda kv: kv[1]["not_before"]):
         extra = " ".join(f"{k}={it[k]}" for k in ("after", "pr", "issue") if it.get(k))
-        print(f"{it['status']:<17} {slug:<40} attempts={it['attempts']}/{MAX_ATTEMPTS} not_before={it['not_before']} {extra}")
+        print(f"{it['status']:<17} {slug:<50} attempts={it['attempts']}/{MAX_ATTEMPTS} not_before={it['not_before']} {extra}")
     return 0
 
 
@@ -155,12 +202,13 @@ def cmd_next(_: argparse.Namespace) -> int:
 
 def cmd_start(args: argparse.Namespace) -> int:
     data = load()
-    it = item(data, args.slug)
+    key = resolve(data, args.slug)
+    it = data["items"][key]
     it.update(status="running", attempts=it["attempts"] + 1, updated=iso(now()))
     save(data)
     STATE.mkdir(parents=True, exist_ok=True)
     with RUNS.open("a") as f:
-        f.write(json.dumps({"at": iso(now()), "slug": args.slug, "attempt": it["attempts"]}) + "\n")
+        f.write(json.dumps({"at": iso(now()), "slug": key, "attempt": it["attempts"]}) + "\n")
     return 0
 
 
@@ -253,7 +301,8 @@ def main() -> int:
     when = p.add_mutually_exclusive_group()
     when.add_argument("--at")
     when.add_argument("--in", dest="delay")
-    p.add_argument("--after", help="slug that must be done (merged) first")
+    p.add_argument("--repo", default=DEFAULT_REPO, help="the plan's repo (default %(default)s)")
+    p.add_argument("--after", help="repo/slug (or a slug in the same repo) that must be done (merged) first")
     p.add_argument("--note")
     p.set_defaults(fn=cmd_add)
     sub.add_parser("list").set_defaults(fn=cmd_list)

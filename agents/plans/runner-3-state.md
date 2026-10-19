@@ -35,7 +35,7 @@ part resolves to it; zero or several matches → `sys.exit` naming the candidate
 loads as `strelitzia/*` and is rewritten once; `add x --repo engineerfamily --after strelitzia/y` waits until `strelitzia/y` is
 `done`; `set x status=done` with two `x` in different repos exits naming both; the existing tests pass with bare slugs. The
 default-dir test now expects `~/.local/state/agent-runner` (test updated, not weakened: same assertion, new path).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: inbox and usage on the shared config
 **Runs:** unattended
