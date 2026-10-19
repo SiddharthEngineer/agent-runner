@@ -80,6 +80,14 @@ until S2 deletes it.
 - A usage-limit exit pauses the queue for 5h, gives the attempt back, and the next run resumes that session (`resume=limit`).
 - A run that ends without a result file, or whose `ready` fails the repo's full validation, counts as a failed attempt. After 2
   failures the item is `blocked` and you get a notice.
+- **Triage** (once per item): when an item turns `blocked` (2 failed attempts, or the review validator's `blocked`), one read-only
+  Sonnet run (15 min at most, [prompts/triage.md](prompts/triage.md), [settings/triage.json](settings/triage.json): reading,
+  `tail`/`grep`/`ls`, `gh pr view/checks/diff`, `gh run view`; no writes) reads its last two logs, last result and PR, and
+  classifies the cause: `transient` | `fixed-elsewhere` | `plan-problem` | `code-problem` | `environment`. The first two
+  re-queue the item with fresh attempts and a note, and you get a short "re-queued after triage" notice; anything else gives
+  the usual blocked notice with the diagnosis appended. It never edits code or merges. The item gets `triaged=1`, so a second
+  block always goes straight to you. If the usage gate says no, you get the plain notice. Turn it off with `AGENT_TRIAGE=0`
+  in `~/.config/agent-runner/env`. Its log is `logs/<time>-<repo>-<slug>.triage.log`.
 
 ## Preprod (`preprod.sh`)
 Preprod is one environment for every repo (the `engineerfamily-preprod` compose project also builds Strelitzia), so one PR from

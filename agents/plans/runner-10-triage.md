@@ -42,7 +42,7 @@ second triage, plain notice; `notify` → the notice body contains the diagnosis
 **Files:** README.md (modify)
 **What:** README: triage, its once-per-item limit, and how to turn it off (`AGENT_TRIAGE=0`; also implement the flag in Task 2's code path).
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
