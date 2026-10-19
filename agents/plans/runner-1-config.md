@@ -54,7 +54,7 @@ if that exists (one-release fallback, design D1), else `None`. `load_env() -> No
 Nothing calls these yet besides tests and `health.py` (Parts health-1/2).
 **Validate:** tests with `HOME` set to `tmp_path` → new env wins over the old one, old one is used alone, neither → `None`;
 `AGENT_RUNNER_STATE` overrides `state_dir()`; `export K="v"` and `# comment` lines parse like `inbox.load_env`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: `gate.py --config`
 **Runs:** unattended

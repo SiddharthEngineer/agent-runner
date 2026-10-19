@@ -11,6 +11,7 @@ hold a `RunnerConfig` with a prod command in it. Standard library only (Python 3
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 import tomllib
@@ -205,6 +206,47 @@ def load(path: Path) -> RunnerConfig:
     if problems:
         raise ConfigError(problems)
     return cfg
+
+
+def config_dir() -> Path:
+    """Shared secrets (`env`) and per-repo machine values (`repos/<name>.env`). The user's; the runner only reads it."""
+    return Path.home() / ".config" / "agent-runner"
+
+
+def state_dir() -> Path:
+    return Path(os.environ.get("AGENT_RUNNER_STATE") or Path.home() / ".local" / "state" / "agent-runner")
+
+
+def env_file() -> Path | None:
+    """`config_dir()/env`, else the old runner's env for one release (design D1), else None."""
+    for path in (config_dir() / "env", Path.home() / ".config" / "strelitzia-agent" / "env"):
+        if path.is_file():
+            return path
+    return None
+
+
+def parse_env(path: Path) -> dict[str, str]:
+    """`KEY=value` lines, as `inbox.load_env` reads them: `export ` stripped, quotes stripped, `#` lines skipped."""
+    values: dict[str, str] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip().removeprefix("export ")
+        if line and not line.startswith("#") and "=" in line:
+            key, _, value = line.partition("=")
+            values[key.strip()] = value.strip().strip("'\"")
+    return values
+
+
+def load_env() -> None:
+    """Set `os.environ` defaults from `env_file()`; variables already set win."""
+    path = env_file()
+    if path is not None:
+        for key, value in parse_env(path).items():
+            os.environ.setdefault(key, value)
+
+
+def repo_env(name: str) -> dict[str, str]:
+    path = config_dir() / "repos" / f"{name}.env"
+    return parse_env(path) if path.is_file() else {}
 
 
 def get(cfg: RunnerConfig, dotted: str):
