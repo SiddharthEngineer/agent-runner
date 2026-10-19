@@ -61,8 +61,10 @@ until S2 deletes it.
   usage from its `rate_limit_event`. At or above `AGENT_MAX_SESSION_USAGE` (default `70`, percent; `0` turns it off) the run
   doesn't start and the queue pauses until the window resets. If the usage can't be read, that tick is skipped.
   It only gates starts: a run already going finishes even if it pushes usage past the limit.
-- Merging: `low` plans that pass `gate.py` merge after green CI; the rest wait for review on preprod.
-  A PR with red CI stays open and you get a notice.
+- Merging: `low` plans that pass `gate.py` merge after green CI; the rest get a validator review, then preprod checks
+  if the repo has `[preprod]`. A `low` PR whose CI is red or times out, whose repo reports no CI checks at all, or whose
+  merge fails stays open, labelled `ci-failed`; the item is `blocked` and you get a notice with the PR link. Nothing
+  merges without checks.
 - After each run the Docker build cache is pruned down to `AGENT_BUILD_CACHE_KEEP` (default `3GB`), so a long chain can't fill the disk.
 - Each run is killed after `AGENT_MAX_RUNTIME` (3h). A `flock` allows one Claude run at a time, whatever the repo or role.
 - Context cap: runs auto-compact at 200k tokens (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`; override with `AGENT_COMPACT_WINDOW`).

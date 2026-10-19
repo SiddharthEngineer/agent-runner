@@ -66,7 +66,15 @@ def runner(tmp_path):
                '  printf "%s" "${STUB_RESULT:-{\\"status\\": \\"ready\\", \\"pr\\": 9}}" > "$AGENT_RESULT_FILE"\n'
                'fi\n'
                'echo \'{"session_id": "s1"}\'\n')
-    write_stub(bin_dir / "gh", "gh")
+    # gh: `pr checks` fails with $STUB_CHECKS (red, or none: "no checks reported"); `pr merge` exits $STUB_MERGE_EXIT.
+    write_stub(bin_dir / "gh", "gh",
+               'if [[ "$*" == "pr checks"* ]]; then\n'
+               '  [ "${STUB_CHECKS:-}" = red ] && { echo "build  fail  1m  https://ci.example/1"; exit 1; }\n'
+               '  [ "${STUB_CHECKS:-}" = none ] && { echo "no checks reported on the \'x\' branch" >&2; exit 1; }\n'
+               'elif [[ "$*" == "pr merge"* ]]; then\n'
+               '  exit "${STUB_MERGE_EXIT:-0}"\n'
+               'fi\n'
+               'exit 0\n')
     write_stub(bin_dir / "docker", "docker")
 
     def git(*args) -> str:
@@ -166,6 +174,26 @@ def test_low_engineerfamily_merges_with_merge_commit(runner):
     assert "/implement agents/plans/x.md --unattended" in claude
     assert runner.status("engineerfamily/x") == "done"
     assert not (runner.state / "worktrees/engineerfamily/x").exists()
+
+
+@pytest.mark.parametrize("env, why", [
+    ({"STUB_CHECKS": "red"}, "CI is red or timed out"),
+    ({"STUB_CHECKS": "none"}, "no CI checks on this repo"),
+    ({"STUB_MERGE_EXIT": "1"}, "gh pr merge failed"),
+])
+def test_low_not_merged_blocks_with_notice(runner, env, why):
+    runner.register("agent-runner", merge="squash", deploy=None)  # no [preprod], like agent-runner itself
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner(**env)
+    calls = runner.calls()
+    assert runner.status("agent-runner/x") == "blocked", runner.runs_log() + runner.out.stderr
+    assert "gh pr edit 9 --repo o/agent-runner --add-label ci-failed" in calls
+    assert not any("awaiting-preprod" in c for c in calls)
+    [notice] = [c for c in calls if c.startswith("inbox notify")]
+    assert why in notice and "https://github.com/o/agent-runner/pull/9" in notice
+    if "STUB_MERGE_EXIT" not in env:
+        assert not any(c.startswith("gh pr merge") for c in calls)
+    assert why in json.loads(runner.queue("get", "agent-runner/x", "last_result").stdout)["summary"]
 
 
 def test_strelitzia_rebases(runner):
