@@ -45,7 +45,7 @@ prune() {  # keep the newest $KEEP releases and the active one
     mg worktree prune
 }
 
-ci_verdict() {  # ci_verdict <sha>: "green" if CI's run on exactly this commit succeeded, else why it can't vouch
+ci_verdict() {  # ci_verdict <sha>: "green" if every CI run on exactly this commit succeeded, else why it can't vouch
     local r owner json
     command -v gh >/dev/null || { echo "gh is not installed"; return; }
     r=${REMOTE%/}; r=${r%.git}
@@ -55,10 +55,10 @@ ci_verdict() {  # ci_verdict <sha>: "green" if CI's run on exactly this commit s
     printf '%s' "$json" | python3 -c '
 import json, sys
 runs = json.load(sys.stdin)
-if any(r.get("status") == "completed" and r.get("conclusion") == "success" for r in runs):
-    print("green")
-elif not runs:
+if not runs:
     print("no CI run on this commit")
+elif all(r.get("status") == "completed" and r.get("conclusion") == "success" for r in runs):
+    print("green")
 elif any(r.get("status") != "completed" for r in runs):
     print("CI is still running on this commit")
 else:

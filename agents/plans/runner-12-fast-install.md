@@ -54,3 +54,4 @@ seconds and says CI passed; `install.sh --full <tag>` runs the whole suite.
 ## Decisions
 1. CI's run on the exact commit is the evidence; a green run on a different commit doesn't count.
 2. Anything uncertain falls back to the full suite, so a slow install is the worst case, never an untested one.
+3. Every CI run on the commit must have succeeded (a failed run beside a green one means the full suite); stricter than Task 2 first said, per Decision 2 (self-review, 2026-10-19).

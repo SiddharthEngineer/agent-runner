@@ -128,6 +128,7 @@ def tag_sha(install, tag):
 
 @pytest.mark.parametrize("runs", [
     [{"status": "completed", "conclusion": "failure"}],
+    [{"status": "completed", "conclusion": "failure"}, {"status": "completed", "conclusion": "success"}],
     [],
     [{"status": "in_progress", "conclusion": ""}],
 ])
@@ -143,7 +144,7 @@ def test_install_full_suite_when_gh_fails(install):
 
 
 def test_install_quick_when_ci_passed_on_the_commit(install):
-    install.gh_json.write_text('[{"status": "completed", "conclusion": "failure"},'
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "success"},'
                                ' {"status": "completed", "conclusion": "success"}]')
     out = install("v0.0.2")
     sha = tag_sha(install, "v0.0.2")
