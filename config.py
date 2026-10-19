@@ -2,7 +2,9 @@
 """Per-repo runner config (`agents/runner.toml`) and the prod guard.
 
 Usage: python3 config.py check <runner.toml>             (prints `ok`, or one problem per line and exits 1)
-       python3 config.py get <runner.toml> <dotted.key>  (prints the value; a list prints one item per line)
+       python3 config.py get <runner.toml> <dotted.key>  (prints the value; a list prints one item per line;
+                                                          a preprod.health entry prints as url<TAB>status<TAB>json_ok)
+       python3 config.py repo-env <name>                 (`export K='v'` lines from repos/<name>.env, for bash to eval)
 
 A repo describes itself in `agents/runner.toml`: base branch, merge method, validate commands, risk-gate patterns and
 preprod commands. `load` checks every field and refuses any preprod command that could touch prod, so no caller can
@@ -13,6 +15,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 import tomllib
 from dataclasses import dataclass, field
@@ -71,10 +74,12 @@ class Health:
 
 @dataclass(frozen=True)
 class Preprod:
-    deploy: str
-    release: str | None = None
+    deploy: str  # may contain {sha}
+    release: str | None = None  # default: deploy again at origin/<repo.base>
     seed: str | None = None
     health: list[Health] = field(default_factory=list)
+    app_dir: str | None = None  # a checkout to fetch and check out at the sha before `deploy`
+    netrc_env: str = "PREPROD_NETRC"  # the repos/<name>.env variable holding the health checks' netrc path
 
 
 @dataclass(frozen=True)
@@ -153,6 +158,8 @@ def _parse(data: dict) -> tuple[RunnerConfig | None, list[str]]:
         deploy = r.get(pre_t, "preprod", "deploy", str)
         release = r.get(pre_t, "preprod", "release", str, default=None)
         seed = r.get(pre_t, "preprod", "seed", str, default=None)
+        app_dir = r.get(pre_t, "preprod", "app_dir", str, default=None)
+        netrc_env = r.get(pre_t, "preprod", "netrc_env", str, default="PREPROD_NETRC")
         checks: list[Health] = []
         raw = pre_t.get("health", [])
         if not isinstance(raw, list):
@@ -171,7 +178,8 @@ def _parse(data: dict) -> tuple[RunnerConfig | None, list[str]]:
             if url is not None:
                 checks.append(Health(url=url, status=status, json_ok=bool(json_ok)))
         if deploy is not None:
-            preprod = Preprod(deploy=deploy, release=release, seed=seed, health=checks)
+            preprod = Preprod(deploy=deploy, release=release, seed=seed, health=checks, app_dir=app_dir,
+                              netrc_env=netrc_env)
 
     if problems:
         return None, problems
@@ -258,7 +266,22 @@ def get(cfg: RunnerConfig, dotted: str):
     return value
 
 
+def _line(value) -> str:
+    if isinstance(value, Health):
+        status = "" if value.status is None else str(value.status)
+        return f"{value.url}\t{status}\t{'true' if value.json_ok else 'false'}"
+    return str(value)
+
+
 def main(argv: list[str]) -> int:
+    if len(argv) == 2 and argv[0] == "repo-env":
+        if not NAME_RE.match(argv[1]):
+            print(f"bad repo name: {argv[1]}", file=sys.stderr)
+            return 2
+        for key, value in repo_env(argv[1]).items():
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+                print(f"export {key}={shlex.quote(value)}")
+        return 0
     if len(argv) >= 2 and argv[0] == "check":
         try:
             load(Path(argv[1]))
@@ -277,11 +300,11 @@ def main(argv: list[str]) -> int:
             print(f"no such key: {argv[2]}", file=sys.stderr)
             return 2
         if isinstance(value, list):
-            print("\n".join(str(v) for v in value))
+            print("\n".join(_line(v) for v in value))
         elif value is not None:
             print(value)
         return 0
-    print("usage: config.py check <runner.toml> | get <runner.toml> <dotted.key>", file=sys.stderr)
+    print("usage: config.py check <runner.toml> | get <runner.toml> <dotted.key> | repo-env <name>", file=sys.stderr)
     return 2
 
 

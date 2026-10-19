@@ -158,3 +158,25 @@ def test_repo_env(home):
     assert config.repo_env("engineerfamily") == {}
     put(home / ".config/agent-runner/repos/engineerfamily.env", "export AGENT_REPO=/src/ef\n# x\n")
     assert config.repo_env("engineerfamily") == {"AGENT_REPO": "/src/ef"}
+
+
+def test_preprod_app_dir_and_netrc_env(tmp_path):
+    s = config.load(FIXTURES / "strelitzia.runner.toml")
+    assert (s.preprod.app_dir, s.preprod.netrc_env, s.preprod.release) == ("/srv/Strelitzia-preprod", "PREPROD_NETRC", None)
+    out = cli("get", str(FIXTURES / "engineerfamily.runner.toml"), "preprod.health").stdout.splitlines()
+    assert out[0] == "https://preprod.engineerfamily.net/\t200\tfalse"
+    assert out[2].endswith("/api/health\t\ttrue")
+
+
+def test_cli_repo_env_quotes_values(tmp_path):
+    repos = tmp_path / ".config/agent-runner/repos"
+    repos.mkdir(parents=True)
+    (repos / "engineerfamily.env").write_text("AGENT_REPO=/src/ef dir\nPREPROD_NETRC='/x/n'\n")
+    import os
+
+    env = {**os.environ, "HOME": str(tmp_path)}
+    out = subprocess.run([sys.executable, str(ROOT / "config.py"), "repo-env", "engineerfamily"], env=env,
+                         capture_output=True, text=True)
+    assert out.stdout == "export AGENT_REPO='/src/ef dir'\nexport PREPROD_NETRC=/x/n\n"
+    bad = subprocess.run([sys.executable, str(ROOT / "config.py"), "repo-env", "../x"], env=env, capture_output=True, text=True)
+    assert bad.returncode == 2
