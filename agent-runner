@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# agent-runner: the one CLI for the installed runner (design D2). ~/.local/bin/agent-runner links here.
+#
+#   agent-runner <command> [args...]    args pass straight through to the script
+#   agent-runner version                the installed tag
+set -euo pipefail
+HERE=$(dirname "$(readlink -f "$0")")  # through the ~/.local/bin symlink to the real checkout
+
+usage() {
+    cat >&2 <<'USAGE'
+usage: agent-runner <command> [args...]
+  queue    buildqueue.py   queue state, attempts, pause
+  gate     gate.py         risk gate; --plan checks a plan's size budget
+  inbox    inbox.py        inbox issues and ntfy
+  usage    usage.py        Claude session-usage gate
+  config   config.py       runner.toml check/get
+  health   health.py       VPS health check and cleanup
+  preprod  preprod.sh      preprod lock: deploy, status, release
+  run      run.sh          the cron entry (manager)
+  version                  the installed tag
+USAGE
+    exit 2
+}
+
+[ $# -ge 1 ] || usage
+cmd=$1; shift
+case $cmd in
+    queue) exec python3 "$HERE/buildqueue.py" "$@" ;;
+    gate|inbox|usage|config|health) exec python3 "$HERE/$cmd.py" "$@" ;;
+    preprod|run) exec "$HERE/$cmd.sh" "$@" ;;
+    version)
+        if [ -f "$HERE/VERSION" ]; then cat "$HERE/VERSION"; else git -C "$HERE" describe --tags --always; fi ;;
+    -h|--help|help) usage ;;
+    *) echo "agent-runner: unknown command: $cmd" >&2; usage ;;
+esac

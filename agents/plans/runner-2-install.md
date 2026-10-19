@@ -28,7 +28,7 @@ arguments pass through with `exec`. `agent-runner version` prints the contents o
 `git -C "$HERE" describe --tags --always`. An unknown or missing subcommand prints usage (the map) to stderr and exits 2.
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_install.py -k cli` → `agent-runner gate --help` exits 0
 through a symlink in `tmp_path/bin`; `agent-runner nope` exits 2; `agent-runner version` in a temp clone with tag `v0.0.1` prints `v0.0.1`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: `install.sh <tag>`
 **Runs:** unattended
