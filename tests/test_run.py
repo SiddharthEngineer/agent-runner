@@ -440,3 +440,19 @@ def test_preprod_changes_releases_and_requeues(runner):
     assert runner.status(key) == "queued"
     assert "the page is blank" in runner.queue("get", key, "notes").stdout
     assert runner.queue("get", key, "preprod_verdict").returncode == 1  # cleared for the next round
+
+
+@pytest.mark.parametrize("stage", ["awaiting-review", "on-preprod"])
+@pytest.mark.parametrize("state, status", [("MERGED", "done"), ("CLOSED", "cancelled")])
+def test_pr_merged_or_closed_by_hand(runner, stage, state, status):
+    key = awaiting_review(runner)
+    runner.queue("set", key, f"status={stage}")
+    runner.state.mkdir(parents=True, exist_ok=True)
+    (runner.state / "preprod.lock").write_text("engineerfamily\t9\tabc\t2026-10-19T00:00:00Z\n")  # this PR holds preprod
+    runner(STUB_PR_STATE=state, STUB_REVIEW=verdict("approve"), STUB_PREPROD=preprod_verdict("approve"))
+    assert runner.status(key) == status, runner.runs_log() + runner.out.stderr
+    assert claude_calls(runner) == []
+    assert not any(c.startswith("gh pr merge") for c in runner.calls())
+    assert "preprod release engineerfamily" in runner.calls()
+    summary = json.loads(runner.queue("get", key, "last_result").stdout)["summary"]
+    assert summary == f"PR #9 {state.lower()} by hand"

@@ -47,7 +47,7 @@ repo without `[preprod]` → no call.
 item `done` with summary "merged by hand", release preprod if this PR holds it (Task 2 puts the base back), no validator run.
 `CLOSED` → cancel the item with that summary. The inbox sweep closes its notices.
 **Validate:** stub `gh` returns `MERGED` for an `awaiting-review` item → status `done`, no `claude` call; `CLOSED` → `cancelled`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended

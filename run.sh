@@ -178,6 +178,32 @@ merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, fo
     esac
 }
 
+# closed_by_hand: if the item's PR was merged or closed outside the runner, finish the item (no validator) and succeed.
+closed_by_hand() {
+    local pr state hand result
+    pr=$("${Q[@]}" get "$key" pr)
+    state=$(gh pr view "$pr" --repo "$GH_REPO" --json state -q .state 2>/dev/null)
+    case $state in
+        MERGED) hand="merged by hand" ;;
+        CLOSED) hand="closed by hand" ;;
+        *) return 1 ;;
+    esac
+    dry "finish $key: PR #$pr was $hand"
+    result=$(mktemp)  # `finish` keeps the summary in last_result; a closed PR is then cancelled below
+    printf '{"status": "merged", "pr": %s, "summary": "PR #%s %s"}' "$pr" "$pr" "$hand" > "$result"
+    "${Q[@]}" finish "$key" "$result" >/dev/null
+    rm -f "$result"
+    if [ "$state" = MERGED ]; then
+        say "$key: PR #$pr was merged by hand, done"
+        preprod_follow "$pr"
+    else
+        "${Q[@]}" cancel "$key"
+        say "$key: PR #$pr was closed by hand, cancelled"
+        [ "$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)" = "$repo"$'\t'"$pr" ] && "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+    fi
+    return 0
+}
+
 # 3a. Preprod stage (design D3): an approved `review` PR now on preprod gets its Human test steps run by the validator.
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
@@ -272,7 +298,7 @@ $(field failed)" >/dev/null
 
 if key=$("${Q[@]}" oldest on-preprod --without preprod_verdict); then
     load_item
-    preprod_stage
+    closed_by_hand || preprod_stage
     exit 0
 fi
 
@@ -340,7 +366,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
 
 if key=$("${Q[@]}" oldest awaiting-review); then
     load_item
-    review_stage
+    closed_by_hand || review_stage
     exit 0
 fi
 
