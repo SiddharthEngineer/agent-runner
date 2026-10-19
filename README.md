@@ -65,6 +65,15 @@ until S2 deletes it.
   if the repo has `[preprod]`. A `low` PR whose CI is red or times out, whose repo reports no CI checks at all, or whose
   merge fails stays open, labelled `ci-failed`; the item is `blocked` and you get a notice with the PR link. Nothing
   merges without checks.
+- CI fallback: green CI is `gh pr checks --watch` first (it also sees non-Actions checks). When the token can't read the
+  check rollup ("Resource not accessible", as on agent-runner), the runner watches the Actions runs of the PR head instead
+  (`gh run list --commit <sha>`, then `gh run watch --exit-status` each): all green merges, one red is "CI is red", and no
+  run within 30 min (`AGENT_CI_WAIT`, seconds) is "no CI checks".
+- Preprod follows each merge: after any merge (low, or after the validator), a repo with `[preprod]` gets
+  `preprod.sh release <repo>`, so preprod runs the new base, unless another PR holds the lock (its release puts the base back
+  later). One `runs.log` line either way; a failed redeploy sends a notice and leaves the item `done`.
+- Hand merges: before the review or preprod stage acts on an item, the runner reads its PR's state. Merged by hand → `done`
+  ("merged by hand"), preprod put on the base; closed → `cancelled` (preprod released if it held it). No validator run.
 - After each run the Docker build cache is pruned down to `AGENT_BUILD_CACHE_KEEP` (default `3GB`), so a long chain can't fill the disk.
 - Each run is killed after `AGENT_MAX_RUNTIME` (3h). A `flock` allows one Claude run at a time, whatever the repo or role.
 - Context cap: runs auto-compact at 200k tokens (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`; override with `AGENT_COMPACT_WINDOW`).
@@ -136,7 +145,7 @@ basic-auth credentials and, if `~/.config/agent-runner/preprod-storage-state.jso
 (ROADMAP AM3). Both go in a 0600 temp config (`mcp_config.py`) that is deleted after the run. It never signs in itself and never
 types a password. Steps that need your own account, prod, email, money, a device, or a sign-in it doesn't have are
 "left for you". It comments a checklist on the PR and writes `results/<repo>/<slug>.preprod.json`.
-- `approve` → merged after green CI, preprod back on the base branch, and one notice "`[<key>] merged; N steps left for you`"
+- `approve` → merged after green CI, preprod on the new base branch, and one notice "`[<key>] merged; N steps left for you`"
   listing the steps only you can do (left-for-you steps never block the merge).
 - `changes` → preprod released and the item re-queued for the implementer with the failed steps as a note (costs an attempt).
 - `blocked`, or no verdict twice → preprod released, item `blocked`, notice.

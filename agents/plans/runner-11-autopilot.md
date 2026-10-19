@@ -1,5 +1,5 @@
 # Plan: the runner finishes its own work (CI without check access, preprod after merge, PRs merged by hand)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-8-self-host (merged); the cutover (done 2026-10-19)
 
@@ -54,7 +54,7 @@ item `done` with summary "merged by hand", release preprod if this PR holds it (
 **Files:** README.md (modify), agents/ROADMAP.md (modify)
 **What:** README: the CI fallback, preprod follows each merge, hand merges are recognised. ROADMAP: row A16 ✅ with the PR number.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
