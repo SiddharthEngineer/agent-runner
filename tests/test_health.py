@@ -264,3 +264,192 @@ def test_worktree_with_live_branch_survives(home):
     assert [wt.name for _, wt in health.finished_worktrees()] == ["gone"]
     health.worktree_rule().apply()
     assert (wts / "alive").exists() and not (wts / "gone").exists()
+
+
+@pytest.fixture
+def ticker(home, monkeypatch):
+    """tick() with measure/clean/notify stubbed; `t.disk` and `t.load` set the next reading, `t.at` the clock."""
+    from datetime import datetime, timezone
+
+    class T:
+        disk, load = 70, 0.2
+        at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+        calls: list = []
+
+    t = T()
+    t.calls = []
+    monkeypatch.setattr(health, "measure", lambda *a, **k: health.Metrics(t.disk, 10, 2000, 100, t.load, 1.0))
+    monkeypatch.setattr(health, "clean", lambda *a, **k: t.calls.append("clean") or [])
+    monkeypatch.setattr(health, "now", lambda: t.at)
+    monkeypatch.setattr(health, "notify_new", lambda p, *a: t.calls.append(("new", p.key)) or 7)
+    monkeypatch.setattr(health, "notify_again", lambda e, p, *a: t.calls.append(("again", p.key)) or True)
+    monkeypatch.setattr(health, "notify_recovered", lambda e, key, m: t.calls.append(("recovered", key)) or True)
+    monkeypatch.setattr(health.config, "load_env", lambda: None)
+    return t
+
+
+def notices(t):
+    return [c for c in t.calls if c != "clean"]
+
+
+def test_tick_one_notice_per_problem(ticker):
+    from datetime import timedelta
+
+    ticker.disk = 85
+    health.tick()
+    ticker.at += timedelta(minutes=15)
+    health.tick()
+    assert notices(ticker) == [("new", "disk")]
+    ticker.at += timedelta(hours=24)
+    health.tick()
+    assert notices(ticker)[-1] == ("again", "disk")
+    ticker.disk = 70
+    health.tick()
+    assert notices(ticker)[-1] == ("recovered", "disk")
+    assert health.load_state()["open"] == {}
+
+
+def test_tick_load_needs_two_ticks_15_min_apart(ticker):
+    from datetime import timedelta
+
+    ticker.load = 3.0
+    health.tick()
+    ticker.at += timedelta(minutes=5)
+    health.tick()
+    assert notices(ticker) == []
+    ticker.at += timedelta(minutes=10)
+    health.tick()
+    assert notices(ticker) == [("new", "load")]
+
+
+def test_tick_failed_notice_is_retried(ticker, monkeypatch):
+    ticker.disk = 85
+    monkeypatch.setattr(health, "notify_new", lambda *a: None)
+    health.tick()
+    assert health.load_state()["open"] == {}
+
+
+def test_tick_lock_held_exits_quietly(ticker):
+    import fcntl
+
+    (ticker_state := health.config.state_dir()).mkdir(parents=True, exist_ok=True)
+    with open(ticker_state / "health.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        ticker.disk = 95
+        assert health.tick() == 0
+    assert ticker.calls == []
+
+
+def test_gate(ticker):
+    ticker.disk = 89
+    assert health.gate() == 0
+    ticker.disk = 90
+    assert health.gate() == 1
+    assert ticker.calls == []
+
+
+def test_notices_call_inbox(home, monkeypatch):
+    calls = []
+
+    def fake_inbox(*args):
+        calls.append(args)
+        return '{"number": 9, "url": "u"}' if args[0] == "notify" else "u"
+
+    monkeypatch.setattr(health, "inbox", fake_inbox)
+    m = health.Metrics(91, 3, 2000, 100, 0.2, 1.0)
+    p = health.Problem("disk-critical", "disk 91% used (alert at 90%)", True)
+    cleaned = [{"rule": "docker build cache (all)", "freed_bytes": 2_000_000_000}]
+    assert health.notify_new(p, m, cleaned, "uv cache is 1 GB") == 9
+    args = calls[0]
+    assert args[:4] == ("notify", "--project", "vps-health", "--json")
+    assert args[args.index("--title") + 1] == "[vps] disk 91% used (alert at 90%) after cleanup"
+    body = args[args.index("--body") + 1]
+    assert "freed 2.0 GB" in body and "uv cache is 1 GB" in body
+    assert health.notify_recovered({"issue": 9}, "disk", m)
+    assert calls[1][:2] == ("comment", "9") and calls[1][-1] == "--close"
+
+
+def test_failed_inbox_call_returns_none(home, monkeypatch):
+    monkeypatch.setattr(health, "inbox", lambda *a: None)
+    m = health.Metrics(91, 3, 2000, 100, 0.2, 1.0)
+    assert health.notify_new(health.Problem("disk", "d", True), m, [], None) is None
+    assert health.notify_again({"issue": 1, "since": "x"}, health.Problem("disk", "d", True), m, []) is False
+
+
+@pytest.fixture
+def diag(home, monkeypatch):
+    """diagnose() with every skip condition passing and subprocess.run recording argv."""
+    import json as _json
+    from subprocess import CompletedProcess
+
+    class Calls(list):
+        def claude(self):
+            return [c for c in self if c[:3] == ["timeout", "10m", "claude"]]
+
+    calls = Calls()
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        if argv[:3] == ["timeout", "10m", "claude"]:
+            return CompletedProcess(argv, 0, _json.dumps({"result": "build cache 5 GB; ~/.cache/uv 1 GB"}), "")
+        return CompletedProcess(argv, 0, "", "")  # usage.py check: under the limit
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "test-token")
+    monkeypatch.setattr(health.subprocess, "run", fake_run)
+    return calls
+
+
+DISK = [health.Problem("disk", "disk 85% used", True)]
+
+
+def test_diagnose_runs_sonnet_read_only(diag):
+    state = {}
+    assert health.diagnose(DISK, metrics(85), [], state) == "build cache 5 GB; ~/.cache/uv 1 GB"
+    [argv] = diag.claude()
+    assert argv[argv.index("--model") + 1] == "claude-sonnet-5-5"
+    assert argv[argv.index("--settings") + 1] == str(health.HERE / "settings/health-diagnose.json")
+    assert "last_diagnosis" in state
+
+
+def test_diagnose_skips_without_token(diag, monkeypatch):
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN")
+    assert health.diagnose(DISK, metrics(85), [], {}) is None
+    assert diag == []
+
+
+def test_diagnose_skips_when_recent(diag):
+    state = {"last_diagnosis": health.now().isoformat()}
+    assert health.diagnose(DISK, metrics(85), [], state) is None
+    assert diag.claude() == []
+
+
+def test_diagnose_skips_when_disk_full(diag):
+    assert health.diagnose(DISK, metrics(96), [], {}) is None
+    assert diag == []
+
+
+def test_diagnose_skips_when_usage_over(diag, monkeypatch):
+    monkeypatch.setattr(health, "usage_ok", lambda: False)
+    assert health.diagnose(DISK, metrics(85), [], {}) is None
+    assert diag.claude() == []
+
+
+def test_diagnose_skips_when_run_lock_held(diag, home):
+    import fcntl
+
+    lock = home / "state/run.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    with lock.open("w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert health.diagnose(DISK, metrics(85), [], {}) is None
+    assert diag.claude() == []
+    assert health.run_lock_held() is False  # released
+
+
+def test_diagnose_settings_allow_nothing_destructive():
+    import json as _json
+
+    settings = _json.loads((health.HERE / "settings/health-diagnose.json").read_text())
+    for rule in settings["permissions"]["allow"]:
+        assert not any(word in rule for word in ("rm", "prune", "kill", "sudo")), rule
+    assert {"Edit", "Write", "Bash(rm:*)", "Bash(sudo:*)"} <= set(settings["permissions"]["deny"])

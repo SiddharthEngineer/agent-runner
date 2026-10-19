@@ -3,6 +3,9 @@
 
 Usage: python3 health.py check                          (JSON metrics and problems; exit 1 when there are problems)
        python3 health.py clean [--dry-run] [--pressure]  (one line per rule: what it would free, or freed)
+       python3 health.py tick                           (cron, every 15 min: measure, clean, measure, notify)
+       python3 health.py gate                           (exit 1 while disk is at or over disk_alert_pct)
+       python3 health.py diagnose [--force]             (the read-only Sonnet diagnosis; --force ignores the 6 h spacing)
 
 Thresholds default to DEFAULTS and can be overridden in ~/.config/agent-runner/health.toml under [thresholds].
 Rules are code, not config: each one deletes only under its own root, and never follows symlinks.
@@ -11,6 +14,7 @@ Standard library only.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -461,6 +465,189 @@ def cmd_clean(argv: list[str]) -> int:
     return 1 if any("error" in r for r in results) else 0
 
 
+# --- tick: measure, clean, measure again, and keep one inbox issue per open problem.
+
+LOAD_CONFIRM = timedelta(minutes=15)  # load is a problem only when it was also high on a tick at least this much earlier
+RENOTIFY = timedelta(hours=24)
+
+
+def confirmed(found: list[Problem], state: dict, at: datetime) -> list[Problem]:
+    """Drop `load` unless it was already high at least LOAD_CONFIRM ago (`state["load_since"]`)."""
+    if not any(p.key == "load" for p in found):
+        state.pop("load_since", None)
+        return found
+    since = state.setdefault("load_since", at.isoformat())
+    if at - datetime.fromisoformat(since) >= LOAD_CONFIRM:
+        return found
+    return [p for p in found if p.key != "load"]
+
+
+def inbox(*args: str) -> str | None:
+    """Run `inbox.py <args>`; its stdout, or None (logged) when gh or the inbox isn't reachable."""
+    out = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "inbox.py"), *args],
+                         capture_output=True, text=True, timeout=120)
+    if out.returncode != 0:
+        log({"rule": "notice-failed", "args": args[:1], "error": (out.stderr or out.stdout).strip()[-300:]})
+        return None
+    return out.stdout.strip()
+
+
+def report(m: Metrics, cleaned: list[dict], diagnosis: str | None = None) -> str:
+    """Issue/comment body: metrics, what this tick's cleanup freed, the diagnosis. Never file contents."""
+    lines = ["**Metrics**", "```", json.dumps(asdict(m), indent=2), "```"]
+    if cleaned:
+        lines += ["", "**Cleanup this tick**"]
+        lines += [f"- {r['rule']}: freed {human(r['freed_bytes'])}" + (f" (error: {r['error']})" if "error" in r else "")
+                  for r in cleaned]
+    if diagnosis:
+        lines += ["", "**Diagnosis** (read-only Sonnet run; nothing was changed)", "", diagnosis]
+    return "\n".join(lines)
+
+
+def notify_new(problem: Problem, m: Metrics, cleaned: list[dict], diagnosis: str | None) -> int | None:
+    """Open the problem's issue; its number, or None if that failed (retried next tick)."""
+    after = " after cleanup" if problem.cleanable else ""
+    out = inbox("notify", "--project", "vps-health", "--json", "--title", f"[vps] {problem.summary}{after}",
+                "--body", report(m, cleaned, diagnosis))
+    try:
+        return int(json.loads(out)["number"]) if out else None
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def notify_again(entry: dict, problem: Problem, m: Metrics, cleaned: list[dict]) -> bool:
+    body = f"Still open: {problem.summary} (since {entry['since']}).\n\n{report(m, cleaned)}"
+    return inbox("comment", str(entry["issue"]), "--body", body) is not None
+
+
+def notify_recovered(entry: dict, key: str, m: Metrics) -> bool:
+    body = f"Recovered: `{key}` is back under its threshold.\n\n{report(m, [])}"
+    return inbox("comment", str(entry["issue"]), "--body", body, "--close") is not None
+
+
+HERE = Path(__file__).resolve().parent
+DIAGNOSIS_EVERY = timedelta(hours=6)
+DIAGNOSIS_MODEL = "claude-sonnet-5-5"
+DIAGNOSIS_MAX_CHARS = 4000
+
+
+def run_lock_held() -> bool:
+    """True if a build runner (old or new state dir) holds its run lock. Never blocks, never creates the lock."""
+    for state in state_dirs():
+        path = state / "run.lock"
+        if not path.exists():
+            continue
+        with path.open("a") as f:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return True
+            fcntl.flock(f, fcntl.LOCK_UN)
+    return False
+
+
+def usage_ok() -> bool:
+    out = subprocess.run([sys.executable, str(HERE / "usage.py"), "check"], capture_output=True, text=True, timeout=180)
+    return out.returncode == 0
+
+
+def diagnosis_skip(m: Metrics, state: dict, force: bool = False) -> str | None:
+    """Why the diagnosis can't run now, or None if it can."""
+    if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+        return "no CLAUDE_CODE_OAUTH_TOKEN"
+    if m.disk_pct >= 95:
+        return f"disk {m.disk_pct}% (a Claude run could fill it)"
+    last = state.get("last_diagnosis")
+    if not force and last and now() - datetime.fromisoformat(last) < DIAGNOSIS_EVERY:
+        return "last diagnosis under 6 h ago"
+    if run_lock_held():
+        return "another Claude run holds the run lock"
+    if not usage_ok():
+        return "session usage over its limit"
+    return None
+
+
+def diagnose(found: list[Problem], m: Metrics, cleaned: list[dict], state: dict, force: bool = False) -> str | None:
+    """A short read-only Sonnet run that says what uses the space or memory. None when skipped or failed."""
+    why = diagnosis_skip(m, state, force)
+    if why:
+        log({"rule": "diagnosis-skipped", "why": why})
+        return None
+    state["last_diagnosis"] = now().isoformat()
+    prompt = (HERE / "prompts/health-diagnose.md").read_text().format(
+        problems="\n".join(f"- {p.key}: {p.summary}" for p in found) or "- none",
+        metrics=json.dumps(asdict(m)),
+        cleaned="\n".join(f"- {r['rule']}: freed {human(r['freed_bytes'])}" for r in cleaned) or "- none",
+    )
+    argv = ["timeout", "10m", "claude", "-p", prompt, "--model", DIAGNOSIS_MODEL, "--max-turns", "15",
+            "--output-format", "json", "--settings", str(HERE / "settings/health-diagnose.json"),
+            "--permission-mode", "dontAsk"]
+    config.state_dir().mkdir(parents=True, exist_ok=True)
+    try:
+        out = subprocess.run(argv, cwd=config.state_dir(), capture_output=True, text=True, timeout=660)
+        result = json.loads(out.stdout).get("result") if out.returncode == 0 else None
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        log({"rule": "diagnosis-failed", "error": str(exc)[:300]})
+        return None
+    if not result:
+        log({"rule": "diagnosis-failed", "error": (out.stderr or out.stdout).strip()[-300:]})
+        return None
+    return result[:DIAGNOSIS_MAX_CHARS]
+
+
+def cmd_diagnose(force: bool) -> int:
+    config.load_env()
+    m = measure()
+    state = load_state()
+    result = diagnose(problems(m, thresholds()), m, [], state, force=force)
+    save_state(state)
+    print(result or "skipped (see health.log)")
+    return 0 if result else 1
+
+
+def tick() -> int:
+    config.state_dir().mkdir(parents=True, exist_ok=True)
+    lock = open(config.state_dir() / "health.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0  # another tick is running
+    try:
+        config.load_env()
+        th = thresholds()
+        cleaned = clean()  # routine once a day; pressure rules only while disk is over disk_clean_pct
+        m = measure()
+        state = load_state()  # after clean(), which records routine_at
+        at = now()
+        found = confirmed(problems(m, th), state, at)
+        open_ = state.setdefault("open", {})
+
+        new = [p for p in found if p.key not in open_]
+        diagnosis = diagnose(new, m, cleaned, state) if new else None
+        for p in found:
+            entry = open_.get(p.key)
+            if entry is None:
+                issue = notify_new(p, m, cleaned, diagnosis)
+                if issue is not None:
+                    open_[p.key] = {"since": at.isoformat(), "issue": issue, "last_notified": at.isoformat()}
+            elif at - datetime.fromisoformat(entry["last_notified"]) >= RENOTIFY:
+                if notify_again(entry, p, m, cleaned):
+                    entry["last_notified"] = at.isoformat()
+        for key in [k for k in open_ if k not in {p.key for p in found}]:
+            if notify_recovered(open_[key], key, m):
+                del open_[key]
+        save_state(state)
+        return 0
+    finally:
+        lock.close()
+
+
+def gate() -> int:
+    """1 while disk is at or over disk_alert_pct (run.sh starts no Claude run then), else 0. No cleanup, no notices."""
+    m = measure()
+    return 1 if m.disk_pct >= thresholds()["disk_alert_pct"] else 0
+
+
 def cmd_check() -> int:
     m = measure()
     found = problems(m, thresholds())
@@ -474,10 +661,16 @@ def main(argv: list[str]) -> int:
             return cmd_check()
         if argv[:1] == ["clean"] and set(argv[1:]) <= {"--dry-run", "--pressure"}:
             return cmd_clean(argv[1:])
+        if argv == ["tick"]:
+            return tick()
+        if argv == ["gate"]:
+            return gate()
+        if argv[:1] == ["diagnose"] and set(argv[1:]) <= {"--force"}:
+            return cmd_diagnose("--force" in argv)
     except HealthError as exc:
         print(exc, file=sys.stderr)
         return 2
-    print("usage: health.py check | clean [--dry-run] [--pressure]", file=sys.stderr)
+    print("usage: health.py check | clean [--dry-run] [--pressure] | tick | gate | diagnose [--force]", file=sys.stderr)
     return 2
 
 

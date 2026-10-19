@@ -1,5 +1,5 @@
 # Plan: VPS health alerts and read-only Claude diagnosis (`health.py tick`, `gate`)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks; cron line is AM2)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: sends notices, starts a Claude run, adds an agent settings file)
 **Depends on:** health-1-clean, runner-1-config
 
@@ -31,7 +31,7 @@ Load is a problem only if it was also over the threshold on the previous tick at
 else 0, with no cleanup or notices. `tick` holds `flock` on `health.lock` (non-blocking; if another tick holds it, exit 0).
 **Validate:** tests with monkeypatched `measure`, `clean` and notify functions: one problem over three ticks → one `new`, no
 `again` within 24 h, then `recovered`; load over the threshold on one tick → no problem, on two ticks 15 min apart → `load`; a held `health.lock` → exit 0 with no calls.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: notices
 **Runs:** unattended
@@ -43,7 +43,7 @@ bytes per rule from this tick, and the diagnosis (Task 3), never file contents. 
 (`--close` for recovered). A failed `gh` call is logged and retried next tick (the state isn't updated).
 **Validate:** `tests/test_runner.py` stubs `gh`: `notify --project vps-health` creates and uses that label and not `strelitzia`;
 `comment --close` makes a comment and a close call. Existing inbox tests pass unchanged.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: read-only diagnosis
 **Runs:** unattended
@@ -61,7 +61,7 @@ remove and the exact command; do not change anything; never print file contents 
 **Validate:** tests stub `subprocess.run`: each skip condition returns `None` with no `claude` call; the argv has `--settings`
 pointing at the file and `--model claude-sonnet-5-5`. A JSON test asserts that nothing in `allow` matches `rm`, `prune`, `kill`
 or `sudo`. On the VPS (one short Sonnet run, allowed unattended): `python3 health.py diagnose --force` → a few lines naming the build cache and `~/.cache/uv`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended
@@ -69,7 +69,7 @@ or `sudo`. On the VPS (one short Sonnet run, allowed unattended): `python3 healt
 **What:** README "VPS health": the alert flow, how the dedupe works, the diagnosis and its limits, `health gate`, and the cron
 line (design D6), added by the user (manual step AM2). AGENTS.md map: `settings/`, `prompts/`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

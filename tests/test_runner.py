@@ -398,3 +398,50 @@ def test_gate_bad_config_is_a_usage_error(tmp_path):
     out = subprocess.run([sys.executable, str(AGENT / "gate.py"), str(plan), "--plan", "--config", str(bad)], capture_output=True, text=True)
     assert out.returncode == 2
     assert "missing repo.name" in out.stderr
+
+
+@pytest.fixture
+def fake_gh(tmp_path):
+    """A `gh` on PATH that logs its argv (one JSON list per line) and answers `issue create` with an issue URL."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "gh.log"
+    gh = bin_dir / "gh"
+    gh.write_text(
+        "#!/usr/bin/env python3\nimport json, sys\n"
+        f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "if sys.argv[1:3] == ['issue', 'create']: print('https://github.com/o/r/issues/42')\n"
+        "if sys.argv[1:3] == ['issue', 'comment']: print('https://github.com/o/r/issues/42#issuecomment-1')\n"
+    )
+    gh.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "AGENT_INBOX_REPO": "o/r"}
+    env.pop("NTFY_TOPIC", None)
+
+    def inbox(*args):
+        return subprocess.run([sys.executable, str(AGENT / "inbox.py"), *args], env=env, capture_output=True, text=True)
+
+    inbox.calls = lambda: [json.loads(line) for line in log.read_text().splitlines()]
+    return inbox
+
+
+def test_inbox_notify_project_label(fake_gh):
+    out = fake_gh("notify", "--project", "vps-health", "--json", "--title", "[vps] disk", "--body", "b")
+    assert json.loads(out.stdout) == {"number": 42, "url": "https://github.com/o/r/issues/42"}
+    calls = fake_gh.calls()
+    assert ["label", "create", "vps-health", "--repo", "o/r", "--force"] in calls
+    create = next(c for c in calls if c[:2] == ["issue", "create"])
+    assert "vps-health" in create and "strelitzia" not in create
+    assert not any("strelitzia" in c for c in calls)
+
+
+def test_inbox_notify_defaults_to_strelitzia(fake_gh):
+    out = fake_gh("notify", "--title", "t", "--body", "b")
+    assert out.stdout.strip() == "https://github.com/o/r/issues/42"
+    assert "strelitzia" in next(c for c in fake_gh.calls() if c[:2] == ["issue", "create"])
+
+
+def test_inbox_comment_close(fake_gh):
+    assert fake_gh("comment", "42", "--body", "Recovered", "--close").returncode == 0
+    calls = fake_gh.calls()
+    assert calls[0][:3] == ["issue", "comment", "42"] and "<!-- strelitzia-agent -->" in calls[0][-1]
+    assert calls[1] == ["issue", "close", "42", "--repo", "o/r"]
