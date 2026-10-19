@@ -37,6 +37,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A14 | Drop the Strelitzia-era fallbacks | [runner-9-cleanup](plans/runner-9-cleanup.md) | agent-runner | ⏳ queued after S2 | S2 |
 | A15 | Sonnet triage of blocked items (optional) | [runner-10-triage](plans/runner-10-triage.md) | agent-runner | ⏳ queued after A16 | A11 |
 | A16 | CI fallback without check access, preprod follows each merge, hand-merged PRs | [runner-11-autopilot](plans/runner-11-autopilot.md) | agent-runner | ✅ #69 | cutover |
+| A17 | `install.sh` skips the test suite when CI passed on the tag | [runner-12-fast-install](plans/runner-12-fast-install.md) | agent-runner | ⏳ queued | A16 |
 
 ## Manual steps (you)
 
