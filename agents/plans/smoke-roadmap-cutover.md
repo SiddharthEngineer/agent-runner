@@ -21,7 +21,7 @@ exists here, the implementer PR should merge on green CI with no validator run a
 - Replace the "Run of 2026-10-19" line with: "**Cutover 2026-10-19:** cron runs `agent-runner run` (v0.1.4). Fixes found by the smoke
   tests: #49, #51, #55, #56, #57, #61. Next: AM3 (signed-in preprod checks), then AM6 and S2 from 2026-10-26."
 **Validate:** `scripts/validate.sh` → all PASS. `grep -c '☐' agents/ROADMAP.md` → 2 (AM3, AM6).
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (398d3f9)
 
 ## Validation
 - `scripts/validate.sh` passes.
