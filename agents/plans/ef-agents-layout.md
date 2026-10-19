@@ -1,5 +1,5 @@
 # Plan: engineerfamily agent folder layout (AGENTS.md, agents/, interactive settings)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (engineerfamily PR #41, merged)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; docs and editor settings only)
 **Repo:** SiddharthEngineer/engineerfamily (`~/src/engineerfamily`, base `main`, merge commits)
 **Depends on:** ef-validate-ci (needs `scripts/validate.sh` and CI)
@@ -28,7 +28,7 @@ ROADMAP, plans and DEPLOY doc, and `.claude/` holds only what Claude Code loads 
 user's" and "never edit inside `/srv`". `CLAUDE.md` becomes the single line `@AGENTS.md`. Keep it under 45 lines.
 **Validate:** `wc -l AGENTS.md` → ≤ 45; `cat CLAUDE.md` → `@AGENTS.md`; every rule line from the old `CLAUDE.md` appears in `AGENTS.md`
 (check with `git show HEAD~1:CLAUDE.md`).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: agents/ folder
 **Runs:** unattended
@@ -38,7 +38,7 @@ a short intro. README keeps a 3-line "Deploying" pointer to it. `agents/ROADMAP.
 table, Manual steps, Decisions ("2026-10-19 (user): runner programme PRs auto-merge on green CI"), and a line saying earlier
 engineerfamily runner Parts are tracked in agent-runner's ROADMAP (link).
 **Validate:** `grep -c 'make preprod-deploy' agents/DEPLOY.md` ≥ 1; `grep -n 'agents/DEPLOY.md' README.md` → the pointer; `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: interactive settings
 **Runs:** unattended
@@ -48,7 +48,7 @@ engineerfamily runner Parts are tracked in agent-runner's ROADMAP (link).
 Deny: `make deploy-prod:*`, `make tag-prod:*`, `make strelitzia-deploy:*`, `make deploy-preprod:*`, `git push --force:*`,
 `git push origin main:*`, `docker volume:*`, `sudo:*`, `Read(**/.env)`, `Read(services/nginx/.htpasswd*)`.
 **Validate:** `python3 -c "import json;d=json.load(open('.claude/settings.json'));assert 'Bash(make deploy-prod:*)' in d['permissions']['deny']"` → no error.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes; the PR's CI is green.
