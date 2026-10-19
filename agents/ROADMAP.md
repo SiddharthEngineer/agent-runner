@@ -33,9 +33,10 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A13 | engineerfamily `runner.toml`, agent settings, commands | [ef-runner-config](plans/ef-runner-config.md) | engineerfamily | ✅ | A12, A11 |
 | S1 | Strelitzia `runner.toml`, agent settings (add-only) | Strelitzia R44 [strelitzia-runner-config](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-config.md) | Strelitzia | ✅ (Strelitzia#81) | A10 |
 | — | **Cutover** (AM3-AM5) | design Rollout 2-6 | VPS | ✅ 2026-10-19 (AM3 still open: no signed-in preprod checks until it's done) | A13, S1, A2 installed |
-| S2 | Strelitzia commands on the CLI, delete `scripts/agent/` | Strelitzia R45 [strelitzia-runner-cleanup](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-cleanup.md) | Strelitzia | ⏳ | cutover + 1 week |
-| A14 | Drop the Strelitzia-era fallbacks | [runner-9-cleanup](plans/runner-9-cleanup.md) | agent-runner | ⏳ | S2, AM6 |
-| A15 | Sonnet triage of blocked items (optional) | [runner-10-triage](plans/runner-10-triage.md) | agent-runner | ⏳ | A11 |
+| S2 | Strelitzia commands on the CLI, delete `scripts/agent/` | Strelitzia R45 [strelitzia-runner-cleanup](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-cleanup.md) | Strelitzia | ⏳ queued for 2026-10-26 | cutover + 1 week |
+| A14 | Drop the Strelitzia-era fallbacks | [runner-9-cleanup](plans/runner-9-cleanup.md) | agent-runner | ⏳ queued after S2 | S2 |
+| A15 | Sonnet triage of blocked items (optional) | [runner-10-triage](plans/runner-10-triage.md) | agent-runner | ⏳ queued after A16 | A11 |
+| A16 | CI fallback without check access, preprod follows each merge, hand-merged PRs | [runner-11-autopilot](plans/runner-11-autopilot.md) | agent-runner | ⏳ queued | cutover |
 
 ## Manual steps (you)
 
@@ -51,6 +52,8 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM6 | A week after AM5 with no trouble: queue S2, then delete `~/.config/strelitzia-agent` and `~/.local/state/strelitzia-agent`. | ☐ |
 
 ## Decisions (current)
+- 2026-10-19 (user): Everything left in the queue builds with no manual approval: the implementer and validator merge to the base
+  and put preprod on it. S2 and A14 are queued (S2 not before 2026-10-26), A14 no longer waits for AM6. Prod deploys and installs stay manual.
 - 2026-10-19 (user): All programme PRs are `low` and auto-merge after green CI. Nothing touches prod. Go-live steps (tags, installs,
   crontab, `~/.config/agent-runner`, the cutover) stay the user's.
 - 2026-10-19 (user): Plan everything now. Plans after wave 1 cite planned interfaces, and each checks its predecessor in Task 0.

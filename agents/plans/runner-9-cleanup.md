@@ -1,7 +1,7 @@
 # Plan: drop the Strelitzia-era fallbacks from the runner
 **Status:** ❌ Not started
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
-**Depends on:** strelitzia-runner-cleanup (Strelitzia repo), and the user's AM6 (old config/state dirs deleted)
+**Depends on:** strelitzia-runner-cleanup (Strelitzia repo). The old dirs (AM6) may still exist: nothing reads them after this plan
 
 ## Goal
 After a week on the new runner with no trouble (design Rollout step 7), the runner stops reading the old
@@ -9,8 +9,9 @@ After a week on the new runner with no trouble (design Rollout step 7), the runn
 `~/.config/agent-runner/` and each repo's `runner.toml`.
 
 ## Context
-- Task 0 check: `~/.config/strelitzia-agent` and `~/.local/state/strelitzia-agent` no longer exist (AM6), and
-  `crontab -l` has no `scripts/agent/run.sh`. If either check fails, write `blocked` with what's still there and stop.
+- Task 0 check: strelitzia-runner-cleanup is merged (`scripts/agent/` is gone from Strelitzia `origin/trunk`), and `crontab -l` has
+  no active `scripts/agent/run.sh` line (a commented one is fine). If either fails, write `blocked` naming it and stop. Whether the old
+  dirs still exist doesn't matter (user 2026-10-19: no manual step before this runs).
 - `grep -rn 'strelitzia-agent\|STRELITZIA_AGENT_STATE\|AGENT_DEFAULT_REPO\|applypilot' --include=*.py --include=*.sh .` lists every site.
 - `config.py env_file()` (runner-1-config): the fallback. `buildqueue.py` STATE alias and `DEFAULT_REPO` (runner-3-state).
   `gate.py`'s no-`--config` defaults (runner-1-config Decision 3). `health.py` (both state dirs). `inbox.py` legacy markers.
