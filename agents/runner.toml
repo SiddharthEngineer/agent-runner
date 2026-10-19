@@ -1,0 +1,14 @@
+# agent-runner as a repo the runner builds (design D4). No [preprod]: a merge goes live only when the user tags and installs.
+[repo]
+name = "agent-runner"
+github = "SiddharthEngineer/agent-runner"
+base = "main"
+merge = "squash"
+
+[validate]
+fast = "scripts/validate.sh"
+full = "scripts/validate.sh"
+
+[gate]
+high_risk = ["agents/runner.toml", "agents/settings/*", ".claude/settings.json", ".github/*", "install.sh", "settings/*"]
+doc_or_test = ["*.md", "agents/*", ".claude/commands/*", "tests/*", "prompts/*"]

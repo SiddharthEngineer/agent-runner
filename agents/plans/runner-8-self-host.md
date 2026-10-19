@@ -1,5 +1,5 @@
 # Plan: agent-runner builds itself (its own `runner.toml`, agent settings and PIV commands)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-7-preprod-check
 
@@ -28,7 +28,7 @@ Implementer settings: the Strelitzia ones without the `.venv`/npm/dashboard line
 `Bash(agent-runner inbox ask:*)`, `Bash(agent-runner gate:*)`; deny `Edit(agents/settings/**)`, `Edit(agents/runner.toml)`,
 `Edit(.github/**)`, `Edit(install.sh)`, `Bash(git tag:*)`, `Bash(git push --tags:*)`, `Bash(crontab:*)`, `Read(//home/dev/.config/agent-runner/**)`.
 **Validate:** `python3 config.py check agents/runner.toml` → `ok`; `pytest -q tests` (add a test that every `agents/settings/*.json` parses and denies `Bash(crontab:*)` and `Bash(git tag:*)`).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: PIV commands
 **Runs:** unattended
@@ -37,7 +37,7 @@ Implementer settings: the Strelitzia ones without the `.venv`/npm/dashboard line
 `main`, `scripts/validate.sh` (no `--full`/`--setup`; `uv` needs no venv), and the runner calls `agent-runner gate|queue|inbox|preprod` instead of
 `python3 scripts/agent/*.py`. `/schedule-build` passes `--repo agent-runner`. `/ship` has no preprod branch (a `review` PR waits for the validator).
 **Validate:** `grep -rn 'scripts/agent\|Strelitzia\|trunk' .claude/commands` → no matches.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: `check-commands`
 **Runs:** unattended
@@ -46,7 +46,7 @@ Implementer settings: the Strelitzia ones without the `.venv`/npm/dashboard line
 replaces the repo-specific tokens (repo name, base branch, validate command) with placeholders, and prints a unified diff per command
 name that differs, or `same` per command. CLI subcommand `check-commands`.
 **Validate:** test with two temp repos whose `plan.md` differ only in the repo name → `same`; and one with an extra line → a diff showing that line.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
