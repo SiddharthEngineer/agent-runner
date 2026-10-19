@@ -23,9 +23,7 @@ full = "true"
 [gate]
 high_risk = ["danger/*"]
 doc_or_test = ["*.md", "agents/*"]
-[preprod]
-deploy = "{deploy}"
-"""
+{preprod}"""
 
 STUB_LOGGER = "#!/usr/bin/env bash\nargs=\"$*\"\necho \"{name} ${{args//$'\\n'/ }}\" >> \"$STUB_LOG\"\n{extra}"
 
@@ -59,7 +57,11 @@ def runner(tmp_path):
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id.
     write_stub(bin_dir / "claude", "claude",
-               'printf "%s" "${STUB_RESULT:-{\\"status\\": \\"ready\\", \\"pr\\": 9}}" > "$AGENT_RESULT_FILE"\n'
+               'if [[ "$*" == *"You are the validator"* ]]; then\n'
+               '  [ -n "${STUB_REVIEW:-}" ] && printf "%s" "$STUB_REVIEW" > "$AGENT_RESULT_FILE"\n'
+               'else\n'
+               '  printf "%s" "${STUB_RESULT:-{\\"status\\": \\"ready\\", \\"pr\\": 9}}" > "$AGENT_RESULT_FILE"\n'
+               'fi\n'
                'echo \'{"session_id": "s1"}\'\n')
     write_stub(bin_dir / "gh", "gh")
     write_stub(bin_dir / "docker", "docker")
@@ -67,18 +69,21 @@ def runner(tmp_path):
     def git(*args) -> str:
         return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
 
-    def register(name: str, base: str = "main", merge: str = "merge", deploy: str = "true", plan: str | None = "low") -> None:
+    def register(name: str, base: str = "main", merge: str = "merge", deploy: str | None = "true",
+                 plan: str | None = "low") -> None:
         origin, clone = tmp_path / f"{name}.git", tmp_path / f"{name}-clone"
         work = tmp_path / f"{name}-work"
         git("init", "-q", "-b", base, work)
         (work / "agents/plans").mkdir(parents=True)
-        (work / "agents/runner.toml").write_text(TOML.format(name=name, base=base, merge=merge, deploy=deploy))
+        preprod = f'[preprod]\ndeploy = "{deploy}"\n' if deploy else ""
+        (work / "agents/runner.toml").write_text(TOML.format(name=name, base=base, merge=merge, preprod=preprod))
         if plan:
             (work / "agents/plans/x.md").write_text(f"# Plan: x\n**Risk:** {plan}\n")
         (work / "README.md").write_text("x\n")
         git("-C", work, "add", "-A")
         git("-C", work, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-qm", "base")
         git("clone", "-q", "--bare", work, origin)
+        git("-C", origin, "update-ref", "refs/pull/9/head", "HEAD")  # PR #9's head, for the validator's checkout
         git("clone", "-q", origin, clone)
         repos = home / ".config/agent-runner/repos"
         repos.mkdir(parents=True, exist_ok=True)
@@ -164,14 +169,13 @@ def test_strelitzia_rebases(runner):
     assert "gh pr merge 9 --repo o/strelitzia --rebase --delete-branch" in runner.calls(), runner.runs_log() + runner.out.stderr
 
 
-def test_review_tier_waits_for_preprod(runner):
+def test_review_tier_waits_for_the_validator(runner):
     runner.register("engineerfamily", plan="review")
     runner.queue("add", "x", "--repo", "engineerfamily")
     runner()
     calls = runner.calls()
-    assert "gh pr edit 9 --repo o/engineerfamily --add-label awaiting-preprod" in calls
     assert not any(c.startswith("gh pr merge") for c in calls)
-    assert runner.status("engineerfamily/x") == "awaiting-preprod"
+    assert runner.status("engineerfamily/x") == "awaiting-review"
 
 
 def test_settings_fall_back_to_scripts_agent(runner):
@@ -190,3 +194,65 @@ def test_health_gate_stops_runs_not_upkeep(runner):
     assert "inbox poll" in runner.calls() and "preprod tick" in runner.calls()
     assert "disk critical, no runs" in runner.runs_log()
     assert runner.status("engineerfamily/x") == "queued"
+
+
+def awaiting_review(runner, name="engineerfamily", attempts=1, **register):
+    runner.register(name, plan="review", **register)
+    key = f"{name}/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "status=awaiting-review", "pr=9", f"attempts={attempts}")
+    return key
+
+
+def verdict(v: str, summary: str = "s") -> str:
+    return json.dumps({"verdict": v, "summary": summary, "findings": ["a.py:1: bug"]})
+
+
+def test_review_dry_run(runner):
+    key = awaiting_review(runner)
+    runner(AGENT_DRY_RUN="1")
+    assert f"would run validator (review) for {key} PR #9" in runner.runs_log()
+    assert claude_calls(runner) == []
+
+
+def test_review_approve_with_preprod_waits_for_preprod(runner):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("approve"))
+    [claude] = claude_calls(runner)
+    assert "You are the validator for o/engineerfamily PR #9" in claude
+    assert f"--settings {runner.state.parent}/runner/settings/validate.json" in claude
+    assert "--permission-mode dontAsk" in claude
+    assert runner.status(key) == "awaiting-preprod"
+    assert not any(c.startswith("gh pr merge") for c in runner.calls())
+    assert not (runner.state / "worktrees/engineerfamily/review-9").exists()
+
+
+def test_review_approve_without_preprod_merges(runner):
+    key = awaiting_review(runner, name="agent-runner", merge="squash", deploy=None)
+    runner(STUB_REVIEW=verdict("approve"))
+    assert "gh pr merge 9 --repo o/agent-runner --squash --delete-branch" in runner.calls()
+    assert runner.status(key) == "done"
+
+
+def test_review_changes_requeues_with_note(runner):
+    key = awaiting_review(runner, attempts=1)
+    runner(STUB_REVIEW=verdict("changes", "fix the bug"))
+    assert runner.status(key) == "queued"
+    assert runner.queue("get", key, "resume").stdout.strip() == "1"
+    assert "fix the bug" in runner.queue("get", key, "notes").stdout
+
+
+def test_review_changes_out_of_attempts_blocks(runner):
+    key = awaiting_review(runner, attempts=2)
+    runner(STUB_REVIEW=verdict("changes"))
+    assert runner.status(key) == "blocked"
+    assert any(c.startswith("inbox notify") and "still asks for changes" in c for c in runner.calls())
+
+
+def test_review_missing_result_twice_blocks(runner):
+    key = awaiting_review(runner)
+    runner()
+    assert runner.status(key) == "awaiting-review"
+    runner()
+    assert runner.status(key) == "blocked"
+    assert any(c.startswith("inbox notify") and "validator failed 2 times" in c for c in runner.calls())

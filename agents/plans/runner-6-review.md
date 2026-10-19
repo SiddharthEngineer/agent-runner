@@ -47,7 +47,7 @@ item → detached worktree `worktrees/<repo>/review-<pr>` at the PR head → `cl
 **Validate:** `pytest -q tests/test_run.py` with a stub `claude` that writes each verdict: `approve` → next status per Task 3;
 `changes` → `queued` with the summary in notes and `resume=1`; a missing result → counts as a failed validator attempt (2 →
 item `blocked`, notice sent).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: after the verdict
 **Runs:** unattended
@@ -57,7 +57,7 @@ item `blocked`, notice sent).
 green → merge with the repo's method, notice "merged after review", item `done`. `blocked` → item `blocked`, notice with the summary.
 **Validate:** tests: agent-runner fixture (no `[preprod]`) + `approve` → merge call; Strelitzia fixture + `approve` →
 `awaiting-preprod`; `changes` on an item at 1/2 attempts → queued; at 2/2 → `blocked`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (committed with Task 2)
 
 ### Task 4: docs
 **Runs:** unattended
