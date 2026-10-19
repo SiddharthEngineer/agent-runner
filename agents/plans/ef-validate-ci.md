@@ -1,5 +1,5 @@
 # Plan: engineerfamily validate script, PR CI, and `make prod-changes`
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (engineerfamily PR #40, merged)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and a Makefile target to the deploy repo)
 **Repo:** SiddharthEngineer/engineerfamily (`~/src/engineerfamily`, base `main`, merge commits). This plan lives in agent-runner until engineerfamily has its own `agents/` (Part ef-agents-layout).
 **Depends on:** - (useful before the runner exists; design [shared-agent-runner](shared-agent-runner.md) D5)
@@ -33,7 +33,7 @@ Once agents merge `review` PRs, this is the human checkpoint before a prod deplo
 `mktemp` file mounted as `/etc/nginx/.htpasswd`, removed by a `trap`). Runs from any cwd (`cd "$(dirname "$0")/.."`). `-h` prints usage.
 **Validate:** `scripts/validate.sh` → 7+ PASS lines. Then break `nginx.preprod.conf` in a scratch copy (a missing `;`):
 `scripts/validate.sh` → `FAIL  nginx preprod`, exit 1. Revert the change.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: PR CI
 **Runs:** unattended
@@ -41,7 +41,7 @@ Once agents merge `review` PRs, this is the human checkpoint before a prod deplo
 **What:** `on: pull_request` and `push: branches: [main]`; one job on `ubuntu-latest` (Docker and Compose v2 are preinstalled):
 `actions/checkout@v4`, then `scripts/validate.sh`. `permissions: contents: read`. No secrets.
 **Validate:** push the branch and open the PR, then `gh pr checks <pr> --repo SiddharthEngineer/engineerfamily --watch` → `validate` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: `make prod-changes`
 **Runs:** unattended
@@ -53,7 +53,7 @@ sha>..origin/trunk` and its log. Turn `(#NN)` or `Merge pull request #NN` in a s
 calling it with `STRELITZIA_PROD_DIR`, plus `.PHONY` and a `help` line.
 **Validate:** `make prod-changes` → two headed sections. The engineerfamily range starts at `v1.3.0` (the newest prod tag on
 2026-10-19), and the PR links match `gh pr list --state merged`. With `STRELITZIA_PROD_DIR=/nonexistent` → a clear error, exit 1.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended
@@ -61,7 +61,7 @@ calling it with `STRELITZIA_PROD_DIR`, plus `.PHONY` and a `help` line.
 **What:** In `CLAUDE.md` "Rules", replace the two hand-run commands with `scripts/validate.sh` (one line saying what it checks). In
 README "Deploys", add "before a prod deploy, run `make prod-changes`".
 **Validate:** `scripts/validate.sh` → all PASS; `grep -n validate.sh CLAUDE.md` → the new line.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes locally and in the PR's CI.

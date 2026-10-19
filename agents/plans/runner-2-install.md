@@ -1,5 +1,5 @@
 # Plan: `agent-runner` CLI, `install.sh <tag>`, CI and README
-**Status:** ❌ Not started
+**Status:** 🟡 Code done 2026-10-19; `ci.yml` left for the user (AM1a: the token has no `workflow` scope)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and decides what code cron runs)
 **Depends on:** runner-1-config
 
@@ -28,7 +28,7 @@ arguments pass through with `exec`. `agent-runner version` prints the contents o
 `git -C "$HERE" describe --tags --always`. An unknown or missing subcommand prints usage (the map) to stderr and exits 2.
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_install.py -k cli` → `agent-runner gate --help` exits 0
 through a symlink in `tmp_path/bin`; `agent-runner nope` exits 2; `agent-runner version` in a temp clone with tag `v0.0.1` prints `v0.0.1`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: `install.sh <tag>`
 **Runs:** unattended
@@ -43,7 +43,7 @@ Rollback is `install.sh <older tag>`.
 **Validate:** tests with `HOME=tmp_path` and `AGENT_RUNNER_REMOTE` set to a temp bare repo tagged `v0.0.1`, `v0.0.2`. Expect: install
 v0.0.1 → `current` resolves to `releases/v0.0.1`; install v0.0.2 switches it; `main` and an unknown tag are refused with `current`
 unchanged; after 5 installs, 3 remain. (Tests stub `scripts/validate.sh` in the temp repo with `exit 0`; one test uses `exit 1` to cover the abort.)
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: CI workflow and README
 **Runs:** unattended
@@ -54,11 +54,37 @@ what the runner is, install and rollback (`install.sh`), the CLI map, config (`~
 and state (`~/.local/state/agent-runner/`) locations, and the cron lines from design D1/D6 marked "added at the cutover". Keep its
 Limits section, but drop the Strelitzia paths. Add `agent-runner`, `install.sh` and `config.py` to the AGENTS.md map.
 **Validate:** `scripts/validate.sh` → all PASS; after pushing the branch, `gh pr checks <pr> --repo SiddharthEngineer/agent-runner` → the CI check passes.
-**Status:** ❌
+**Status:** 🟡 2026-10-19: README and AGENTS.md done. `ci.yml` is left for the user: the runner's GitHub token has no `workflow` scope, so the push was refused (see Left for you).
 
 ## Validation
 - `scripts/validate.sh` passes locally and in CI.
 - In a temp `HOME`: `AGENT_RUNNER_REMOTE=<local bare repo> ./install.sh v0.0.1 && ~/.local/bin/agent-runner version` → `v0.0.1`.
+
+## Left for you
+Add `.github/workflows/ci.yml` with the content below (ROADMAP AM1a). Until then `scripts/validate.sh` run locally is the gate.
+```yaml
+# The same scripts/validate.sh that people, agents and install.sh run.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - run: scripts/validate.sh
+```
 
 ## Human test steps (preprod)
 None on preprod. After merge, the user tags and installs (ROADMAP manual step AM1): `agent-runner version` prints the tag, and

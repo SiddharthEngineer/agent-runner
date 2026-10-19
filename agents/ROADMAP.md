@@ -18,8 +18,8 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 |---|---|---|---|---|---|
 | A1 | `runner.toml` loader, prod guard, config/state dirs | [runner-1-config](plans/runner-1-config.md) | agent-runner | ✅ | - |
 | A3 | VPS health check and fixed-rule cleanup | [health-1-clean](plans/health-1-clean.md) | agent-runner | ✅ | - |
-| A5 | engineerfamily validate script, PR CI, `make prod-changes` | [ef-validate-ci](plans/ef-validate-ci.md) | engineerfamily | ⏳ | - |
-| A2 | `agent-runner` CLI, `install.sh <tag>`, CI, README | [runner-2-install](plans/runner-2-install.md) | agent-runner | ⏳ | A1 |
+| A5 | engineerfamily validate script, PR CI, `make prod-changes` | [ef-validate-ci](plans/ef-validate-ci.md) | engineerfamily | ✅ | - |
+| A2 | `agent-runner` CLI, `install.sh <tag>`, CI, README | [runner-2-install](plans/runner-2-install.md) | agent-runner | 🟡 (AM1a) | A1 |
 | A4 | VPS health alerts and read-only diagnosis | [health-2-alert](plans/health-2-alert.md) | agent-runner | ⏳ | A1, A3 |
 | A6 | Multi-repo queue keys, inbox projects, shared state | [runner-3-state](plans/runner-3-state.md) | agent-runner | ⏳ | A1, A4 |
 | A7 | Global preprod lock driven by `runner.toml` | [runner-4-preprod](plans/runner-4-preprod.md) | agent-runner | ⏳ | A6 |
@@ -41,6 +41,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 |---|---|---|
 | AM0 | Rename `agent-inbox` → `agent-runner` on GitHub. Done 2026-10-19 (user); Claude seeded the repo and pointed `AGENT_INBOX_REPO` at the new name in `~/.config/strelitzia-agent/env`. | ☑ |
 | AM1 | After A2 merges: `git -C ~/src/agent-runner pull && git -C ~/src/agent-runner tag v0.1.0 origin/main && git -C ~/src/agent-runner push origin v0.1.0`, then `~/src/agent-runner/install.sh v0.1.0`. Check: `agent-runner version` → `v0.1.0`. Repeat with the next version after later merges you want live. | ☐ |
+| AM1a | Add agent-runner's CI: commit `.github/workflows/ci.yml` from [runner-2-install](plans/runner-2-install.md) "Left for you" (the agents' token has no `workflow` scope, so it can't push workflow files here). Until then PRs here have no checks and merge on a green local `scripts/validate.sh`. | ☐ |
 | AM2 | After A4 merges and is installed (AM1): read `agent-runner health clean --dry-run --pressure` once, then add `*/15 * * * * $HOME/.local/bin/agent-runner health tick` to the `dev` crontab and check `~/.local/state/agent-runner/health.log` after a tick. | ☐ |
 | AM3 | Before the cutover, for A10's signed-in checks: sign the dev test account in to `https://preprod.engineerfamily.net/` in a local Playwright browser and save its storage state (`npx playwright open --save-storage=state.json https://preprod.engineerfamily.net/`), then copy it to `~/.config/agent-runner/preprod-storage-state.json` (mode 600). Redo it when the site session expires. Without it, signed-in steps come to you as "left for you". | ☐ |
 | AM4 | Cutover config (design Rollout step 4): copy `~/.config/strelitzia-agent/{env,preprod.netrc}` to `~/.config/agent-runner/`, write `repos/{strelitzia,engineerfamily,agent-runner}.env` (`AGENT_REPO=~/src/<repo>`, `PREPROD_NETRC=…`), add `machine preprod.engineerfamily.net` to the netrc, and copy `queue.json` and `runs.jsonl` to `~/.local/state/agent-runner/`. | ☐ |
