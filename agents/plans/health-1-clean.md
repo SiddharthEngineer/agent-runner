@@ -72,7 +72,7 @@ and `df /` are unchanged afterwards.
 **What:** README section "VPS health": the thresholds, both rule tiers, the never-list (design D6), `health.toml` override example,
 and how to read `health.log`. AGENTS.md map row for `health.py`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
