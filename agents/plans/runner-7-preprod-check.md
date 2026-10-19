@@ -1,5 +1,5 @@
 # Plan: validator, preprod stage (run the Human test steps on preprod)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks; AM3 is the user's)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing installed runs this until the cutover)
 **Depends on:** runner-6-review
 

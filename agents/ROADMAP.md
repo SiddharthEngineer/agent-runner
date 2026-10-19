@@ -25,7 +25,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A7 | Global preprod lock driven by `runner.toml` | [runner-4-preprod](plans/runner-4-preprod.md) | agent-runner | ✅ | A6 |
 | A8 | `run.sh` builds every registered repo, dry run, health gate | [runner-5-run](plans/runner-5-run.md) | agent-runner | ✅ | A7 |
 | A9 | Validator: review stage | [runner-6-review](plans/runner-6-review.md) | agent-runner | ✅ | A8 |
-| A10 | Validator: preprod stage | [runner-7-preprod-check](plans/runner-7-preprod-check.md) | agent-runner | ⏳ | A9 |
+| A10 | Validator: preprod stage | [runner-7-preprod-check](plans/runner-7-preprod-check.md) | agent-runner | ✅ | A9 |
 | A11 | agent-runner builds itself (config, settings, commands, `check-commands`) | [runner-8-self-host](plans/runner-8-self-host.md) | agent-runner | ⏳ | A10 |
 | A12 | engineerfamily layout: AGENTS.md, `agents/`, settings | [ef-agents-layout](plans/ef-agents-layout.md) | engineerfamily | ⏳ | A5 |
 | A13 | engineerfamily `runner.toml`, agent settings, commands | [ef-runner-config](plans/ef-runner-config.md) | engineerfamily | ⏳ | A12, A11 |
