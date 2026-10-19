@@ -7,6 +7,8 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 ## Map
 | Path | What |
 |---|---|
+| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `usage`, `config`, `health`, `preprod`, `run`, `version` |
+| `install.sh` | `install.sh <tag>`: mirror, release worktree, validate, switch `current` atomically (the user runs it) |
 | `run.sh` | Cron entry (manager): upkeep, pick the next queued plan, run the implementer, gate, merge or send to preprod |
 | `buildqueue.py` | Queue state, attempts, pause |
 | `gate.py` | Risk gate (plan risk + diff checks); `--plan` checks a plan's size budget |

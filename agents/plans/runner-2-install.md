@@ -54,11 +54,37 @@ what the runner is, install and rollback (`install.sh`), the CLI map, config (`~
 and state (`~/.local/state/agent-runner/`) locations, and the cron lines from design D1/D6 marked "added at the cutover". Keep its
 Limits section, but drop the Strelitzia paths. Add `agent-runner`, `install.sh` and `config.py` to the AGENTS.md map.
 **Validate:** `scripts/validate.sh` → all PASS; after pushing the branch, `gh pr checks <pr> --repo SiddharthEngineer/agent-runner` → the CI check passes.
-**Status:** ❌
+**Status:** 🟡 2026-10-19: README and AGENTS.md done. `ci.yml` is left for the user: the runner's GitHub token has no `workflow` scope, so the push was refused (see Left for you).
 
 ## Validation
 - `scripts/validate.sh` passes locally and in CI.
 - In a temp `HOME`: `AGENT_RUNNER_REMOTE=<local bare repo> ./install.sh v0.0.1 && ~/.local/bin/agent-runner version` → `v0.0.1`.
+
+## Left for you
+Add `.github/workflows/ci.yml` with the content below (ROADMAP AM1a). Until then `scripts/validate.sh` run locally is the gate.
+```yaml
+# The same scripts/validate.sh that people, agents and install.sh run.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v6
+      - run: scripts/validate.sh
+```
 
 ## Human test steps (preprod)
 None on preprod. After merge, the user tags and installs (ROADMAP manual step AM1): `agent-runner version` prints the tag, and
