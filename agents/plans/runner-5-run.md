@@ -57,7 +57,7 @@ item → `--rebase`; `gate` returning review → `awaiting-preprod` label and no
 runs: inbox poll and `preprod.sh tick` come before the gate). Keep the per-run `docker builder prune --keep-storage` (cheap and
 it bounds long chains). Update the header comment and README "How a tick works" for multi-repo and the dry run.
 **Validate:** test: a stub `health.py gate` exiting 1 → no claude call, inbox poll still called. `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
