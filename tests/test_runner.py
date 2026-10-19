@@ -15,7 +15,7 @@ AGENT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def q(tmp_path, monkeypatch):
-    monkeypatch.setenv("STRELITZIA_AGENT_STATE", str(tmp_path / "state"))
+    monkeypatch.setenv("AGENT_RUNNER_STATE", str(tmp_path / "state"))
 
     def run(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(AGENT / "buildqueue.py"), *args], capture_output=True, text=True)
