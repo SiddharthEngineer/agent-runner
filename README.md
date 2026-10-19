@@ -80,12 +80,15 @@ Standard library only.
 
 ## VPS health (`health.py`)
 The VPS runs prod, preprod and every agent run, so a full disk or memory pressure breaks them all at once. `health.py` measures
-the box cheaply (no Claude) and frees disk with fixed rules. Alerts and the cron line come with health-2-alert.
+the box cheaply (no Claude), frees disk with fixed rules, and tells you when that isn't enough.
 
 ```
 python3 health.py check                        # JSON {"metrics": …, "problems": […]}; exit 1 when there are problems
 python3 health.py clean --dry-run --pressure   # every rule and what it would free; deletes nothing
 python3 health.py clean                        # routine rules (once a day), plus pressure rules while disk is over 80%
+python3 health.py tick                         # cron: clean, re-measure, notify (below)
+python3 health.py gate                         # exit 1 while disk is at or over disk_alert_pct (run.sh starts no Claude run then)
+python3 health.py diagnose [--force]           # the read-only diagnosis on its own; --force ignores the 6 h spacing
 ```
 
 **Thresholds** (override any of them in `~/.config/agent-runner/health.toml`; an unknown key is an error):
@@ -114,3 +117,20 @@ never trigger a deletion. Every rule deletes only strictly inside its own root a
 **`health.log`** (in the state dir, `~/.local/state/agent-runner/`) has one JSON line per rule run:
 `{"time", "rule", "tier", "dry_run", "freed_bytes"}`, plus `"error"` when the rule failed (the next rule still runs), and
 `"rule": "refused"` lines for paths a guard skipped. `health.json` next to it records when the routine rules last ran.
+
+**Alerts (`health tick`).** Each tick (its own lock, so ticks never overlap) runs `clean`, measures again, and compares the problems
+with the open ones in `health.json`. A new problem opens one `agent-notice` issue in this repo labelled `vps-health`
+(`[vps] disk 91% used (alert at 90%) after cleanup`) plus an ntfy push. The body has the metrics, what this tick's cleanup freed,
+and the diagnosis. While it lasts, the issue gets at most one comment a day. When it clears, it gets a "Recovered" comment and is
+closed. Load counts only when it was also high on a tick at least 15 minutes earlier. A failed `gh` call is logged and retried on
+the next tick.
+
+**Diagnosis.** Before the first notice of a problem, a short Sonnet run (`claude-sonnet-5-5`, 10 minutes, 15 turns,
+`--permission-mode dontAsk` with [settings/health-diagnose.json](settings/health-diagnose.json)) looks around with `df`, `du`, `free`,
+`ps`, `ls` and `docker system df/ps/images`, and writes what uses the space or memory and the commands you could run. It can't
+edit, delete, kill or sudo. It is skipped (the notice goes out without it) when there is no `CLAUDE_CODE_OAUTH_TOKEN`, the
+session-usage gate is over its limit, a build run holds a run lock, the last diagnosis was under 6 hours ago, or disk is at 95% or more.
+The prompt is [prompts/health-diagnose.md](prompts/health-diagnose.md).
+
+**Cron (you, ROADMAP AM2):** `*/15 * * * * $HOME/.local/bin/agent-runner health tick`, separate from the build runner's line so
+upkeep keeps working when the runner is broken or paused.

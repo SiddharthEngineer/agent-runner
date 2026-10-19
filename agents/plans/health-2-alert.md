@@ -69,7 +69,7 @@ or `sudo`. On the VPS (one short Sonnet run, allowed unattended): `python3 healt
 **What:** README "VPS health": the alert flow, how the dedupe works, the diagnosis and its limits, `health gate`, and the cron
 line (design D6), added by the user (manual step AM2). AGENTS.md map: `settings/`, `prompts/`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
