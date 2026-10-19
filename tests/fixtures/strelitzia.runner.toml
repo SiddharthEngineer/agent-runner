@@ -37,5 +37,6 @@ tests_dir = "tests/"
 
 [preprod]
 deploy = "make -C /srv/engineerfamily-preprod preprod-strelitzia-up"
+app_dir = "/srv/Strelitzia-preprod"
 seed = "docker compose -p engineerfamily-preprod --project-directory /srv/engineerfamily-preprod -f /srv/engineerfamily-preprod/docker-compose.base.yml -f /srv/engineerfamily-preprod/docker-compose.preprod.yml run --rm --no-deps -T -v /srv/Strelitzia-preprod:/seed:ro strelitzia python /seed/scripts/seed_preprod.py"
 health = [{ url = "http://127.0.0.1:8080/strelitzia/dashboard/api/health", json_ok = true }]

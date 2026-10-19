@@ -290,66 +290,152 @@ def test_usage_check_unknown_and_disabled(monkeypatch):
 
 
 
+PREPROD_TOML = """
+[repo]
+name = "{name}"
+github = "o/{name}"
+base = "trunk"
+merge = "rebase"
+[validate]
+fast = "true"
+full = "true"
+[gate]
+high_risk = []
+doc_or_test = []
+[preprod]
+deploy = "{deploy}"
+{extra}
+"""
+
+
 @pytest.fixture
 def preprod(tmp_path):
-    """Source preprod.sh with a temp origin + app checkout and stub deploy/health commands; returns run(seed_cmd, with_script)."""
-    origin, app = tmp_path / "origin", tmp_path / "app"
+    """preprod.sh against temp repos: an origin with agents/runner.toml on trunk, a dev clone (AGENT_REPO), a stub gh.
 
-    def git(*args: str) -> None:
-        subprocess.run(["git", *args], check=True, capture_output=True)
+    pp.config(name, deploy, extra) writes that repo's runner.toml and repos/<name>.env; pp(script) sources preprod.sh with
+    sleep and health_check stubbed, then runs the script. Commands write to pp.log.
+    """
+    log = tmp_path / "log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    gh = bin_dir / "gh"
+    gh.write_text(
+        "#!/usr/bin/env python3\nimport sys\n"
+        f"open({str(log)!r}, 'a').write('gh ' + ' '.join(sys.argv[1:]) + '\\n')\n"
+        "if 'headRefOid' in sys.argv: print('abc123')\n"
+        "if '.state' in sys.argv: print('OPEN')\n"
+    )
+    gh.chmod(0o755)
 
-    git("init", "-q", "-b", "trunk", str(origin))
-    git("-C", str(origin), "config", "user.email", "t@example.com")
-    git("-C", str(origin), "config", "user.name", "t")
-    (origin / "README").write_text("x\n")
-    git("-C", str(origin), "add", "-A")
-    git("-C", str(origin), "commit", "-qm", "base")
-    git("clone", "-q", str(origin), str(app))
-    marker = tmp_path / "seeded"
+    def git(*args: str) -> str:
+        return subprocess.run(["git", *args], check=True, capture_output=True, text=True).stdout.strip()
 
-    def run(seed_cmd: str | None, with_script: bool) -> subprocess.CompletedProcess:
-        if with_script and not (origin / "scripts" / "seed_preprod.py").exists():
-            (origin / "scripts").mkdir()
-            (origin / "scripts" / "seed_preprod.py").write_text("")
-            git("-C", str(origin), "add", "-A")
-            git("-C", str(origin), "commit", "-qm", "add seed")
-        env = {k: v for k, v in os.environ.items() if not k.startswith("PREPROD_")}
-        env.update(HOME=str(tmp_path), STRELITZIA_AGENT_STATE=str(tmp_path / "state"), PREPROD_APP_DIR=str(app),
-                   PREPROD_DEPLOY_CMD="true", PREPROD_HEALTH_URL="http://127.0.0.1:1/health")
-        if seed_cmd is not None:
-            env["PREPROD_SEED_CMD"] = seed_cmd.replace("MARKER", str(marker))
-        script = f'. "{AGENT / "preprod.sh"}"; sleep() {{ :; }}; health_check() {{ echo healthy; }}; deploy_ref trunk'
-        return subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+    def config(name: str, deploy: str, extra: str = "") -> Path:
+        origin, clone = tmp_path / f"{name}-origin", tmp_path / f"{name}-clone"
+        if not origin.exists():
+            git("init", "-q", "-b", "trunk", str(origin))
+            git("-C", str(origin), "config", "user.email", "t@example.com")
+            git("-C", str(origin), "config", "user.name", "t")
+        (origin / "agents").mkdir(exist_ok=True)
+        text = PREPROD_TOML.format(name=name, deploy=deploy.replace("LOG", str(log)), extra=extra.replace("LOG", str(log)))
+        (origin / "agents" / "runner.toml").write_text(text)
+        git("-C", str(origin), "add", "-A")
+        git("-C", str(origin), "commit", "-qm", "config")
+        if not clone.exists():
+            git("clone", "-q", str(origin), str(clone))
+        repos = tmp_path / ".config/agent-runner/repos"
+        repos.mkdir(parents=True, exist_ok=True)
+        (repos / f"{name}.env").write_text(f"AGENT_REPO={clone}\n")
+        return origin
 
-    run.marker = marker
+    def run(script: str) -> subprocess.CompletedProcess:
+        env = {k: v for k, v in os.environ.items() if not k.startswith(("PREPROD_", "STRELITZIA_AGENT"))}
+        env.update(HOME=str(tmp_path), AGENT_RUNNER_STATE=str(tmp_path / "state"), PATH=f"{bin_dir}:{os.environ['PATH']}",
+                   AGENT_INBOX_REPO="")
+        full = f'. "{AGENT / "preprod.sh"}"; sleep() {{ :; }}; health_check() {{ echo healthy; }}; {script}'
+        return subprocess.run(["bash", "-c", full], env=env, capture_output=True, text=True)
+
+    run.config = config
+    run.git = git
+    run.log = lambda: log.read_text() if log.exists() else ""
+    run.lock = tmp_path / "state" / "preprod.lock"
     return run
 
 
-def test_preprod_deploy_runs_seed_when_script_exists(preprod):
-    out = preprod("echo seeded > MARKER", with_script=True)
-    assert out.returncode == 0, out.stderr
-    assert preprod.marker.read_text() == "seeded\n"
-    assert "healthy" in out.stdout
+def test_preprod_three_column_lock_reads_as_strelitzia(preprod):
+    preprod.lock.parent.mkdir(parents=True, exist_ok=True)
+    preprod.lock.write_text("12\tdeadbeef\t2026-10-19T00:00:00Z\n")
+    assert preprod("holder").stdout == "strelitzia 12\n"
+    preprod.lock.write_text("engineerfamily\t5\tdeadbeef\t2026-10-19T00:00:00Z\n")
+    assert preprod("holder").stdout == "engineerfamily 5\n"
 
 
-def test_preprod_deploy_skips_seed_without_script(preprod):
-    out = preprod("echo seeded > MARKER", with_script=False)
-    assert out.returncode == 0, out.stderr
-    assert not preprod.marker.exists()
-    assert "seed skipped: no scripts/seed_preprod.py at" in out.stderr
-    assert "healthy" in out.stdout
+def test_preprod_busy_names_the_holder(preprod):
+    preprod.lock.parent.mkdir(parents=True, exist_ok=True)
+    preprod.lock.write_text("strelitzia\t3\tdeadbeef\t2026-10-19T00:00:00Z\n")
+    out = preprod("cmd_deploy engineerfamily 5")
+    assert out.returncode == 4
+    assert out.stdout.strip() == "preprod busy: strelitzia#3"
+    assert preprod.log() == ""
 
 
-def test_preprod_deploy_fails_when_seed_fails(preprod):
-    out = preprod("exit 1", with_script=True)
-    assert out.returncode == 1
-    assert "healthy" not in out.stdout
+def test_preprod_deploy_uses_runner_toml_from_base(preprod):
+    preprod.config("strelitzia", "echo deploy {sha} >> LOG", 'seed = "echo seeded >> LOG"')
+    out = preprod("cmd_deploy strelitzia 7")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "deploy abc123" in preprod.log() and "seeded" in preprod.log()
+    assert preprod.lock.read_text().startswith("strelitzia\t7\tabc123\t")
+    assert "gh pr comment 7 --repo o/strelitzia" in preprod.log()
 
 
-def test_preprod_deploy_without_seed_cmd(preprod):
-    out = preprod(None, with_script=True)
-    assert out.returncode == 0, out.stderr
-    assert "seed" not in out.stderr
+def test_preprod_app_dir_checks_out_the_sha(preprod, tmp_path):
+    origin = preprod.config("strelitzia", "true")
+    app = tmp_path / "app"
+    preprod.git("clone", "-q", str(origin), str(app))
+    head = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    preprod.config("strelitzia", f"git -C {app} rev-parse HEAD >> LOG", f'app_dir = "{app}"')
+    (origin / "x").write_text("pr change\n")
+    preprod.git("-C", str(origin), "add", "-A")
+    preprod.git("-C", str(origin), "commit", "-qm", "pr")
+    pr_sha = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    preprod.git("-C", str(origin), "update-ref", "refs/pull/7/head", pr_sha)
+    preprod.git("-C", str(origin), "reset", "-q", "--hard", "HEAD~1")
+    assert head != pr_sha
+    out = preprod(f'load_repo strelitzia && deploy_ref pull/7/head {pr_sha}')
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert preprod.log().split() == [pr_sha]
+
+
+def test_preprod_refuses_prod_command(preprod):
+    preprod.config("strelitzia", "make -C /srv/engineerfamily-prod deploy-prod")
+    out = preprod("cmd_deploy strelitzia 7")
+    assert out.returncode == 3
+    assert "looks like a prod command" in out.stdout
+    assert "headRefOid" not in preprod.log() and not preprod.lock.exists()
+
+
+def test_preprod_release_defaults_to_deploy_at_base(preprod):
+    origin = preprod.config("engineerfamily", "echo deploy {sha} >> LOG")
+    base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    preprod.lock.parent.mkdir(parents=True, exist_ok=True)
+    preprod.lock.write_text("engineerfamily\t5\tabc123\t2026-10-19T00:00:00Z\n")
+    out = preprod("cmd_release")
+    assert out.returncode == 0 and "preprod reset to engineerfamily trunk" in out.stdout
+    assert f"deploy {base}" in preprod.log() and not preprod.lock.exists()
+
+
+def test_preprod_tick_picks_oldest_across_repos(preprod, tmp_path):
+    preprod.config("engineerfamily", "echo ef {sha} >> LOG")
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    items = {
+        "strelitzia/a": {"repo": "strelitzia", "status": "awaiting-preprod", "pr": 3, "updated": "2026-10-19T02:00:00+00:00"},
+        "engineerfamily/b": {"repo": "engineerfamily", "status": "awaiting-preprod", "pr": 5, "updated": "2026-10-19T01:00:00+00:00"},
+    }
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
+    out = preprod("cmd_tick")
+    assert "engineerfamily#5 deployed to preprod" in out.stdout, out.stdout + out.stderr
+    assert json.loads((state / "queue.json").read_text())["items"]["engineerfamily/b"]["status"] == "on-preprod"
 
 
 EF_CONFIG = AGENT / "tests" / "fixtures" / "engineerfamily.runner.toml"

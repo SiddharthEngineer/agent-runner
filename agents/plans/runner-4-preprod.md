@@ -33,7 +33,7 @@ is `repo<TAB>pr<TAB>sha<TAB>time`; `holder` prints `repo pr`, and a 3-column lin
 `<repo> <pr>`; `status` and `tick` need no arguments. `tick` picks the oldest `awaiting-preprod` item across all repos.
 **Validate:** `uv run --no-project --with pytest pytest -q tests` → passes. New tests: a 3-column lock reads as `strelitzia`; `deploy engineerfamily 5`
 while `strelitzia 3` holds the lock → exit 4 "preprod busy: strelitzia#3"; `app_dir` + `{sha}` substitution in the stubbed command.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: commands from `runner.toml`
 **Runs:** unattended
@@ -45,7 +45,7 @@ Seed runs only when configured (no more `scripts/seed_preprod.py` existence chec
 variables are no longer read.
 **Validate:** tests with a temp repo whose `origin/trunk` has a fixture `runner.toml`: `deploy strelitzia 7` runs the
 fixture's deploy with the PR head sha; a fixture whose `deploy` says `deploy-prod` → exit 3 and nothing runs.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (committed with Task 1: the new lock and the config-driven commands are one rewrite of preprod.sh)
 
 ### Task 3: health checks through Cloudflare
 **Runs:** unattended
