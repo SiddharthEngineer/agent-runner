@@ -350,3 +350,51 @@ def test_preprod_deploy_without_seed_cmd(preprod):
     out = preprod(None, with_script=True)
     assert out.returncode == 0, out.stderr
     assert "seed" not in out.stderr
+
+
+EF_CONFIG = AGENT / "tests" / "fixtures" / "engineerfamily.runner.toml"
+
+
+def gate_with_config(repo) -> dict:
+    out = subprocess.run(
+        [sys.executable, str(AGENT / "gate.py"), "plan.md", "--base", "base", "--config", str(EF_CONFIG)],
+        cwd=repo.path, capture_output=True, text=True,
+    )
+    return json.loads(out.stdout)
+
+
+def test_gate_config_nginx_change_needs_review(repo):
+    repo("services/nginx/x.conf", "server {}\n")
+    verdict = gate_with_config(repo)
+    assert verdict["tier"] == "review"
+    assert verdict["reasons"] == ["touches high-risk path services/nginx/x.conf"]
+
+
+def test_gate_config_readme_change_is_low(repo):
+    repo("README.md", "hello\n")
+    assert gate_with_config(repo)["tier"] == "low"
+
+
+def test_gate_config_patterns_replace_defaults(repo):
+    repo("Dockerfile", "FROM python\n")  # high-risk for Strelitzia, not on engineerfamily's list (only services/*/Dockerfile)
+    assert gate(repo)["tier"] == "review"
+    assert gate_with_config(repo)["tier"] == "low"
+
+
+def test_gate_plan_with_config_uses_its_high_risk(tmp_path):
+    plan = tmp_path / "p.md"
+    plan.write_text("# Plan\n**Risk:** low (small)\n\n### Task 1: x\n**Files:** Makefile (modify), src/strelitzia/web/x.py (modify)\n")
+    out = subprocess.run(
+        [sys.executable, str(AGENT / "gate.py"), str(plan), "--plan", "--config", str(EF_CONFIG)], capture_output=True, text=True
+    )
+    assert json.loads(out.stdout)["reasons"] == ["touches high-risk path Makefile"]
+
+
+def test_gate_bad_config_is_a_usage_error(tmp_path):
+    plan = tmp_path / "p.md"
+    plan.write_text("# Plan\n**Risk:** low\n")
+    bad = tmp_path / "runner.toml"
+    bad.write_text("[repo]\n")
+    out = subprocess.run([sys.executable, str(AGENT / "gate.py"), str(plan), "--plan", "--config", str(bad)], capture_output=True, text=True)
+    assert out.returncode == 2
+    assert "missing repo.name" in out.stderr

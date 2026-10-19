@@ -1,0 +1,35 @@
+# engineerfamily's values from design D5 (a near-final draft of its agents/runner.toml).
+[repo]
+name = "engineerfamily"
+github = "SiddharthEngineer/engineerfamily"
+base = "main"
+merge = "merge"
+
+[validate]
+fast = "scripts/validate.sh"
+full = "scripts/validate.sh"
+
+[gate]
+high_risk = [
+    "services/nginx/*",
+    "docker-compose*.yml",
+    "Makefile",
+    "scripts/*",
+    "services/*/Dockerfile",
+    ".github/*",
+    "*htpasswd*",
+    ".env*",
+    "agents/runner.toml",
+    "agents/settings/*",
+    ".claude/settings.json",
+]
+doc_or_test = ["*.md", "agents/*", ".claude/commands/*", "tests/*"]
+
+[preprod]
+deploy = "make -C /srv/engineerfamily-preprod preprod-deploy ref={sha}"
+release = "make -C /srv/engineerfamily-preprod preprod-deploy"
+health = [
+    { url = "https://preprod.engineerfamily.net/", status = 200 },
+    { url = "https://preprod.engineerfamily.net/strelitzia/", status = 200 },
+    { url = "https://preprod.engineerfamily.net/strelitzia/dashboard/api/health", json_ok = true },
+]

@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Risk gate: may this branch merge to trunk without human review?
 
-Usage: python scripts/agent/gate.py <plan.md> [--base origin/trunk]
-       python scripts/agent/gate.py <plan.md> --plan   (no git: checks the plan's **Files:** lines and size, for /plan)
+Usage: python3 gate.py <plan.md> [--base origin/trunk] [--config agents/runner.toml]
+       python3 gate.py <plan.md> --plan [--config agents/runner.toml]   (no git: checks the plan's **Files:** lines and size, for /plan)
 
 The plan declares `**Risk:** low` or `**Risk:** review` (set with the user in /plan). A `low` plan still goes to
 review if the diff touches a high-risk path, is larger than the budget, or weakens tests. Prints JSON
 {"tier": "low"|"review", "reasons": [...]} and exits 0 for low, 1 for review, 2 on usage errors.
 `--plan` also prints "split": reasons the plan is over the size budget (empty when it fits). It doesn't change the tier.
+`--config` takes the high-risk and doc/test patterns, the code-line budget, the tests dir and the base branch from a repo's
+runner.toml; without it the Strelitzia defaults below apply.
 Standard library only.
 """
 
@@ -20,6 +22,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 # Any change here needs a human, whatever the plan says.
 HIGH_RISK = [
@@ -58,6 +61,37 @@ WEAKENING = [
     (r"^\+.*pytest\.mark\.(skip|xfail)", "adds a skip/xfail marker"),
     (r"^\+.*pytest\.skip\(", "adds pytest.skip()"),
 ]
+
+
+
+
+class Rules(NamedTuple):
+    """The per-repo half of the gate (design D1). Size budgets for plans stay global.
+
+    A NamedTuple, not a dataclass: tests load this file with importlib without registering it in sys.modules.
+    """
+
+    high_risk: list[str]
+    doc_or_test: list[str]
+    code_line_budget: int
+    tests_dir: str
+
+
+DEFAULT_RULES = Rules(HIGH_RISK, DOC_OR_TEST, CODE_LINE_BUDGET, "tests/")
+
+
+def _config_module():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import config
+
+    return config
+
+
+def rules_from_config(path: Path) -> tuple[Rules, str]:
+    """(rules, default base ref) from a runner.toml. Raises config.ConfigError."""
+    cfg = _config_module().load(path)
+    g = cfg.gate
+    return Rules(g.high_risk, g.doc_or_test, g.code_line_budget, g.tests_dir), f"origin/{cfg.repo.base}"
 
 
 def git(*args: str) -> str:
@@ -114,28 +148,28 @@ def split_reasons(plan: Path, files: list[str]) -> list[str]:
     return reasons
 
 
-def evaluate_plan(plan: Path) -> dict:
+def evaluate_plan(plan: Path, rules: Rules = DEFAULT_RULES) -> dict:
     files = planned_files(plan)
     reasons = risk_reasons(plan)
-    reasons += [f"touches high-risk path {path}" for path in files if matches(path, HIGH_RISK)]
+    reasons += [f"touches high-risk path {path}" for path in files if matches(path, rules.high_risk)]
     return {"tier": "review" if reasons else "low", "reasons": reasons, "split": split_reasons(plan, files)}
 
 
-def evaluate(plan: Path, base: str) -> dict:
+def evaluate(plan: Path, base: str, rules: Rules = DEFAULT_RULES) -> dict:
     reasons = risk_reasons(plan)
 
     merge_base = git("merge-base", base, "HEAD").strip()
     code_lines = 0
     for line in git("diff", "--numstat", merge_base, "HEAD").splitlines():
         added, deleted, path = line.split("\t", 2)
-        if matches(path, HIGH_RISK):
+        if matches(path, rules.high_risk):
             reasons.append(f"touches high-risk path {path}")
-        if not matches(path, DOC_OR_TEST) and added != "-":
+        if not matches(path, rules.doc_or_test) and added != "-":
             code_lines += int(added) + int(deleted)
-    if code_lines > CODE_LINE_BUDGET:
-        reasons.append(f"{code_lines} changed code lines > budget {CODE_LINE_BUDGET}")
+    if code_lines > rules.code_line_budget:
+        reasons.append(f"{code_lines} changed code lines > budget {rules.code_line_budget}")
 
-    test_diff = git("diff", "-U0", merge_base, "HEAD", "--", "tests/")
+    test_diff = git("diff", "-U0", merge_base, "HEAD", "--", rules.tests_dir)
     for pattern, why in WEAKENING:
         if re.search(pattern, test_diff, re.MULTILINE):
             reasons.append(f"test diff {why}")
@@ -146,13 +180,22 @@ def evaluate(plan: Path, base: str) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("plan", type=Path)
-    parser.add_argument("--base", default="origin/trunk")
+    parser.add_argument("--base", help="base ref (default origin/trunk, or origin/<repo.base> with --config)")
     parser.add_argument("--plan", dest="plan_only", action="store_true", help="check the plan's declared files instead of the diff")
+    parser.add_argument("--config", type=Path, help="the repo's runner.toml")
     args = parser.parse_args()
     if not args.plan.is_file():
         print(f"no such plan: {args.plan}", file=sys.stderr)
         return 2
-    result = evaluate_plan(args.plan) if args.plan_only else evaluate(args.plan, args.base)
+    rules, base = DEFAULT_RULES, "origin/trunk"
+    if args.config:
+        try:
+            rules, base = rules_from_config(args.config)
+        except _config_module().ConfigError as exc:
+            print("\n".join(exc.problems), file=sys.stderr)
+            return 2
+    base = args.base or base
+    result = evaluate_plan(args.plan, rules) if args.plan_only else evaluate(args.plan, base, rules)
     print(json.dumps(result, indent=2))
     return 0 if result["tier"] == "low" else 1
 

@@ -1,5 +1,5 @@
 # Plan: runner.toml loader, prod guard, and shared config/state dirs
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: the runner's config and risk gate; every later Part reads it)
 **Depends on:** - (first Part of [shared-agent-runner](shared-agent-runner.md))
 
@@ -42,7 +42,7 @@ The fixtures hold today's Strelitzia values and design D5's engineerfamily value
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_config.py` → passes, including: both fixtures load; a missing
 `repo.base` and a bad `merge` are both reported in one error; each `PROD_PATTERNS` entry in a `preprod.deploy` is refused;
 `preprod-deploy ref={sha}` is accepted. `python3 config.py get tests/fixtures/engineerfamily.runner.toml repo.base` → `main`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: config and state dirs, env loading
 **Runs:** unattended
@@ -54,7 +54,7 @@ if that exists (one-release fallback, design D1), else `None`. `load_env() -> No
 Nothing calls these yet besides tests and `health.py` (Parts health-1/2).
 **Validate:** tests with `HOME` set to `tmp_path` → new env wins over the old one, old one is used alone, neither → `None`;
 `AGENT_RUNNER_STATE` overrides `state_dir()`; `export K="v"` and `# comment` lines parse like `inbox.load_env`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: `gate.py --config`
 **Runs:** unattended
@@ -65,7 +65,7 @@ Nothing calls these yet besides tests and `health.py` (Parts health-1/2).
 output is byte-for-byte what it is today. Update the module docstring's usage lines (drop the `scripts/agent/` prefix).
 **Validate:** `scripts/validate.sh` → all PASS. New tests: with the engineerfamily fixture, a diff touching `services/nginx/x.conf`
 is `review` and one touching only `README.md` is `low`; `--plan --config` uses the config's `high_risk`. Existing gate tests pass unchanged.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
