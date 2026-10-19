@@ -130,10 +130,43 @@ cfg() { "${CFG[@]}" get "$toml" "$1" 2>/dev/null; }
 merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed
     local checks
     if ! checks=$(timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast 2>&1); then
-        [[ $checks == *"no checks reported"* ]] && return 2
-        return 1
+        if [[ $checks == *"Resource not accessible"* ]]; then
+            ci_runs "$1" || return  # its own exit code
+        else
+            [[ $checks == *"no checks reported"* ]] && return 2
+            return 1
+        fi
     fi
     gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null 2>&1 || return 3
+}
+# ci_runs <pr>: CI through the Actions runs of the PR head, for a token that can't read the check rollup (agent-runner).
+# Waits up to 30 min for a run to show up. 0 = all green, 1 = one failed (or gh failed), 2 = no run.
+ci_runs() {
+    local sha ids id waited=0
+    sha=$(gh pr view "$1" --repo "$GH_REPO" --json headRefOid -q .headRefOid 2>/dev/null) && [ -n "$sha" ] || return 1
+    while ids=$(gh run list --repo "$GH_REPO" --commit "$sha" --json databaseId -q '.[].databaseId' 2>/dev/null) || return 1
+          [ -z "$ids" ]; do
+        [ "$waited" -ge "${AGENT_CI_WAIT:-1800}" ] && return 2
+        sleep 30
+        waited=$((waited + 30))
+    done
+    for id in $ids; do
+        timeout 30m gh run watch "$id" --repo "$GH_REPO" --exit-status >/dev/null 2>&1 || return 1
+    done
+}
+# preprod_follow <pr>: after merging <pr>, put preprod on the new base, unless another PR holds the lock (its release does it).
+preprod_follow() {
+    [ -n "$(cfg preprod.deploy)" ] || return 0
+    local holder
+    holder=$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)
+    if [ -n "$holder" ] && [ "$holder" != "$repo"$'\t'"$1" ]; then
+        say "$key: preprod is held by ${holder/$'\t'/#}, so it stays; its release puts $repo's $BASE back"
+    elif "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1; then
+        say "$key: preprod redeployed on $repo's $BASE after PR #$1"
+    else
+        say "$key: preprod redeploy of $repo's $BASE failed after PR #$1"
+        notify "preprod redeploy failed after PR #$1" "PR https://github.com/$GH_REPO/pull/$1 is merged, but putting preprod on $repo's $BASE failed. See runs.log (on the VPS), then run \`agent-runner preprod release $repo\`."
+    fi
 }
 merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, for a notice
     case $1 in
@@ -141,6 +174,32 @@ merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, fo
         3) echo "CI is green but gh pr merge failed" ;;
         *) echo "CI is red or timed out" ;;
     esac
+}
+
+# closed_by_hand: if the item's PR was merged or closed outside the runner, finish the item (no validator) and succeed.
+closed_by_hand() {
+    local pr state hand result
+    pr=$("${Q[@]}" get "$key" pr)
+    state=$(gh pr view "$pr" --repo "$GH_REPO" --json state -q .state 2>/dev/null)
+    case $state in
+        MERGED) hand="merged by hand" ;;
+        CLOSED) hand="closed by hand" ;;
+        *) return 1 ;;
+    esac
+    dry "finish $key: PR #$pr was $hand"
+    result=$(mktemp)  # `finish` keeps the summary in last_result; a closed PR is then cancelled below
+    printf '{"status": "merged", "pr": %s, "summary": "PR #%s %s"}' "$pr" "$pr" "$hand" > "$result"
+    "${Q[@]}" finish "$key" "$result" >/dev/null
+    rm -f "$result"
+    if [ "$state" = MERGED ]; then
+        say "$key: PR #$pr was merged by hand, done"
+        preprod_follow "$pr"
+    else
+        "${Q[@]}" cancel "$key"
+        say "$key: PR #$pr was closed by hand, cancelled"
+        [ "$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)" = "$repo"$'\t'"$pr" ] && "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+    fi
+    return 0
 }
 
 # 3a. Preprod stage (design D3): an approved `review` PR now on preprod gets its Human test steps run by the validator.
@@ -209,7 +268,7 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
         approve)
             left=$(field left_for_you)
             if merge_pr "$pr"; then
-                "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+                preprod_follow "$pr"
                 "${Q[@]}" set "$key" status=done
                 say "$key: preprod checks passed, PR #$pr merged"
                 notify "merged; $(printf '%s' "$left" | grep -c '^- ') steps left for you" \
@@ -237,7 +296,7 @@ $(field failed)" >/dev/null
 
 if key=$("${Q[@]}" oldest on-preprod --without preprod_verdict); then
     load_item
-    preprod_stage
+    closed_by_hand || preprod_stage
     exit 0
 fi
 
@@ -283,6 +342,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
             elif merge_pr "$pr"; then
                 "${Q[@]}" set "$key" status=done
                 say "$key: validator approved PR #$pr, merged"
+                preprod_follow "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
             else
                 "${Q[@]}" set "$key" status=blocked
@@ -304,7 +364,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
 
 if key=$("${Q[@]}" oldest awaiting-review); then
     load_item
-    review_stage
+    closed_by_hand || review_stage
     exit 0
 fi
 
@@ -439,8 +499,7 @@ $verdict
     elif merge_pr "$pr"; then
         final=merged
         notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low): https://github.com/$GH_REPO/pull/$pr"
-        # Only if this PR itself held preprod: put preprod back on the base.
-        [ "$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)" = "$repo"$'\t'"$pr" ] && "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+        preprod_follow "$pr"
     else
         # Not merged (gate tier low): the PR stays open, labelled ci-failed, and the item is blocked. Preprod is only
         # for `review` PRs the validator approved, so a repo without [preprod] can't get stuck waiting for it.

@@ -1,5 +1,5 @@
 # Plan: the runner finishes its own work (CI without check access, preprod after merge, PRs merged by hand)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-8-self-host (merged); the cutover (done 2026-10-19)
 
@@ -27,7 +27,7 @@ The user wants every queued plan built, merged and put on preprod with no manual
 `gh run watch <id> --exit-status` for each run. All succeed → merge as today; any failure → return 1; no run after 30 min → return 2.
 **Validate:** `pytest -q tests/test_run.py` with a stub `gh`: permission error + green runs → merged; permission error + one failed
 run → blocked with "CI is red or timed out"; permission error + no runs → "no CI checks".
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: put preprod on the base after every merge
 **Runs:** unattended
@@ -38,7 +38,7 @@ another PR, leave it: that PR's release redeploys the base later. Log one line t
 notice and doesn't change the item's status.
 **Validate:** stub `preprod.sh` records calls: low merge with lock free → `release <repo>`; lock held by another PR → no call;
 repo without `[preprod]` → no call.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: PRs merged or closed by hand
 **Runs:** unattended
@@ -47,14 +47,14 @@ repo without `[preprod]` → no call.
 item `done` with summary "merged by hand", release preprod if this PR holds it (Task 2 puts the base back), no validator run.
 `CLOSED` → cancel the item with that summary. The inbox sweep closes its notices.
 **Validate:** stub `gh` returns `MERGED` for an `awaiting-review` item → status `done`, no `claude` call; `CLOSED` → `cancelled`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended
 **Files:** README.md (modify), agents/ROADMAP.md (modify)
 **What:** README: the CI fallback, preprod follows each merge, hand merges are recognised. ROADMAP: row A16 ✅ with the PR number.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
