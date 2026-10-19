@@ -412,13 +412,23 @@ def fake_gh(tmp_path):
         f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
         "if sys.argv[1:3] == ['issue', 'create']: print('https://github.com/o/r/issues/42')\n"
         "if sys.argv[1:3] == ['issue', 'comment']: print('https://github.com/o/r/issues/42#issuecomment-1')\n"
+        f"if sys.argv[1:3] == ['issue', 'view']: print(open({str(tmp_path / 'view.json')!r}).read())\n"
     )
     gh.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "AGENT_INBOX_REPO": "o/r"}
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "AGENT_INBOX_REPO": "o/r",
+           "AGENT_RUNNER_STATE": str(tmp_path / "state")}
     env.pop("NTFY_TOPIC", None)
+    env.pop("STRELITZIA_AGENT_STATE", None)
 
     def inbox(*args):
         return subprocess.run([sys.executable, str(AGENT / "inbox.py"), *args], env=env, capture_output=True, text=True)
+
+    def queue(*args):
+        return subprocess.run([sys.executable, str(AGENT / "buildqueue.py"), *args], env=env, capture_output=True, text=True)
+
+    inbox.queue = queue
+    inbox.tmp = tmp_path
+    inbox.view = lambda comments: (tmp_path / "view.json").write_text(json.dumps({"comments": [{"body": b} for b in comments]}))
 
     inbox.calls = lambda: [json.loads(line) for line in log.read_text().splitlines()]
     return inbox
@@ -443,7 +453,7 @@ def test_inbox_notify_defaults_to_strelitzia(fake_gh):
 def test_inbox_comment_close(fake_gh):
     assert fake_gh("comment", "42", "--body", "Recovered", "--close").returncode == 0
     calls = fake_gh.calls()
-    assert calls[0][:3] == ["issue", "comment", "42"] and "<!-- strelitzia-agent -->" in calls[0][-1]
+    assert calls[0][:3] == ["issue", "comment", "42"] and "<!-- agent-runner -->" in calls[0][-1]
     assert calls[1] == ["issue", "close", "42", "--repo", "o/r"]
 
 
@@ -482,3 +492,34 @@ def test_queue_ambiguous_bare_slug(q):
     out = q("set", "x", "status=done")
     assert out.returncode != 0
     assert "engineerfamily/x" in out.stderr and "strelitzia/x" in out.stderr
+
+
+def test_inbox_ask_labels_item_repo(fake_gh):
+    fake_gh.queue("add", "x", "--repo", "engineerfamily")
+    body = fake_gh.tmp / "q.md"
+    body.write_text("which option?")
+    assert fake_gh("ask", "engineerfamily/x", "--title", "q", "--body-file", str(body)).returncode == 0
+    create = next(c for c in fake_gh.calls() if c[:2] == ["issue", "create"])
+    assert create[create.index("--title") + 1] == "[engineerfamily/x] q"
+    labels = [create[i + 1] for i, a in enumerate(create) if a == "--label"]
+    assert labels == ["agent-question", "engineerfamily"]
+    assert fake_gh.queue("get", "engineerfamily/x", "status").stdout.strip() == "waiting-answer"
+
+
+def test_inbox_poll_ignores_legacy_marker_and_requeues(fake_gh):
+    fake_gh.queue("add", "x", "--repo", "engineerfamily")
+    fake_gh.queue("set", "engineerfamily/x", "status=waiting-answer", "issue=42")
+    fake_gh.view(["question\n\n<!-- strelitzia-agent -->", "old\n<!-- applypilot-agent -->"])
+    assert fake_gh("poll").stdout == ""
+    assert fake_gh.queue("get", "engineerfamily/x", "status").stdout.strip() == "waiting-answer"
+    fake_gh.view(["question\n\n<!-- strelitzia-agent -->", "use option B"])
+    assert "re-queued engineerfamily/x" in fake_gh("poll").stdout
+    assert fake_gh.queue("get", "engineerfamily/x", "status").stdout.strip() == "queued"
+    assert "use option B" in fake_gh.queue("get", "engineerfamily/x", "notes").stdout
+
+
+def test_inbox_notify_slug_uses_item_repo(fake_gh):
+    fake_gh.queue("add", "x", "--repo", "engineerfamily")
+    fake_gh("notify", "--slug", "x", "--title", "t", "--body", "b")
+    create = next(c for c in fake_gh.calls() if c[:2] == ["issue", "create"])
+    assert "engineerfamily" in create and "strelitzia" not in create

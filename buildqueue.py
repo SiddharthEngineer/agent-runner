@@ -44,7 +44,6 @@ import config  # noqa: E402
 
 STATE = Path(os.environ.get("AGENT_RUNNER_STATE") or os.environ.get("STRELITZIA_AGENT_STATE") or config.state_dir())
 DEFAULT_REPO = os.environ.get("AGENT_DEFAULT_REPO", "strelitzia")
-CONFIG_DIR = Path.home() / ".config/strelitzia-agent"  # inbox.load_env reads it; goes in Task 2
 QUEUE = STATE / "queue.json"
 RUNS = STATE / "runs.jsonl"
 MAX_ATTEMPTS = int(os.environ.get("AGENT_MAX_ATTEMPTS", "2"))

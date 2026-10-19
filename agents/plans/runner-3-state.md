@@ -46,7 +46,7 @@ full keys. `MARKER` becomes `<!-- agent-runner -->`; `strelitzia-agent` and `app
 `usage.probe` uses `buildqueue.STATE`, unchanged in behavior.
 **Validate:** tests stub `gh`: `ask engineerfamily/x` creates labels `agent-question` and `engineerfamily`; a reply comment with
 the old `strelitzia-agent` marker isn't taken as the user's answer; `poll` re-queues `engineerfamily/x` with the answer.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: docs
 **Runs:** unattended
