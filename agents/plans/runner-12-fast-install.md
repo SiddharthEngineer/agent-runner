@@ -23,7 +23,7 @@ and still run the full suite when CI can't vouch for the commit.
 **Files:** scripts/validate.sh (modify), tests/test_install.py (modify)
 **What:** `scripts/validate.sh --quick` runs only `bash -n` and `py_compile`. No flag = today's behaviour (CI and agents unchanged).
 **Validate:** `scripts/validate.sh --quick` prints two PASS lines and no pytest line; `scripts/validate.sh` still runs all three.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: install trusts green CI on the tag's commit
 **Runs:** unattended

@@ -171,3 +171,9 @@ def test_check_commands_shows_extra_line(two_repos):
     assert out.returncode == 1
     assert "+Only here." in out.stdout and "--- strelitzia/plan.md" in out.stdout
     assert out.stdout.count("\n+") == 1 + 1  # the +++ header and the one extra line
+
+
+def test_validate_quick_skips_pytest():
+    out = run(ROOT / "scripts/validate.sh", "--quick")
+    assert (out.returncode, out.stdout) == (0, "PASS  bash -n\nPASS  py_compile\n"), out.stdout + out.stderr
+    assert run(ROOT / "scripts/validate.sh", "--nope").returncode == 2
