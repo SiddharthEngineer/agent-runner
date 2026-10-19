@@ -156,6 +156,20 @@ ci_runs() {
         timeout 30m gh run watch "$id" --repo "$GH_REPO" --exit-status >/dev/null 2>&1 || return 1
     done
 }
+# preprod_follow <pr>: after merging <pr>, put preprod on the new base, unless another PR holds the lock (its release does it).
+preprod_follow() {
+    [ -n "$(cfg preprod.deploy)" ] || return 0
+    local holder
+    holder=$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)
+    if [ -n "$holder" ] && [ "$holder" != "$repo"$'\t'"$1" ]; then
+        say "$key: preprod is held by ${holder/$'\t'/#}, so it stays; its release puts $repo's $BASE back"
+    elif "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1; then
+        say "$key: preprod redeployed on $repo's $BASE after PR #$1"
+    else
+        say "$key: preprod redeploy of $repo's $BASE failed after PR #$1"
+        notify "preprod redeploy failed after PR #$1" "PR https://github.com/$GH_REPO/pull/$1 is merged, but putting preprod on $repo's $BASE failed. See runs.log (on the VPS), then run \`agent-runner preprod release $repo\`."
+    fi
+}
 merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, for a notice
     case $1 in
         2) echo "no CI checks on this repo, so it isn't merged without them" ;;
@@ -230,7 +244,7 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
         approve)
             left=$(field left_for_you)
             if merge_pr "$pr"; then
-                "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+                preprod_follow "$pr"
                 "${Q[@]}" set "$key" status=done
                 say "$key: preprod checks passed, PR #$pr merged"
                 notify "merged; $(printf '%s' "$left" | grep -c '^- ') steps left for you" \
@@ -304,6 +318,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
             elif merge_pr "$pr"; then
                 "${Q[@]}" set "$key" status=done
                 say "$key: validator approved PR #$pr, merged"
+                preprod_follow "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
             else
                 "${Q[@]}" set "$key" status=blocked
@@ -460,8 +475,7 @@ $verdict
     elif merge_pr "$pr"; then
         final=merged
         notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low): https://github.com/$GH_REPO/pull/$pr"
-        # Only if this PR itself held preprod: put preprod back on the base.
-        [ "$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)" = "$repo"$'\t'"$pr" ] && "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+        preprod_follow "$pr"
     else
         # Not merged (gate tier low): the PR stays open, labelled ci-failed, and the item is blocked. Preprod is only
         # for `review` PRs the validator approved, so a repo without [preprod] can't get stuck waiting for it.

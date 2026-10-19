@@ -27,7 +27,7 @@ The user wants every queued plan built, merged and put on preprod with no manual
 `gh run watch <id> --exit-status` for each run. All succeed → merge as today; any failure → return 1; no run after 30 min → return 2.
 **Validate:** `pytest -q tests/test_run.py` with a stub `gh`: permission error + green runs → merged; permission error + one failed
 run → blocked with "CI is red or timed out"; permission error + no runs → "no CI checks".
-**Status:** ✅ 2026-10-19 (this commit)
+**Status:** ✅ 2026-10-19
 
 ### Task 2: put preprod on the base after every merge
 **Runs:** unattended
@@ -38,7 +38,7 @@ another PR, leave it: that PR's release redeploys the base later. Log one line t
 notice and doesn't change the item's status.
 **Validate:** stub `preprod.sh` records calls: low merge with lock free → `release <repo>`; lock held by another PR → no call;
 repo without `[preprod]` → no call.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: PRs merged or closed by hand
 **Runs:** unattended

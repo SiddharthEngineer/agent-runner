@@ -51,7 +51,7 @@ def runner(tmp_path):
     code = tmp_path / "runner"
     shutil.copytree(ROOT, code, ignore=shutil.ignore_patterns(".git", "tests", "agents", "__pycache__", ".pytest_cache"))
     write_py_stub(code / "inbox.py", "inbox")
-    write_stub(code / "preprod.sh", "preprod")
+    write_stub(code / "preprod.sh", "preprod", '[ "$1" = release ] && exit "${STUB_RELEASE_EXIT:-0}"\nexit 0\n')
     write_py_stub(code / "health.py", "health", "STUB_HEALTH_EXIT")
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
@@ -208,6 +208,33 @@ def test_low_not_merged_blocks_with_notice(runner, env, why):
     if "STUB_MERGE_EXIT" not in env:
         assert not any(c.startswith("gh pr merge") for c in calls)
     assert why in json.loads(runner.queue("get", "agent-runner/x", "last_result").stdout)["summary"]
+
+
+@pytest.mark.parametrize("lock, deploy, released", [
+    (None, "true", True),
+    ("engineerfamily\t9\tabc\t2026-10-19T00:00:00Z\n", "true", True),  # this PR's own lock
+    ("strelitzia\t5\tabc\t2026-10-19T00:00:00Z\n", "true", False),  # another PR holds preprod
+    (None, None, False),  # no [preprod]
+])
+def test_low_merge_puts_preprod_on_the_base(runner, lock, deploy, released):
+    runner.register("engineerfamily", deploy=deploy)
+    runner.queue("add", "x", "--repo", "engineerfamily")
+    if lock:
+        runner.state.mkdir(parents=True, exist_ok=True)
+        (runner.state / "preprod.lock").write_text(lock)
+    runner()
+    assert runner.status("engineerfamily/x") == "done", runner.runs_log() + runner.out.stderr
+    assert ("preprod release engineerfamily" in runner.calls()) is released
+    if deploy:
+        assert ("preprod redeployed on engineerfamily's main" if released else "preprod is held by strelitzia#5") in runner.runs_log()
+
+
+def test_failed_preprod_redeploy_notifies(runner):
+    runner.register("engineerfamily")
+    runner.queue("add", "x", "--repo", "engineerfamily")
+    runner(STUB_RELEASE_EXIT="1")
+    assert runner.status("engineerfamily/x") == "done"
+    assert any(c.startswith("inbox notify") and "preprod redeploy failed after PR #9" in c for c in runner.calls())
 
 
 @pytest.mark.parametrize("env, why", [
