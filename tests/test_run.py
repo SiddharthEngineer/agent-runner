@@ -55,7 +55,7 @@ def runner(tmp_path):
     write_py_stub(code / "health.py", "health", "STUB_HEALTH_EXIT")
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
-    # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id.
+    # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id; triage prints $STUB_TRIAGE.
     write_stub(bin_dir / "claude", "claude",
                'if [[ "$*" == *"preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
@@ -64,8 +64,11 @@ def runner(tmp_path):
                '  [ -n "${STUB_PREPROD:-}" ] && printf "%s" "$STUB_PREPROD" > "$AGENT_RESULT_FILE"\n'
                'elif [[ "$*" == *"You are the validator"* ]]; then\n'
                '  [ -n "${STUB_REVIEW:-}" ] && printf "%s" "$STUB_REVIEW" > "$AGENT_RESULT_FILE"\n'
+               'elif [[ "$*" == *"You are triaging"* ]]; then\n'
+               '  [ -n "${STUB_TRIAGE:-}" ] && echo "$STUB_TRIAGE"\n'
                'else\n'
-               '  printf "%s" "${STUB_RESULT:-{\\"status\\": \\"ready\\", \\"pr\\": 9}}" > "$AGENT_RESULT_FILE"\n'
+               '  ready=\'{"status": "ready", "pr": 9}\'\n'
+               '  printf "%s" "${STUB_RESULT:-$ready}" > "$AGENT_RESULT_FILE"\n'
                'fi\n'
                'echo \'{"session_id": "s1"}\'\n')
     # gh: `pr checks` fails with $STUB_CHECKS (red; none: "no checks reported"; denied: no access to the check rollup);
@@ -136,7 +139,7 @@ def runner(tmp_path):
     run.calls = lambda: log.read_text().splitlines() if log.exists() else []
     run.runs_log = lambda: (state / "runs.log").read_text() if (state / "runs.log").exists() else ""
     run.status = lambda key: queue("get", key, "status").stdout.strip()
-    run.state = state
+    run.state, run.code = state, code
     return run
 
 
@@ -456,3 +459,92 @@ def test_pr_merged_or_closed_by_hand(runner, stage, state, status):
     assert "preprod release engineerfamily" in runner.calls()
     summary = json.loads(runner.queue("get", key, "last_result").stdout)["summary"]
     assert summary == f"PR #9 {state.lower()} by hand"
+
+
+def triage_reply(action, cls, note="", diagnosis="") -> str:
+    """The `--output-format json` line of a triage run: its reply is the verdict object."""
+    reply = json.dumps({"action": action, "class": cls, "note": note, "diagnosis": diagnosis})
+    return json.dumps({"type": "result", "result": f"```json\n{reply}\n```"})
+
+
+BLOCKED = '{"status": "blocked", "pr": 9, "summary": "CI flaked"}'  # a failed attempt; the second one blocks the item
+
+
+def test_triage_requeues_once_with_fresh_attempts(runner):
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "attempts=1")  # this run is the last attempt
+    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient", note="CI flaked, try again"))
+    assert runner.status(key) == "queued", runner.runs_log() + runner.out.stderr
+    assert runner.queue("get", key, "attempts").stdout.strip() == "0"
+    assert runner.queue("get", key, "triaged").stdout.strip() == "1"
+    assert "CI flaked, try again" in runner.queue("get", key, "notes").stdout
+    assert runner.queue("get", key, "resume").returncode != 0
+    [triage] = [c for c in claude_calls(runner) if "You are triaging" in c]
+    assert "--model claude-sonnet-5-5" in triage and "settings/triage.json" in triage and "pull/9" in triage
+    [notice] = [c for c in runner.calls() if c.startswith("inbox notify")]
+    assert "re-queued after triage: transient" in notice and "CI flaked, try again" in notice
+    # A second block of the same item: no second triage, the plain notice.
+    runner.queue("set", key, "attempts=1")
+    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient"))
+    assert runner.status(key) == "blocked"
+    assert len([c for c in claude_calls(runner) if "You are triaging" in c]) == 1
+    notice = [c for c in runner.calls() if c.startswith("inbox notify")][-1]
+    assert "blocked after 2 attempt(s)" in notice and "Triage" not in notice
+
+
+def test_triage_notify_puts_the_diagnosis_in_the_notice(runner):
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "attempts=1")  # this run is the last attempt
+    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("notify", "plan-problem", diagnosis="Task 2 contradicts Task 1"))
+    assert runner.status(key) == "blocked"
+    [notice] = [c for c in runner.calls() if c.startswith("inbox notify")]
+    assert "blocked after 2 attempt(s)" in notice and "Task 2 contradicts Task 1" in notice and "plan-problem" in notice
+
+
+def test_triage_never_requeues_other_classes(runner):
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "attempts=1")  # this run is the last attempt
+    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "code-problem", diagnosis="the fix is wrong"))
+    assert runner.status(key) == "blocked"
+    assert "the fix is wrong" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+
+
+def test_no_triage_when_turned_off(runner):
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "attempts=1")  # this run is the last attempt
+    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient"), AGENT_TRIAGE="0")
+    assert runner.status(key) == "blocked"
+    assert not any("You are triaging" in c for c in claude_calls(runner))
+    assert runner.queue("get", key, "triaged").returncode != 0
+    assert "blocked after 2 attempt(s)" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+
+
+def test_no_triage_when_usage_gate_refuses(runner):
+    # usage.py check: the implementer's gate passes, the second check (triage's) is at the limit.
+    (runner.code / "usage.py").write_text("import os, sys\nf = os.environ['STUB_LOG'] + '.usage'\n"
+                                          "n = len(open(f).read()) if os.path.exists(f) else 0\n"
+                                          "open(f, 'a').write('x')\nsys.exit(10 if n else 0)\n")
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "attempts=1")  # this run is the last attempt
+    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient"))
+    assert runner.status(key) == "blocked"
+    assert not any("You are triaging" in c for c in claude_calls(runner))
+    assert runner.queue("get", key, "triaged").returncode != 0
+    assert "blocked after 2 attempt(s)" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+
+
+def test_validator_blocked_is_triaged(runner):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("blocked", "cannot check out"), STUB_TRIAGE=triage_reply("requeue", "transient", note="retry"))
+    assert runner.status(key) == "queued"
+    assert runner.queue("get", key, "attempts").stdout.strip() == "0"

@@ -35,7 +35,7 @@ set `triaged=1`. `requeue` → `buildqueue.py requeue <key> --note <note> --fres
 triage: …"). `notify` → the blocked notice includes the diagnosis. If triage can't run (usage, lock) → the plain blocked notice as today.
 **Validate:** tests with a stub `claude`: `requeue` → item queued, attempts 0, `triaged=1`; a second block of the same item → no
 second triage, plain notice; `notify` → the notice body contains the diagnosis.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (implementer `blocked after N attempt(s)` and validator `blocked` (review stage); `AGENT_TRIAGE=0` turns it off)
 
 ### Task 3: docs
 **Runs:** unattended
