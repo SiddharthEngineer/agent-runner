@@ -131,7 +131,100 @@ merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method
         && gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null
 }
 
-# 3. Review stage (design D3): a `review` PR the implementer called ready gets a fresh-context validator run first.
+# 3a. Preprod stage (design D3): an approved `review` PR now on preprod gets its Human test steps run by the validator.
+STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
+preprod_stage() {
+    local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries
+    pr=$("${Q[@]}" get "$key" pr)
+    url=$(cfg preprod.health | head -n1 | cut -f1)
+    host=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url")
+    base_url=$(python3 -c 'import sys, urllib.parse; u = urllib.parse.urlsplit(sys.argv[1]); print(f"{u.scheme}://{u.netloc}/")' "$url")
+    netrc_env=$(cfg preprod.netrc_env)
+    netrc=${!netrc_env:-}
+    signed=false
+    [ -f "$STORAGE_STATE" ] && signed=true
+    dry "run validator (preprod) for $key PR #$pr signed_in=$signed"
+    usage_gate
+    tmpd=$(mktemp -d)
+    pwt=$STATE/worktrees/$repo/preprod-$pr
+    presult=$STATE/results/$repo/$slug.preprod.json
+    plog=$STATE/logs/$(date -u +%Y%m%dT%H%MZ)-$repo-$slug.preprod.log
+    mkdir -p "$(dirname "$pwt")" "$(dirname "$presult")"
+    rm -f "$presult"
+    signed=$(python3 "$HERE/mcp_config.py" write "$tmpd/mcp.json" ${netrc:+--netrc "$netrc"} --host "$host" \
+        --storage-state "$STORAGE_STATE" | sed -n 's/^signed_in=//p')
+    if ! { git -C "$AGENT_REPO" fetch -q origin "pull/$pr/head" && git -C "$AGENT_REPO" worktree add -q --detach "$pwt" FETCH_HEAD; }; then
+        rm -rf "$tmpd"
+        say "$key: can't check out PR #$pr for the preprod check"
+        return 0
+    fi
+    vsettings=$pwt/agents/settings/validate.json
+    [ -f "$vsettings" ] || vsettings=$HERE/settings/validate.json
+    python3 -c 'import json, sys
+s = json.load(open(sys.argv[1])); s["permissions"]["allow"].append("mcp__playwright")
+json.dump(s, open(sys.argv[2], "w"))' "$vsettings" "$tmpd/settings.json"
+    vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
+base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
+        "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$plan" "$base_url" "$presult" "$signed")
+    say "$key: validator (preprod) start for PR #$pr, signed_in=$signed (log $plog)"
+    (
+        cd "$pwt" || exit 1
+        PREPROD_NETRC=$netrc AGENT_SLUG=$key AGENT_RESULT_FILE=$presult timeout --kill-after=2m 45m claude -p "$vprompt" \
+            --model claude-sonnet-5-5 --settings "$tmpd/settings.json" --mcp-config "$tmpd/mcp.json" \
+            --permission-mode dontAsk --output-format json
+    ) >> "$plog" 2>&1
+    say "$key: validator (preprod) exit $?"
+    rm -rf "$tmpd"  # it holds the basic-auth password
+    git -C "$AGENT_REPO" worktree remove --force "$pwt"
+    field() { python3 -c 'import json,sys; v = json.load(open(sys.argv[1])).get(sys.argv[2], ""); print("\n".join(f"- {x}" for x in v) if isinstance(v, list) else v)' "$presult" "$1" 2>/dev/null; }
+    verdict=$(field verdict)
+    summary=$(field summary)
+    if [ -z "$verdict" ]; then  # no result: a failed validator attempt
+        tries=$(( $("${Q[@]}" get "$key" preprod_attempts 2>/dev/null || echo 0) + 1 ))
+        "${Q[@]}" set "$key" "preprod_attempts=$tries"
+        say "$key: preprod validator wrote no verdict (attempt $tries)"
+        [ "$tries" -lt "${AGENT_MAX_ATTEMPTS:-2}" ] && return 0
+        verdict=blocked
+        summary="The preprod validator wrote no verdict $tries times. Log: $plog (on the VPS)."
+    fi
+    "${Q[@]}" set "$key" "preprod_verdict=$verdict"
+    case $verdict in
+        approve)
+            left=$(field left_for_you)
+            if merge_pr "$pr"; then
+                "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+                "${Q[@]}" set "$key" status=done
+                say "$key: preprod checks passed, PR #$pr merged"
+                notify "merged; $(printf '%s' "$left" | grep -c '^- ') steps left for you" \
+                    "https://github.com/$GH_REPO/pull/$pr passed review and its preprod checks and is merged.
+Left for you:
+${left:-nothing left}"
+            else
+                notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
+            fi ;;
+        changes)
+            "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+            "${Q[@]}" requeue "$key" --note "Preprod checks of PR #$pr failed: $summary
+Failed steps:
+$(field failed)" >/dev/null
+            "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
+            say "$key: preprod checks failed, back to the implementer"
+            [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: preprod checks still failing" \
+                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary" ;;
+        *)
+            "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+            "${Q[@]}" set "$key" status=blocked
+            notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" ;;
+    esac
+}
+
+if key=$("${Q[@]}" oldest on-preprod --without preprod_verdict); then
+    load_item
+    preprod_stage
+    exit 0
+fi
+
+# 3b. Review stage (design D3): a `review` PR the implementer called ready gets a fresh-context validator run first.
 review_stage() {
     local pr rwt rresult rlog vsettings vprompt verdict summary tries
     pr=$("${Q[@]}" get "$key" pr)

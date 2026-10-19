@@ -22,7 +22,8 @@ Usage:
   buildqueue.py answer <slug> TEXT   attach the user's answer and re-queue with fresh attempts, resuming the session
   buildqueue.py requeue <slug> --note TEXT   re-queue with a note, resuming the session, keeping the attempts used
                                      (the validator's `changes`); out of attempts → blocked
-  buildqueue.py oldest <status>      print the key of the least recently updated item with that status, or exit 1
+  buildqueue.py oldest <status> [--without KEY]   print the key of the least recently updated item with that status
+                                     (and no KEY field), or exit 1
   buildqueue.py pause <hours>        stop starting runs (e.g. after a usage-limit exit)
   buildqueue.py get <slug> <key>
 
@@ -295,7 +296,8 @@ def cmd_requeue(args: argparse.Namespace) -> int:
 
 def cmd_oldest(args: argparse.Namespace) -> int:
     items = load()["items"]
-    found = sorted((it["updated"], key) for key, it in items.items() if it["status"] == args.status)
+    found = sorted((it["updated"], key) for key, it in items.items()
+                   if it["status"] == args.status and not (args.without and it.get(args.without)))
     if not found:
         return 1
     print(found[0][1])
@@ -361,6 +363,7 @@ def main() -> int:
     p.set_defaults(fn=cmd_requeue)
     p = sub.add_parser("oldest")
     p.add_argument("status")
+    p.add_argument("--without", help="skip items that have this field set")
     p.set_defaults(fn=cmd_oldest)
     p = sub.add_parser("pause")
     p.add_argument("hours", type=float)
