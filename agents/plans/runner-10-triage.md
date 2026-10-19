@@ -1,5 +1,5 @@
 # Plan: Sonnet triage of blocked items (optional)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-8-self-host
 
@@ -25,7 +25,7 @@ the PR checks and comments; classify the cause as `transient` | `fixed-elsewhere
 write `{"action": "requeue"|"notify", "class": "...", "note": "...", "diagnosis": "..."}`. Requeue only `transient` or
 `fixed-elsewhere`. Settings: read-only (`Read`, `tail`, `grep`, `ls`, `gh pr view|checks|diff`, `gh run view --log-failed`), deny all writes.
 **Validate:** `pytest -q tests/test_review.py` → the template fills; the settings deny `Edit`, `Write` and `Bash(git push:*)`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 9dcabe5 (the settings deny all writes, so the agent replies with the JSON and run.sh saves it to the result file)
 
 ### Task 2: wire triage into `run.sh`
 **Runs:** unattended
@@ -35,14 +35,14 @@ set `triaged=1`. `requeue` → `buildqueue.py requeue <key> --note <note> --fres
 triage: …"). `notify` → the blocked notice includes the diagnosis. If triage can't run (usage, lock) → the plain blocked notice as today.
 **Validate:** tests with a stub `claude`: `requeue` → item queued, attempts 0, `triaged=1`; a second block of the same item → no
 second triage, plain notice; `notify` → the notice body contains the diagnosis.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (implementer `blocked after N attempt(s)`; the review validator's `blocked` or no verdict twice, which go back to `awaiting-review`; `AGENT_TRIAGE=0` turns it off. Not triaged: CI-red not-merged PRs and preprod blocks)
 
 ### Task 3: docs
 **Runs:** unattended
 **Files:** README.md (modify)
 **What:** README: triage, its once-per-item limit, and how to turn it off (`AGENT_TRIAGE=0`; also implement the flag in Task 2's code path).
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
