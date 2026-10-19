@@ -26,7 +26,7 @@ Agents never push tags or run `install.sh`.
 |---|---|---|
 | `queue` | `buildqueue.py` | Queue state, attempts, pause |
 | `gate` | `gate.py` | Risk gate: the plan's `**Risk:**` line plus diff checks decide auto-merge vs review; `--plan` checks a plan's size budget; `--config` takes a repo's `runner.toml` |
-| `inbox` | `inbox.py` | Questions and notices as issues in this repo, plus an ntfy push |
+| `inbox` | `inbox.py` | Questions and notices as issues in this repo, plus an ntfy push; `sweep` closes notices of finished items |
 | `usage` | `usage.py` | Claude session-usage gate |
 | `config` | `config.py` | `check`/`get` a repo's `agents/runner.toml` (refuses prod commands) |
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
@@ -100,7 +100,8 @@ Health checks go through Cloudflare with the netrc, so they prove the public hos
 
 ## How a tick works (`run.sh`)
 Every 5 minutes, for every registered repo, with at most one Claude run at a time (a `flock` on `run.lock`):
-1. **Upkeep:** inbox replies (`inbox.py poll`) and the global preprod lock (`preprod.sh tick`).
+1. **Upkeep:** inbox replies (`inbox.py poll`), closing the notices of items that are `done` or `cancelled`
+   (`inbox.py sweep`), and the global preprod lock (`preprod.sh tick`).
 2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
 3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the session-usage gate.
 4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
@@ -114,6 +115,10 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
 **Item lifecycle:** `queued → running → done` for `low` plans; `running → awaiting-review → (validator) → awaiting-preprod →
 on-preprod → done` for `review` plans (a repo with no `[preprod]` merges straight after the validator approves). Also
 `waiting-answer` (a question in the inbox), `blocked` and `cancelled`.
+**Notices close themselves.** Each tick, an open `agent-notice` issue titled `[<key>] …` is closed (with a comment) once that
+item is `done` or `cancelled`. A "merged; N steps left for you" notice with steps stays open for you to close. Health notices
+(`[vps]`) are closed by `health.py` on recovery. If you finish a blocked item by hand, `agent-runner queue set <key> status=done`
+closes its notices.
 
 **Validator, review stage.** Each tick, before any new implementer run, the oldest `awaiting-review` item gets one
 fresh-context Opus run (1 h at most) in a detached checkout of the PR head (`worktrees/<repo>/review-<pr>`, removed after). It

@@ -3,7 +3,7 @@
 #   */5 * * * * $HOME/.local/bin/agent-runner run
 # Everything before `claude -p` is plain bash/Python, so an empty queue costs no Claude usage.
 #
-# 1. Upkeep: pick up your inbox replies, release/advance the global preprod lock (preprod.sh tick).
+# 1. Upkeep: pick up your inbox replies, close notices of finished items, release/advance the global preprod lock (preprod.sh tick).
 # 2. Health gate: while disk is critical (health.py gate), no Claude run starts; upkeep above still ran.
 # 3. `buildqueue.py next` picks a due `<repo>/<slug>` (honours pause, optional daily cap, attempt limit) or we exit.
 #    Then usage.py checks the Claude "Current session" usage (one tiny Haiku probe): at or above
@@ -54,6 +54,7 @@ if [ -n "$DRY" ]; then
     say "dry run: would poll the inbox and tick preprod"
 else
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" poll >> "$STATE/runs.log" 2>&1
+    [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" sweep >> "$STATE/runs.log" 2>&1
     "$HERE/preprod.sh" tick >> "$STATE/runs.log" 2>&1
 fi
 

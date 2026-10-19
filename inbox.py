@@ -7,6 +7,7 @@ Usage:
                                                  open an `agent-notice` issue (PR on preprod, item blocked, …)
   inbox.py comment <n> --body B [--close]        comment on an inbox issue (and close it)
   inbox.py poll                                  re-queue items whose question issue has a reply (cron, no Claude)
+  inbox.py sweep [--dry-run]                     close `agent-notice` issues whose item is done or cancelled (cron, no Claude)
 
 <key> is a queue key (`<repo>/<slug>`, or a bare slug only one repo has). Issues are labelled with the item's repo.
 
@@ -22,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -138,6 +140,36 @@ def cmd_poll(_: argparse.Namespace) -> int:
     return 0
 
 
+FINISHED = {"done", "cancelled"}
+STEPS_LEFT = re.compile(r"merged; ([1-9]\d*) steps left for you")  # your to-do after a merge: you close it
+
+
+def cmd_sweep(args: argparse.Namespace) -> int:
+    """Close the notices of finished items: `[<key>] …` titles whose queue item is done or cancelled."""
+    from buildqueue import load, resolve  # same directory
+
+    data = load()
+    issues = json.loads(gh("issue", "list", "--repo", repo(), "--label", "agent-notice", "--state", "open",
+                           "--limit", "500", "--json", "number,title"))
+    for issue in issues:
+        m = re.match(r"\[([^\]]+)\]", issue["title"])
+        if not m or STEPS_LEFT.search(issue["title"]):
+            continue
+        try:
+            key = resolve(data, m.group(1))
+        except SystemExit:  # not a queue item ([vps] health notices) or ambiguous
+            continue
+        status = data["items"][key]["status"]
+        if status not in FINISHED:
+            continue
+        if not args.dry_run:
+            gh("issue", "comment", str(issue["number"]), "--repo", repo(),
+               "--body", f"`{key}` is {status}, closing.\n\n{MARKER}")
+            gh("issue", "close", str(issue["number"]), "--repo", repo())
+        print(f"{'would close' if args.dry_run else 'closed'} #{issue['number']} ({key} is {status})")
+    return 0
+
+
 def main() -> int:
     load_env()
     parser = argparse.ArgumentParser(description="Strelitzia agent inbox")
@@ -160,6 +192,9 @@ def main() -> int:
     p.add_argument("--close", action="store_true")
     p.set_defaults(fn=cmd_comment)
     sub.add_parser("poll").set_defaults(fn=cmd_poll)
+    p = sub.add_parser("sweep")
+    p.add_argument("--dry-run", action="store_true", help="print what it would close")
+    p.set_defaults(fn=cmd_sweep)
     args = parser.parse_args()
     return args.fn(args)
 

@@ -547,6 +547,7 @@ def fake_gh(tmp_path):
         "if sys.argv[1:3] == ['issue', 'create']: print('https://github.com/o/r/issues/42')\n"
         "if sys.argv[1:3] == ['issue', 'comment']: print('https://github.com/o/r/issues/42#issuecomment-1')\n"
         f"if sys.argv[1:3] == ['issue', 'view']: print(open({str(tmp_path / 'view.json')!r}).read())\n"
+        f"if sys.argv[1:3] == ['issue', 'list']: print(open({str(tmp_path / 'list.json')!r}).read())\n"
     )
     gh.chmod(0o755)
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "AGENT_INBOX_REPO": "o/r",
@@ -562,6 +563,8 @@ def fake_gh(tmp_path):
 
     inbox.queue = queue
     inbox.tmp = tmp_path
+    inbox.issues = lambda titles: (tmp_path / "list.json").write_text(
+        json.dumps([{"number": n, "title": t} for n, t in titles.items()]))
     inbox.view = lambda comments: (tmp_path / "view.json").write_text(json.dumps({"comments": [{"body": b} for b in comments]}))
 
     inbox.calls = lambda: [json.loads(line) for line in log.read_text().splitlines()]
@@ -657,3 +660,23 @@ def test_inbox_notify_slug_uses_item_repo(fake_gh):
     fake_gh("notify", "--slug", "x", "--title", "t", "--body", "b")
     create = next(c for c in fake_gh.calls() if c[:2] == ["issue", "create"])
     assert "engineerfamily" in create and "strelitzia" not in create
+
+
+def test_inbox_sweep_closes_notices_of_finished_items(fake_gh):
+    for slug in ("merged", "gone", "busy", "todo"):
+        fake_gh.queue("add", slug, "--repo", "engineerfamily")
+    fake_gh.queue("set", "engineerfamily/merged", "status=done")
+    fake_gh.queue("set", "engineerfamily/gone", "status=cancelled")
+    fake_gh.queue("set", "engineerfamily/busy", "status=blocked")
+    fake_gh.queue("set", "engineerfamily/todo", "status=done")
+    fake_gh.issues({1: "[engineerfamily/merged] merged PR #4", 2: "[gone] validator blocked on PR #5",
+                    3: "[engineerfamily/busy] blocked after 2 attempt(s)", 4: "[vps] disk 70% used",
+                    5: "[engineerfamily/todo] merged; 2 steps left for you", 6: "[engineerfamily/todo] merged; 0 steps left for you",
+                    7: "[nope] not queued", 8: "no key"})
+    assert fake_gh("sweep", "--dry-run").stdout.count("would close") == 3
+    assert not any(c[:2] == ["issue", "close"] for c in fake_gh.calls())
+    out = fake_gh("sweep")
+    assert out.returncode == 0, out.stderr
+    closed = [c[2] for c in fake_gh.calls() if c[:2] == ["issue", "close"]]
+    assert closed == ["1", "2", "6"]
+    assert "engineerfamily/gone` is cancelled" in next(c for c in fake_gh.calls() if c[:3] == ["issue", "comment", "2"])[-1]
