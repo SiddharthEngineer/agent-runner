@@ -310,8 +310,11 @@ if [ ! -d "$wt" ]; then
 fi
 settings=$wt/agents/settings/implement.json
 [ -f "$settings" ] || settings=$wt/scripts/agent/settings.json  # repos not yet on the agents/ layout (Strelitzia today)
-mcp=$wt/agents/mcp.json
-[ -f "$mcp" ] || mcp=$wt/scripts/agent/mcp.json
+# The MCP config is optional: a repo without one (agent-runner itself) runs with no MCP servers, since claude refuses a missing file.
+mcp_args=()
+for mcp in "$wt/agents/mcp.json" "$wt/scripts/agent/mcp.json"; do
+    [ -f "$mcp" ] && { mcp_args=(--mcp-config "$mcp"); break; }
+done
 
 "${Q[@]}" start "$key"
 result=$STATE/results/$repo-$slug.json
@@ -338,7 +341,7 @@ run_claude() {
         AGENT_SLUG=$key AGENT_RESULT_FILE=$result timeout --kill-after=2m "$MAX_RUNTIME" claude -p "$@" "$p" \
             --model claude-opus-5-5 \
             --settings "$settings" \
-            --mcp-config "$mcp" \
+            "${mcp_args[@]}" \
             --permission-mode auto --permission-prompts none \
             --output-format json
     ) >> "$log" 2>&1

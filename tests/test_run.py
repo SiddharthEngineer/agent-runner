@@ -73,7 +73,7 @@ def runner(tmp_path):
         return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
 
     def register(name: str, base: str = "main", merge: str = "merge", deploy: str | None = "true",
-                 plan: str | None = "low") -> None:
+                 plan: str | None = "low", mcp: bool = False) -> None:
         origin, clone = tmp_path / f"{name}.git", tmp_path / f"{name}-clone"
         work = tmp_path / f"{name}-work"
         git("init", "-q", "-b", base, work)
@@ -84,6 +84,8 @@ def runner(tmp_path):
         if plan:
             (work / "agents/plans/x.md").write_text(f"# Plan: x\n**Risk:** {plan}\n")
         (work / "README.md").write_text("x\n")
+        if mcp:
+            (work / "agents/mcp.json").write_text('{"mcpServers": {}}\n')
         git("-C", work, "add", "-A")
         git("-C", work, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-qm", "base")
         git("clone", "-q", "--bare", work, origin)
@@ -188,6 +190,23 @@ def test_settings_fall_back_to_scripts_agent(runner):
     runner()
     [claude] = claude_calls(runner)
     assert f"--settings {runner.state}/worktrees/engineerfamily/x/scripts/agent/settings.json" in claude
+
+
+def test_mcp_config_only_when_the_repo_has_one(runner):
+    runner.register("agent-runner")
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner()
+    [claude] = claude_calls(runner)
+    assert "--mcp-config" not in claude, runner.runs_log()
+    assert runner.status("agent-runner/x") == "done"
+
+
+def test_mcp_config_from_agents(runner, tmp_path):
+    runner.register("engineerfamily", mcp=True)
+    runner.queue("add", "x", "--repo", "engineerfamily")
+    runner()
+    [claude] = claude_calls(runner)
+    assert f"--mcp-config {runner.state}/worktrees/engineerfamily/x/agents/mcp.json" in claude
 
 
 def test_health_gate_stops_runs_not_upkeep(runner):
