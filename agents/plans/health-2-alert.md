@@ -1,5 +1,5 @@
 # Plan: VPS health alerts and read-only Claude diagnosis (`health.py tick`, `gate`)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks; cron line is AM2)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: sends notices, starts a Claude run, adds an agent settings file)
 **Depends on:** health-1-clean, runner-1-config
 
