@@ -1,6 +1,6 @@
 # Plan: runner.toml loader, prod guard, and shared config/state dirs
 **Status:** ❌ Not started
-**Risk:** review (the runner's config and risk gate; every later Part reads it)
+**Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: the runner's config and risk gate; every later Part reads it)
 **Depends on:** - (first Part of [shared-agent-runner](shared-agent-runner.md))
 
 ## Goal
@@ -24,7 +24,7 @@ without `--config` it behaves exactly as today.
 
 ## Tasks
 ### Task 1: `config.py` loader and prod guard
-**Runs:** interactive (agent-runner is not in the unattended runner's repo list yet)
+**Runs:** unattended
 **Files:** config.py (new), tests/test_config.py (new), tests/fixtures/strelitzia.runner.toml (new), tests/fixtures/engineerfamily.runner.toml (new)
 **What:**
 ```toml
@@ -45,7 +45,7 @@ The fixtures hold today's Strelitzia values and design D5's engineerfamily value
 **Status:** ❌
 
 ### Task 2: config and state dirs, env loading
-**Runs:** interactive
+**Runs:** unattended
 **Files:** config.py (modify), tests/test_config.py (modify)
 **What:** `config_dir() -> Path` = `~/.config/agent-runner`. `state_dir() -> Path` = `$AGENT_RUNNER_STATE` or
 `~/.local/state/agent-runner`. `env_file() -> Path | None`: `config_dir()/env` if it exists, else `~/.config/strelitzia-agent/env`
@@ -57,7 +57,7 @@ Nothing calls these yet besides tests and `health.py` (Parts health-1/2).
 **Status:** ❌
 
 ### Task 3: `gate.py --config`
-**Runs:** interactive
+**Runs:** unattended
 **Files:** gate.py (modify), tests/test_runner.py (modify)
 **What:** Add `--config <runner.toml>`. When given, `HIGH_RISK`, `DOC_OR_TEST`, `CODE_LINE_BUDGET` and the tests dir come from
 `cfg.gate`, and `--base` defaults to `origin/<cfg.repo.base>`. Pass them as arguments (`evaluate(plan, base, rules)` with a small

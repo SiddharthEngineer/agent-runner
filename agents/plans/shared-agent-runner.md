@@ -1,5 +1,5 @@
 # Plan: One agent runner for Strelitzia and engineerfamily, with manager, implementation and validation roles
-**Status:** 📝 Design, decisions settled (2026-10-19). Part 0 done; first-wave Part plans written (see Parts). Moved here from Strelitzia `agents/plans/` on 2026-10-19
+**Status:** 📝 Design, decisions settled (2026-10-19). Part 0 done; every Part planned (see Parts). Moved here from Strelitzia `agents/plans/` on 2026-10-19
 **Risk:** review (moves the runner to a new repo, changes the agent settings and the preprod lock; touches `scripts/agent/*`, `.claude/settings.json` and `.github/*` in both repos)
 
 This is a design plan: it is over `gate.py --plan`'s size budget on purpose and **must not be queued**. Each Part below is
@@ -193,37 +193,38 @@ and every agent run, so a full disk or memory pressure breaks all of them at onc
   working when the build runner is broken or paused. After the cutover, `run.sh` also calls `agent-runner health gate` and starts
   no Claude run while disk is over 90% (a docker build would fail anyway).
 
-## Parts (each becomes its own plan via `/plan`; all `review`)
-Split on 2026-10-19 to fit `gate.py --plan` (≤4 tasks, ≤12 files, ≤10 KB per plan). Renumbered the same day when the VPS-health
-Parts were added and the install Part moved up (it only needs `config.py`, and the health cron line needs the installed CLI).
-Build in this order; each line merges on its own with green validation. **Wave 1** plans are written; the rest are written once
-the code they build on has merged, so their line references aren't stale.
+## Parts (each is its own plan; all `low`, auto-merge on green CI, user 2026-10-19)
+Split to fit `gate.py --plan` (≤4 tasks, ≤12 files, ≤10 KB per plan). Every Part was planned on 2026-10-19. Status, the build
+order and the user's manual steps are tracked in [agents/ROADMAP.md](../ROADMAP.md), the single source; this table only maps
+Parts to plans.
 
-| Part | Plan slug | Repo | What | Runs | Plan |
-|---|---|---|---|---|---|
-| 0 | create repo | GitHub | Renamed `agent-inbox` → `agent-runner` (user); seeded with `scripts/agent/*` and the runner tests at Strelitzia c4873de (Claude, 2026-10-19) | done | - |
-| 1 | `runner-1-config` | agent-runner | `config.py`: load and check `runner.toml`, the prod-command guard (D5 point 2), config/state dirs and env loading with the `strelitzia-agent` fallback; `gate.py --config` | interactive | wave 1 |
-| 2 | `runner-2-install` | agent-runner | the `agent-runner` CLI, `install.sh <tag>`, CI workflow, README. Not in cron yet | interactive (`.github/`) | wave 1 |
-| 3 | `health-1-clean` | agent-runner | `health.py check` and `clean [--dry-run]`: metrics, thresholds, the routine and pressure rules (D6) | interactive | wave 1 |
-| 4 | `health-2-alert` | agent-runner | `health.py tick` and `gate`: problem state, `vps-health` notices, the read-only Sonnet diagnosis | interactive | wave 1 |
-| M | health live | VPS | Tag, `install.sh`, the health cron line (ROADMAP manual steps) | manual (user) | - |
-| 3a | `ef-validate-ci` | engineerfamily | `scripts/validate.sh` (compose `config -q` with `.env.template`, `nginx -t` with a stub `.htpasswd`), `.github/workflows/ci.yml`, `make prod-changes` | interactive (`.github/`) | wave 1 |
-| 5 | `runner-3-state` | agent-runner | `<repo>/<slug>` queue keys with bare-slug migration, `add --repo`, cross-repo `--after`; 4-column `preprod.lock`; `buildqueue.py`, `preprod.sh`, `inbox.py`, `usage.py` on `config.state_dir()` | interactive | later |
-| 6 | `runner-4-run` | agent-runner | `run.sh` walks `repos/*.env`, reads `runner.toml` from `origin/<base>`, worktrees at `worktrees/<repo>/<slug>`, the single merge rule, `AGENT_DRY_RUN`, `health gate` | interactive | later |
-| 7 | `runner-5-review` | agent-runner | Validator review stage (D3) | interactive | later |
-| 8 | `runner-6-preprod-check` | agent-runner | Validator preprod stage (D3) | interactive | later |
-| 3b | `ef-agents-layout` | engineerfamily | `AGENTS.md` (from `CLAUDE.md`), `agents/ROADMAP.md`, `agents/DEPLOY.md`, `.claude/settings.json` | interactive (settings) | later |
-| 3c | `ef-runner-config` | engineerfamily | `agents/runner.toml`, `agents/settings/{implement,validate}.json`, `agents/mcp.json`, `.claude/commands/*` calling `agent-runner …` | interactive (settings) | later |
-| 4a | `strelitzia-runner-config` | Strelitzia | `agents/runner.toml`, `agents/settings/*`, `agents/mcp.json`; commands call `agent-runner …`; `/schedule-build` passes `--repo`. `scripts/agent/` stays | unattended | later |
-| 9 | cutover | VPS | Rollout steps 2-6 | manual (user) | - |
-| 4b | `strelitzia-runner-cleanup` | Strelitzia | Rollout step 7: delete `scripts/agent/` and `tests/test_agent_runner.py`, drop the config-dir fallback | unattended, a week after the cutover | later |
-| 10 | `runner-7-triage` (optional) | agent-runner | Sonnet manager triage of `blocked` items | unattended | later |
+| Part | Plan | Repo | What |
+|---|---|---|---|
+| 0 | - | GitHub | `agent-inbox` renamed to `agent-runner` (user), seeded from Strelitzia `scripts/agent/` at c4873de (done) |
+| A1 | [runner-1-config](runner-1-config.md) | agent-runner | `config.py`, `runner.toml` schema, prod guard, config/state dirs, `gate.py --config` |
+| A2 | [runner-2-install](runner-2-install.md) | agent-runner | `agent-runner` CLI, `install.sh <tag>`, CI, README |
+| A3 | [health-1-clean](health-1-clean.md) | agent-runner | D6 check and cleanup rules |
+| A4 | [health-2-alert](health-2-alert.md) | agent-runner | D6 tick, notices, read-only diagnosis, `health gate` |
+| A5 | [ef-validate-ci](ef-validate-ci.md) | engineerfamily | `scripts/validate.sh`, PR CI, `make prod-changes` |
+| A6 | [runner-3-state](runner-3-state.md) | agent-runner | `<repo>/<slug>` queue, inbox projects, shared state dir |
+| A7 | [runner-4-preprod](runner-4-preprod.md) | agent-runner | Global preprod lock, commands and health from `runner.toml` |
+| A8 | [runner-5-run](runner-5-run.md) | agent-runner | Multi-repo `run.sh`, `AGENT_DRY_RUN`, health gate, one merge rule |
+| A9 | [runner-6-review](runner-6-review.md) | agent-runner | Validator review stage |
+| A10 | [runner-7-preprod-check](runner-7-preprod-check.md) | agent-runner | Validator preprod stage (Playwright storage state, manual AM3) |
+| A11 | [runner-8-self-host](runner-8-self-host.md) | agent-runner | agent-runner's own `runner.toml`, settings, commands; `check-commands` |
+| A12 | [ef-agents-layout](ef-agents-layout.md) | engineerfamily | `AGENTS.md`, `agents/`, `.claude/settings.json` |
+| A13 | [ef-runner-config](ef-runner-config.md) | engineerfamily | `runner.toml`, agent settings, commands |
+| S1 | Strelitzia `agents/plans/strelitzia-runner-config.md` | Strelitzia | `runner.toml`, agent settings, add-only before the cutover |
+| cutover | - | VPS | Rollout steps 2-6 (user) |
+| S2 | Strelitzia `agents/plans/strelitzia-runner-cleanup.md` | Strelitzia | Commands on the CLI, delete `scripts/agent/` (Rollout step 7) |
+| A14 | [runner-9-cleanup](runner-9-cleanup.md) | agent-runner | Drop the `strelitzia-agent` fallbacks |
+| A15 | [runner-10-triage](runner-10-triage.md) (optional) | agent-runner | Sonnet triage of `blocked` items |
 
 ## Rollout (the Strelitzia runner keeps working at every step)
-1. **Parts 1-3c build next to the old runner.** The health Parts go live early, on their own cron line (D6), since they don't touch the queue. Nothing the old runner reads changes: `~/src/Strelitzia/scripts/agent/`,
+1. **Parts A1-A13 and S1 build next to the old runner.** The health Parts go live early, on their own cron line (D6), since they don't touch the queue. Nothing the old runner reads changes: `~/src/Strelitzia/scripts/agent/`,
    `~/.config/strelitzia-agent/` and `~/.local/state/strelitzia-agent/` all stay as they are. The new code uses its own state dir
    and only `health tick` is in cron. Run these Parts interactively: the old runner only makes worktrees of Strelitzia.
-2. **Dry run.** `AGENT_DRY_RUN=1 ~/.local/share/agent-runner/current/run.sh` (Part `runner-4-run` adds it: it logs the decision, then exits before `claude`/`gh pr merge`/preprod)
+2. **Dry run.** `AGENT_DRY_RUN=1 ~/.local/share/agent-runner/current/run.sh` (A8 `runner-5-run` adds it: it logs the decision, then exits before `claude`/`gh pr merge`/preprod)
    against a **copy** of the old `queue.json` in a temp state dir. Expected result: bare keys read as `strelitzia/*`, every item `done`, "nothing due".
 3. **Drain.** `buildqueue.py list` on the old runner shows nothing `queued`, `running` or `on-preprod`, and `preprod.sh status` says `free`.
    (True at plan time.) Comment out the old cron line if it is on.
@@ -235,7 +236,7 @@ the code they build on has merged, so their line references aren't stale.
    with no validator run. Then queue a `review` engineerfamily plan that changes one nginx comment. Expected: validator review →
    preprod deploy through `make preprod-deploy ref=<sha>` → preprod-stage checklist comment → validator approves → the manager merges →
    the lock releases → preprod is back on `main`.
-7. **Clean up** after a week with no problems: run Part 4b (delete Strelitzia's `scripts/agent/`), delete `~/.config/strelitzia-agent`
+7. **Clean up** after a week with no problems: run S2 (delete Strelitzia's `scripts/agent/`) and A14, delete `~/.config/strelitzia-agent`
    and `~/.local/state/strelitzia-agent`, and drop the config-dir fallback.
 
 Rollback at any step before 7: restore the old crontab line. The old code, config and state are untouched until then.

@@ -1,6 +1,6 @@
 # Plan: engineerfamily validate script, PR CI, and `make prod-changes`
 **Status:** ❌ Not started
-**Risk:** review (adds `.github/` and a Makefile target to the deploy repo)
+**Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and a Makefile target to the deploy repo)
 **Repo:** SiddharthEngineer/engineerfamily (`~/src/engineerfamily`, base `main`, merge commits). This plan lives in agent-runner until engineerfamily has its own `agents/` (Part ef-agents-layout).
 **Depends on:** - (useful before the runner exists; design [shared-agent-runner](shared-agent-runner.md) D5)
 
@@ -25,7 +25,7 @@ Once agents merge `review` PRs, this is the human checkpoint before a prod deplo
 
 ## Tasks
 ### Task 1: `scripts/validate.sh`
-**Runs:** interactive (needs Docker; the unattended runner doesn't build engineerfamily yet)
+**Runs:** unattended
 **Files:** scripts/validate.sh (new)
 **What:** Same shape as Strelitzia's: `step <name> <cmd…>` prints `PASS`/`FAIL` and stops at the first failure. Steps:
 `bash -n` on `scripts/*.sh` and `scripts/vps/*` shell files; `compose <env>` for local, preprod and prod with `--env-file .env.template`;
@@ -36,7 +36,7 @@ Once agents merge `review` PRs, this is the human checkpoint before a prod deplo
 **Status:** ❌
 
 ### Task 2: PR CI
-**Runs:** interactive (`.github/`)
+**Runs:** unattended
 **Files:** .github/workflows/ci.yml (new)
 **What:** `on: pull_request` and `push: branches: [main]`; one job on `ubuntu-latest` (Docker and Compose v2 are preinstalled):
 `actions/checkout@v4`, then `scripts/validate.sh`. `permissions: contents: read`. No secrets.
@@ -44,7 +44,7 @@ Once agents merge `review` PRs, this is the human checkpoint before a prod deplo
 **Status:** ❌
 
 ### Task 3: `make prod-changes`
-**Runs:** interactive (reads `/srv/Strelitzia-prod`)
+**Runs:** unattended
 **Files:** scripts/prod-changes.sh (new), Makefile (modify)
 **What:** Read-only. `git fetch -q --tags origin` in this repo and in `$STRELITZIA_DEV_DIR` (default `~/src/Strelitzia`). Print
 `engineerfamily: <last prod tag>..origin/main` and then `git log --oneline --no-merges` for that range. Print `Strelitzia: <prod
@@ -56,7 +56,7 @@ calling it with `STRELITZIA_PROD_DIR`, plus `.PHONY` and a `help` line.
 **Status:** ❌
 
 ### Task 4: docs
-**Runs:** interactive
+**Runs:** unattended
 **Files:** CLAUDE.md (modify), README.md (modify)
 **What:** In `CLAUDE.md` "Rules", replace the two hand-run commands with `scripts/validate.sh` (one line saying what it checks). In
 README "Deploys", add "before a prod deploy, run `make prod-changes`".

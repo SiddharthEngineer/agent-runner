@@ -1,6 +1,6 @@
 # Plan: VPS health alerts and read-only Claude diagnosis (`health.py tick`, `gate`)
 **Status:** ❌ Not started
-**Risk:** review (sends notices, starts a Claude run, adds an agent settings file)
+**Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: sends notices, starts a Claude run, adds an agent settings file)
 **Depends on:** health-1-clean, runner-1-config
 
 ## Goal
@@ -8,7 +8,7 @@ Every 15 minutes `agent-runner health tick` measures the VPS, cleans up when a t
 box is still unhealthy, the user gets one `vps-health` inbox issue plus an ntfy push for each problem. Before the first notice,
 a short read-only Sonnet run looks around and adds a diagnosis: what is using the space or memory, and what the user could remove.
 When the problem clears, the issue gets a "recovered" comment and is closed. `agent-runner health gate` exits non-zero while disk
-is critical, for `run.sh` to check later (runner-4-run).
+is critical, for `run.sh` to check later (runner-5-run).
 
 ## Context
 - `health.py` from health-1-clean: `measure`, `problems`, `clean`, `health.json`/`health.log` in the state dir.
@@ -22,7 +22,7 @@ is critical, for `run.sh` to check later (runner-4-run).
 
 ## Tasks
 ### Task 1: `tick` and problem state
-**Runs:** interactive
+**Runs:** unattended
 **Files:** health.py (modify), tests/test_health.py (modify)
 **What:** `tick() -> int`: `load_env()`, measure, `clean()` if any problem is `cleanable` (else routine only), measure again.
 Load is a problem only if it was also over the threshold on the previous tick at least 15 min earlier (keep `load_since` in
@@ -34,7 +34,7 @@ else 0, with no cleanup or notices. `tick` holds `flock` on `health.lock` (non-b
 **Status:** ❌
 
 ### Task 2: notices
-**Runs:** interactive
+**Runs:** unattended
 **Files:** inbox.py (modify), health.py (modify), tests/test_runner.py (modify)
 **What:** `inbox.py notify` gains `--project` (default `strelitzia`, used in place of `PROJECT_LABEL`) and `--json` (prints
 `{"number", "url"}`). New `inbox.py comment <n> --body B [--close]` (adds `MARKER`, pushes ntfy). Health calls them with
@@ -46,7 +46,7 @@ bytes per rule from this tick, and the diagnosis (Task 3), never file contents. 
 **Status:** ❌
 
 ### Task 3: read-only diagnosis
-**Runs:** interactive (starts a real Claude run for its check)
+**Runs:** unattended
 **Files:** settings/health-diagnose.json (new), prompts/health-diagnose.md (new), health.py (modify), tests/test_health.py (modify)
 **What:** `diagnose(problems, metrics, clean_log) -> str | None`. It returns `None` without starting Claude if: no
 `CLAUDE_CODE_OAUTH_TOKEN`; `usage.py check` exits non-zero; either run lock is held; `health.json["last_diagnosis"]` is under 6 h
@@ -60,11 +60,11 @@ the rules that already ran, "find what uses the space/memory, list the biggest i
 remove and the exact command; do not change anything; never print file contents or secrets".
 **Validate:** tests stub `subprocess.run`: each skip condition returns `None` with no `claude` call; the argv has `--settings`
 pointing at the file and `--model claude-sonnet-5-5`. A JSON test asserts that nothing in `allow` matches `rm`, `prune`, `kill`
-or `sudo`. Interactive: `python3 health.py diagnose --force` on the VPS → a few lines naming the build cache and `~/.cache/uv`.
+or `sudo`. On the VPS (one short Sonnet run, allowed unattended): `python3 health.py diagnose --force` → a few lines naming the build cache and `~/.cache/uv`.
 **Status:** ❌
 
 ### Task 4: docs
-**Runs:** interactive
+**Runs:** unattended
 **Files:** README.md (modify), AGENTS.md (modify)
 **What:** README "VPS health": the alert flow, how the dedupe works, the diagnosis and its limits, `health gate`, and the cron
 line (design D6), added by the user (manual step AM2). AGENTS.md map: `settings/`, `prompts/`.

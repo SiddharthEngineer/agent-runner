@@ -1,6 +1,6 @@
 # Plan: `agent-runner` CLI, `install.sh <tag>`, CI and README
 **Status:** ❌ Not started
-**Risk:** review (adds `.github/` and decides what code cron runs)
+**Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and decides what code cron runs)
 **Depends on:** runner-1-config
 
 ## Goal
@@ -20,7 +20,7 @@ live only when the user installs a new tag. Nothing is added to cron here. The r
 
 ## Tasks
 ### Task 1: `agent-runner` CLI
-**Runs:** interactive
+**Runs:** unattended
 **Files:** agent-runner (new), tests/test_install.py (new)
 **What:** A bash script. `HERE=$(dirname "$(readlink -f "$0")")`. Subcommand map: `queue`→`buildqueue.py`, `gate`, `inbox`,
 `usage`, `config`, `health` → `<name>.py`; `preprod`, `run` → `<name>.sh`; Python goes through `python3`, and all remaining
@@ -31,7 +31,7 @@ through a symlink in `tmp_path/bin`; `agent-runner nope` exits 2; `agent-runner 
 **Status:** ❌
 
 ### Task 2: `install.sh <tag>`
-**Runs:** interactive
+**Runs:** unattended
 **Files:** install.sh (new), tests/test_install.py (modify)
 **What:** `install.sh <tag> | --list`. Source: `$AGENT_RUNNER_REMOTE` (default `https://github.com/SiddharthEngineer/agent-runner.git`).
 Keep a bare mirror at `~/.local/share/agent-runner/mirror.git` (`git clone --mirror` the first time, `git fetch --prune --tags` after).
@@ -46,7 +46,7 @@ unchanged; after 5 installs, 3 remain. (Tests stub `scripts/validate.sh` in the 
 **Status:** ❌
 
 ### Task 3: CI workflow and README
-**Runs:** interactive (`.github/`)
+**Runs:** unattended
 **Files:** .github/workflows/ci.yml (new), README.md (modify), AGENTS.md (modify)
 **What:** `ci.yml` runs on `pull_request` and on `push` to `main`, on `ubuntu-latest` with `actions/setup-python` 3.12 and
 `astral-sh/setup-uv`, and runs `scripts/validate.sh`. Rewrite `README.md` (it's the Strelitzia-era `scripts/agent/README.md` today):

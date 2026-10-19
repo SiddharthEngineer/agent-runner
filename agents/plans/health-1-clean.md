@@ -1,6 +1,6 @@
 # Plan: VPS health check and fixed-rule cleanup (`health.py check`, `clean`)
 **Status:** ❌ Not started
-**Risk:** review (deletes files and Docker data on the shared VPS)
+**Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: deletes files and Docker data on the shared VPS)
 **Depends on:** - (independent of the runner Parts; design [shared-agent-runner](shared-agent-runner.md) D6)
 
 ## Goal
@@ -22,7 +22,7 @@
 
 ## Tasks
 ### Task 1: measure and thresholds
-**Runs:** interactive (reads the real VPS for its check)
+**Runs:** unattended
 **Files:** health.py (new), tests/test_health.py (new)
 **What:** `@dataclass Metrics(disk_pct: float, disk_free_gb: float, mem_available_mb: int, swap_used_mb: int, load15_per_cpu: float, build_cache_gb: float | None)`.
 `measure(root="/", meminfo=Path("/proc/meminfo")) -> Metrics` (`shutil.disk_usage`, `os.getloadavg`, `os.cpu_count`;
@@ -37,7 +37,7 @@ also `disk-critical`; 350 MB available → `memory` not cleanable; a bad key in 
 **Status:** ❌
 
 ### Task 2: rule engine and Docker rules
-**Runs:** interactive
+**Runs:** unattended
 **Files:** health.py (modify), tests/test_health.py (modify)
 **What:** `@dataclass Rule(name: str, tier: Literal["routine", "pressure"], estimate: Callable[[], int], apply: Callable[[], int])`
 (bytes). `clean(dry_run, force_pressure) -> list[dict]`: routine rules run if `health.json` (in the state dir) says they last ran
@@ -51,7 +51,7 @@ after the first rule that gets disk under threshold, and that a second routine r
 **Status:** ❌
 
 ### Task 3: file rules with root guards
-**Runs:** interactive
+**Runs:** unattended
 **Files:** health.py (modify), tests/test_health.py (modify)
 **What:** `delete_under(root: Path, paths: Iterable[Path], dry_run) -> int`: resolves each path with `os.path.realpath`, refuses
 (logs and skips) anything not strictly inside `root` and anything that is a symlink, then removes it (`shutil.rmtree` for dirs)
@@ -67,7 +67,7 @@ and `df /` are unchanged afterwards.
 **Status:** ❌
 
 ### Task 4: docs
-**Runs:** interactive
+**Runs:** unattended
 **Files:** README.md (modify), AGENTS.md (modify)
 **What:** README section "VPS health": the thresholds, both rule tiers, the never-list (design D6), `health.toml` override example,
 and how to read `health.log`. AGENTS.md map row for `health.py`.
@@ -77,7 +77,7 @@ and how to read `health.log`. AGENTS.md map row for `health.py`.
 ## Validation
 - `scripts/validate.sh` passes.
 - On the VPS: `python3 health.py check` exits 0 (71% disk is under 80); `python3 health.py clean --dry-run --pressure` deletes nothing.
-- Interactive only, with the user's go-ahead: `python3 health.py clean` (routine) → `docker system df` build cache ≤ 3 GB, and
+- Not in an unattended run (it deletes for real; the user runs it, or the AM2 cron does): `python3 health.py clean` (routine) → `docker system df` build cache ≤ 3 GB, and
   `health.log` has one line per rule.
 
 ## Human test steps (preprod)
