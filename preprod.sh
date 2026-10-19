@@ -83,7 +83,37 @@ deploy_ref() {  # deploy_ref <ref to fetch into APP_DIR> <sha>
     health_check
 }
 
-health_check() { echo "health: not checked"; }
+# health_check: every [preprod] health URL through Cloudflare with the repo's netrc (a 127.0.0.1 check doesn't prove the
+# public host routes to the right nginx). `status` entries compare the HTTP code; `json_ok` entries need "ok": true.
+# Each URL gets 6 tries, 10 s apart.
+health_check() {
+    local line url rest want json_ok try out code body netrc_args=()
+    [ -n "$NETRC" ] && netrc_args=(--netrc-file "$NETRC")
+    [ -n "$HEALTH" ] || { echo "health: no checks configured"; return 0; }
+    while IFS= read -r line; do
+        # url<TAB>status<TAB>json_ok, status may be empty (read with IFS=tab would merge the two tabs)
+        url=${line%%$'\t'*}
+        rest=${line#*$'\t'}
+        want=${rest%%$'\t'*}
+        json_ok=${rest#*$'\t'}
+        for ((try = 1; ; try++)); do
+            out=$(curl -sS --max-time 20 "${netrc_args[@]}" -w '\n%{http_code}' "$url" 2>&1)
+            code=${out##*$'\n'}
+            body=${out%$'\n'*}
+            if [ "$json_ok" = true ]; then
+                [ "$code" = 200 ] && grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' <<<"$body" && break
+            else
+                [ "$code" = "${want:-200}" ] && break
+            fi
+            if [ "$try" -ge 6 ]; then
+                echo "health failed: $url returned $code: ${body:0:300}"
+                return 1
+            fi
+            sleep 10
+        done
+    done <<<"$HEALTH"
+    echo "healthy"
+}
 
 key_for_pr() {  # key_for_pr <repo> <pr>: the queue key of the repo's item with that PR
     python3 - "$1" "$2" "$STATE/queue.json" <<'EOF'

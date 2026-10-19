@@ -56,7 +56,7 @@ failing. On failure print which URL and what it returned (never the body beyond 
 rewritten for multi-repo and `runner.toml`.
 **Validate:** tests with a local `python3 -m http.server`-style stub (in the test, on a free port): 200 passes; 502 fails after
 the retries (sleep stubbed); `json_ok` with `{"ok": false}` fails. `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

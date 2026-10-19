@@ -68,6 +68,32 @@ Until the cutover the live cron runs Strelitzia's own `scripts/agent/run.sh`.
 - A run that ends without a result file, or whose `ready` fails the repo's full validation, counts as a failed attempt. After 2
   failures the item is `blocked` and you get a notice.
 
+## Preprod (`preprod.sh`)
+Preprod is one environment for every repo (the `engineerfamily-preprod` compose project also builds Strelitzia), so one PR from
+any repo holds it at a time:
+```
+agent-runner preprod status                     # the holder; releases the lock when its PR was merged or closed
+agent-runner preprod deploy engineerfamily 41   # take the lock, deploy the PR head, health-check it (exit 4 if busy)
+agent-runner preprod release [<repo>]           # drop the lock, put preprod back on the repo's base branch
+agent-runner preprod tick                       # status, then deploy the oldest awaiting-preprod item of any repo
+```
+The lock (`preprod.lock` in the state dir) is `repo<TAB>pr<TAB>sha<TAB>time`; a 3-column line from the old runner is read as
+`strelitzia`. Each repo's commands come from the `[preprod]` section of its `agents/runner.toml`, read from `origin/<base>` of
+the dev clone named in `~/.config/agent-runner/repos/<repo>.env` (`AGENT_REPO`), never from the PR branch, and checked by the prod
+guard before anything runs:
+```toml
+[preprod]
+app_dir = "/srv/Strelitzia-preprod"   # optional: fetched and checked out at the PR sha before deploy
+deploy = "make -C /srv/engineerfamily-preprod preprod-deploy ref={sha}"   # {sha} = the PR head (or the base, on release)
+release = "make -C /srv/engineerfamily-preprod preprod-deploy"           # optional; default: deploy again at origin/<base>
+seed = "…"                            # optional: runs after every deploy
+netrc_env = "PREPROD_NETRC"           # the repos/<repo>.env variable with the netrc for basic auth (the default)
+health = [{ url = "https://preprod.engineerfamily.net/", status = 200 },
+          { url = "https://preprod.engineerfamily.net/strelitzia/dashboard/api/health", json_ok = true }]
+```
+Health checks go through Cloudflare with the netrc, so they prove the public host routes to the right nginx. Each URL gets
+6 tries, 10 s apart; a failure prints the URL, the HTTP code and at most 300 characters of the body, and the deploy is rolled back.
+
 ## Day to day
 - Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).
 - **Queue keys.** One queue serves every repo. Items are keyed `<repo>/<slug>` (`strelitzia/site-sso-3-proxy-mode`,

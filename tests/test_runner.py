@@ -348,11 +348,12 @@ def preprod(tmp_path):
         (repos / f"{name}.env").write_text(f"AGENT_REPO={clone}\n")
         return origin
 
-    def run(script: str) -> subprocess.CompletedProcess:
+    def run(script: str, stub_health: bool = True) -> subprocess.CompletedProcess:
         env = {k: v for k, v in os.environ.items() if not k.startswith(("PREPROD_", "STRELITZIA_AGENT"))}
         env.update(HOME=str(tmp_path), AGENT_RUNNER_STATE=str(tmp_path / "state"), PATH=f"{bin_dir}:{os.environ['PATH']}",
                    AGENT_INBOX_REPO="")
-        full = f'. "{AGENT / "preprod.sh"}"; sleep() {{ :; }}; health_check() {{ echo healthy; }}; {script}'
+        stub = "health_check() { echo healthy; }; " if stub_health else ""
+        full = f'. "{AGENT / "preprod.sh"}"; sleep() {{ echo slept >> "{log}"; }}; {stub}{script}'
         return subprocess.run(["bash", "-c", full], env=env, capture_output=True, text=True)
 
     run.config = config
@@ -403,7 +404,7 @@ def test_preprod_app_dir_checks_out_the_sha(preprod, tmp_path):
     assert head != pr_sha
     out = preprod(f'load_repo strelitzia && deploy_ref pull/7/head {pr_sha}')
     assert out.returncode == 0, out.stdout + out.stderr
-    assert preprod.log().split() == [pr_sha]
+    assert [line for line in preprod.log().split() if line != "slept"] == [pr_sha]
 
 
 def test_preprod_refuses_prod_command(preprod):
@@ -436,6 +437,53 @@ def test_preprod_tick_picks_oldest_across_repos(preprod, tmp_path):
     out = preprod("cmd_tick")
     assert "engineerfamily#5 deployed to preprod" in out.stdout, out.stdout + out.stderr
     assert json.loads((state / "queue.json").read_text())["items"]["engineerfamily/b"]["status"] == "on-preprod"
+
+
+@pytest.fixture
+def health_server():
+    """A local HTTP server: /ok 200, /bad 502, /json-true and /json-false bodies. Yields its base URL."""
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            code, body = {"/ok": (200, b"fine"), "/bad": (502, b"Bad Gateway" * 100), "/json-true": (200, b'{"ok": true}'),
+                          "/json-false": (200, b'{"ok": false}')}.get(self.path, (404, b""))
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+
+
+def health(preprod, lines: list[str]) -> subprocess.CompletedProcess:
+    checks = "\\n".join(lines)
+    return preprod(f"NETRC=; HEALTH=$(printf '{checks}'); health_check", stub_health=False)
+
+
+def test_health_status_200_passes(preprod, health_server):
+    out = health(preprod, [f"{health_server}/ok\\t200\\tfalse", f"{health_server}/json-true\\t\\ttrue"])
+    assert (out.returncode, out.stdout.strip()) == (0, "healthy"), out.stderr
+    assert "slept" not in preprod.log()
+
+
+def test_health_502_fails_after_retries(preprod, health_server):
+    out = health(preprod, [f"{health_server}/bad\\t200\\tfalse"])
+    assert out.returncode == 1
+    assert f"health failed: {health_server}/bad returned 502" in out.stdout
+    assert len(out.stdout.split(": ", 2)[2].strip()) <= 300
+    assert preprod.log().count("slept") == 5
+
+
+def test_health_json_ok_false_fails(preprod, health_server):
+    out = health(preprod, [f"{health_server}/json-false\\t\\ttrue"])
+    assert out.returncode == 1 and "json-false returned 200" in out.stdout
 
 
 EF_CONFIG = AGENT / "tests" / "fixtures" / "engineerfamily.runner.toml"
