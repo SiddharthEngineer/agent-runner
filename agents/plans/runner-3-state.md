@@ -53,7 +53,7 @@ the old `strelitzia-agent` marker isn't taken as the user's answer; `poll` re-qu
 **Files:** README.md (modify)
 **What:** README: queue keys, `--repo`, cross-repo `--after`, the bare-slug migration, `AGENT_RUNNER_STATE`/`AGENT_DEFAULT_REPO`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
