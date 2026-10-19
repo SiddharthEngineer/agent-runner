@@ -37,7 +37,7 @@ Implementer settings: the Strelitzia ones without the `.venv`/npm/dashboard line
 `main`, `scripts/validate.sh` (no `--full`/`--setup`; `uv` needs no venv), and the runner calls `agent-runner gate|queue|inbox|preprod` instead of
 `python3 scripts/agent/*.py`. `/schedule-build` passes `--repo agent-runner`. `/ship` has no preprod branch (a `review` PR waits for the validator).
 **Validate:** `grep -rn 'scripts/agent\|Strelitzia\|trunk' .claude/commands` → no matches.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: `check-commands`
 **Runs:** unattended
