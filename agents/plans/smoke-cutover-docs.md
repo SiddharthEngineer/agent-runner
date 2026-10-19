@@ -16,7 +16,7 @@ with "Since the cutover (2026-10-19) these two lines are the live cron; Strelitz
 until S2 deletes it." AGENTS.md: replace the sentence starting "Until the cutover (design Part "cutover")" with "Since the cutover
 (2026-10-19) the live cron runs the installed release, so changes here go live only when the user installs a tag." Change nothing else.
 **Validate:** `scripts/validate.sh` → all PASS. `grep -n "Until the cutover" README.md AGENTS.md` → no match.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (docs; see PR for the validation caveat)
 
 ## Validation
 - `scripts/validate.sh` passes.

@@ -25,8 +25,8 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `tests/` | Hermetic pytest (temp state dirs, temp git repos; never the real `~/.local/state`) |
 | `agents/ROADMAP.md`, `agents/plans/` | Tracker and plans for this repo, and the cross-repo design `shared-agent-runner.md` |
 
-Seeded on 2026-10-19 from Strelitzia `scripts/agent/` at c4873de. Until the cutover (design Part "cutover"), the live cron
-still runs Strelitzia's copy, so changes here go live only when the user installs a tag.
+Seeded on 2026-10-19 from Strelitzia `scripts/agent/` at c4873de. Since the cutover
+(2026-10-19) the live cron runs the installed release, so changes here go live only when the user installs a tag.
 
 ## Validate
 `scripts/validate.sh` → one PASS line per step (`bash -n`, `py_compile`, pytest via `uv run --with pytest`).

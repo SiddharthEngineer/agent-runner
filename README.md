@@ -51,7 +51,8 @@ Nothing here edits the crontab. The lines you add (ROADMAP manual steps AM2 and 
 */15 * * * * $HOME/.local/bin/agent-runner health tick
 */5 * * * * $HOME/.local/bin/agent-runner run
 ```
-Until the cutover the live cron runs Strelitzia's own `scripts/agent/run.sh`.
+Since the cutover (2026-10-19) these two lines are the live cron; Strelitzia's old `scripts/agent/run.sh` line is commented out
+until S2 deletes it.
 
 ## Limits (so it can't run away)
 - Claude starts only if an item is due, the queue isn't paused, and the item has used fewer than 2 attempts (`AGENT_MAX_ATTEMPTS`).
