@@ -10,7 +10,7 @@ All Parts planned on 2026-10-19. Every plan is `low` risk with unattended tasks,
 here goes live only when the user installs a tag. Four plans list paths on `gate.py`'s built-in Strelitzia high-risk list
 (`.github/*`, `.claude/settings.json`, `scripts/validate.sh`): A2, A5, A13 and S2. The user's low-risk rule overrides that.
 
-**Cutover 2026-10-19:** cron runs `agent-runner run` (v0.1.4). Fixes found by the smoke tests: #49, #51, #55, #56, #57, #61. Next: AM3 (signed-in preprod checks), then AM6 and S2 from 2026-10-26.
+**Cutover 2026-10-19:** cron runs `agent-runner run` (v0.1.4). Fixes found by the smoke tests: #49, #51, #55, #56, #57, #61. Next: engineerfamily E2 (preprod without basic auth), then AM3 (signed-in preprod checks), then AM6 and S2 from 2026-10-26.
 
 **Who builds what.** The live runner (Strelitzia `scripts/agent/run.sh`) only builds Strelitzia plans, so it can build S1 from its queue.
 Everything else is built by Claude sessions, one at a time in this order, until the cutover (AM5). After that, the new runner builds every repo.
@@ -47,7 +47,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM1 | After A2 merges: `git -C ~/src/agent-runner pull && git -C ~/src/agent-runner tag v0.1.0 origin/main && git -C ~/src/agent-runner push origin v0.1.0`, then `~/src/agent-runner/install.sh v0.1.0`. Check: `agent-runner version` → `v0.1.0`. Repeat with the next version after later merges you want live. Done 2026-10-19: `v0.1.0` failed its own validation (fixed in #49), and the installed tags went v0.1.1 → v0.1.4. | ☑ |
 | AM1a | Add agent-runner's CI: commit `.github/workflows/ci.yml` from [runner-2-install](plans/runner-2-install.md) "Left for you" (the agents' token has no `workflow` scope, so it can't push workflow files here). Until then PRs here have no checks and merge on a green local `scripts/validate.sh`. Done 2026-10-19. | ☑ |
 | AM2 | After A4 merges and is installed (AM1): read `agent-runner health clean --dry-run --pressure` once, then add `*/15 * * * * $HOME/.local/bin/agent-runner health tick` to the `dev` crontab and check `~/.local/state/agent-runner/health.log` after a tick. Done 2026-10-19: the health cron line is in. | ☑ |
-| AM3 | Before the cutover, for A10's signed-in checks: sign the dev test account in to `https://preprod.engineerfamily.net/` in a local Playwright browser and save its storage state (`npx playwright open --save-storage=state.json https://preprod.engineerfamily.net/`), then copy it to `~/.config/agent-runner/preprod-storage-state.json` (mode 600). Redo it when the site session expires. Without it, signed-in steps come to you as "left for you". (Path and command checked against what A10 built, 2026-10-19.) | ☐ |
+| AM3 | After engineerfamily E2 ([preprod-open](https://github.com/SiddharthEngineer/engineerfamily/blob/main/agents/plans/preprod-open.md), preprod without basic auth) is on preprod: save the dev test account's preprod session for A10's signed-in checks at `~/.config/agent-runner/preprod-storage-state.json` (mode 600). Step-by-step, with a fallback if Google blocks the Playwright window and a check: README, "The signed-in session". Redo it every 30 days. Without it, signed-in steps come to you as "left for you". | ☐ |
 | AM4 | Cutover config (design Rollout step 4): copy `~/.config/strelitzia-agent/{env,preprod.netrc}` to `~/.config/agent-runner/`, write `repos/{strelitzia,engineerfamily,agent-runner}.env` (`AGENT_REPO=~/src/<repo>`, `PREPROD_NETRC=…`), add `machine preprod.engineerfamily.net` to the netrc, and copy `queue.json` and `runs.jsonl` to `~/.local/state/agent-runner/`. Done 2026-10-19. | ☑ |
 | AM5 | Cutover (design Rollout steps 2, 3, 5, 6): the dry run, draining the old queue, installing the latest tag, swapping the crontab line to `*/5 * * * * $HOME/.local/bin/agent-runner run`, and the smoke tests in each repo. Rollback: restore the old crontab line. Done 2026-10-19: smoke tests passed in all three repos (engineerfamily #45 and Strelitzia #84 merged by the runner; agent-runner by [smoke-roadmap-cutover](plans/smoke-roadmap-cutover.md)), and the review path ran to preprod on engineerfamily #49 and the second review smoke. | ☑ |
 | AM6 | A week after AM5 with no trouble: queue S2, then delete `~/.config/strelitzia-agent` and `~/.local/state/strelitzia-agent`. | ☐ |
@@ -64,3 +64,8 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
   Backups don't need to be kept (only dumps under 24 h old are spared).
 - 2026-10-19: Strelitzia's switch is split: S1 only adds files before the cutover (so the live runner keeps working and can build it),
   and S2 moves the commands to the CLI after it.
+
+## Backlog (not yet planned)
+- Implementer ↔ validator back-and-forth (user, 2026-10-19; not pressing): let the validator's findings go back to the
+  implementer and its fix go back to the validator within one item, for a few rounds, instead of each "changes" costing an
+  attempt; also re-queue on a "changes requested" PR review. Moved here from Strelitzia's backlog.

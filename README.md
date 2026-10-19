@@ -158,9 +158,27 @@ types a password. Steps that need your own account, prod, email, money, a device
   listing the steps only you can do (left-for-you steps never block the merge).
 - `changes` → preprod released and the item re-queued for the implementer with the failed steps as a note (costs an attempt).
 - `blocked`, or no verdict twice → preprod released, item `blocked`, notice.
-**Refresh the session** when it expires (about 30 days), as in AM3: sign the dev test account in with
-`npx playwright open --save-storage=state.json https://preprod.engineerfamily.net/`, then copy `state.json` to
-`~/.config/agent-runner/preprod-storage-state.json` (mode 600). Without it the validator still runs and leaves signed-in steps to you.
+**The signed-in session (ROADMAP AM3).** Do this after engineerfamily E2 (preprod-open) is on preprod, so no basic-auth
+prompt sits in front of Google's sign-in. Redo it when the session expires: 30 days after sign-in, not rolling.
+1. On your laptop (it needs a screen), with Node installed:
+   `npx playwright@1 open --channel chrome --save-storage=state.json https://preprod.engineerfamily.net/`.
+   A Chrome window opens. Click **Sign in** (top right) and sign in as the dev test account, never your own. Open
+   `/strelitzia/dashboard/` and check the seeded jobs show. Close the window: Playwright writes `state.json` as it closes.
+2. If Google refuses the sign-in in that window ("This browser or app may not be secure"), copy the cookie by hand instead:
+   in a Chrome profile that only holds the test account, sign in on `https://preprod.engineerfamily.net/`, then DevTools →
+   Application → Cookies → `https://preprod.engineerfamily.net` → copy the **Value** of `ef_session`. On the VPS run the
+   snippet below and paste the value at the prompt (it isn't echoed). It writes the storage-state file directly, so skip step 3.
+   ```bash
+   read -rsp 'ef_session value: ' EF; echo
+   EF=$EF python3 -c 'import json,os,time; p=os.path.expanduser("~/.config/agent-runner/preprod-storage-state.json"); fd=os.open(p,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600); os.write(fd,json.dumps({"cookies":[{"name":"ef_session","value":os.environ["EF"],"domain":"preprod.engineerfamily.net","path":"/","expires":int(time.time())+29*86400,"httpOnly":True,"secure":True,"sameSite":"Lax"}],"origins":[]}).encode()); os.close(fd)'
+   unset EF
+   ```
+3. Copy it to the VPS and lock it down, then delete the laptop copy:
+   `scp state.json <vps>:~/.config/agent-runner/preprod-storage-state.json && ssh <vps> chmod 600 ~/.config/agent-runner/preprod-storage-state.json && rm state.json`.
+4. Check on the VPS: `curl -s -b "ef_session=$(python3 -c 'import json,os; print(next(c["value"] for c in json.load(open(os.path.expanduser("~/.config/agent-runner/preprod-storage-state.json")))["cookies"] if c["name"]=="ef_session"))')" https://preprod.engineerfamily.net/auth/me`
+   → JSON with `"signed_in": true` and the test account's email.
+Without the file the validator still runs and leaves signed-in steps to you. The netrc stays harmless once preprod has no
+basic auth (curl and Playwright only send it when challenged).
 
 Its permissions ([settings/validate.json](settings/validate.json), or the repo's `agents/settings/validate.json`) allow reading,
 the validate commands, `gh pr diff/view/checks` and `gh pr review --comment`, and writing only its result file. They deny
