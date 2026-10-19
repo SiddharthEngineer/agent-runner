@@ -94,6 +94,23 @@ health = [{ url = "https://preprod.engineerfamily.net/", status = 200 },
 Health checks go through Cloudflare with the netrc, so they prove the public host routes to the right nginx. Each URL gets
 6 tries, 10 s apart; a failure prints the URL, the HTTP code and at most 300 characters of the body, and the deploy is rolled back.
 
+## How a tick works (`run.sh`)
+Every 5 minutes, for every registered repo, with at most one Claude run at a time (a `flock` on `run.lock`):
+1. **Upkeep:** inbox replies (`inbox.py poll`) and the global preprod lock (`preprod.sh tick`).
+2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
+3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the session-usage gate.
+4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
+   `origin/<base>`; a missing plan, a missing config or one the prod guard refuses blocks the item with a notice.
+5. **Implementer:** `/implement <plans>/<slug>.md --unattended` in `worktrees/<repo>/<slug>` on `agent/<slug>`, with the worktree's
+   `agents/settings/implement.json` and `agents/mcp.json` (or `scripts/agent/settings.json`/`mcp.json` for a repo not yet on that layout).
+6. **Merge or review:** the repo's `validate.full` again, `gate.py --config`, then `low` + green CI → `gh pr merge --<merge>`
+   (`rebase`, `merge` or `squash`, from the config); anything else gets `awaiting-preprod` and waits on preprod for you.
+
+**Dry run:** `AGENT_DRY_RUN=1 agent-runner run` logs each decision to `runs.log` ("dry run: would run claude for
+engineerfamily/x in …", "dry run: nothing due") and exits before the inbox poll, preprod, `claude`, merges and queue changes.
+Rehearse the cutover against a copy of the old queue: `T=$(mktemp -d); cp ~/.local/state/strelitzia-agent/queue.json $T/;
+AGENT_RUNNER_STATE=$T AGENT_DRY_RUN=1 agent-runner run; tail $T/runs.log`.
+
 ## Day to day
 - Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).
 - **Queue keys.** One queue serves every repo. Items are keyed `<repo>/<slug>` (`strelitzia/site-sso-3-proxy-mode`,

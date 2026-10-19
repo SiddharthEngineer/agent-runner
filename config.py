@@ -5,6 +5,7 @@ Usage: python3 config.py check <runner.toml>             (prints `ok`, or one pr
        python3 config.py get <runner.toml> <dotted.key>  (prints the value; a list prints one item per line;
                                                           a preprod.health entry prints as url<TAB>status<TAB>json_ok)
        python3 config.py repo-env <name>                 (`export K='v'` lines from repos/<name>.env, for bash to eval)
+       python3 config.py env-file                        (the shared env file's path, for bash to source; exit 1 if none)
 
 A repo describes itself in `agents/runner.toml`: base branch, merge method, validate commands, risk-gate patterns and
 preprod commands. `load` checks every field and refuses any preprod command that could touch prod, so no caller can
@@ -274,6 +275,12 @@ def _line(value) -> str:
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["env-file"]:
+        path = env_file()
+        if path is None:
+            return 1
+        print(path)
+        return 0
     if len(argv) == 2 and argv[0] == "repo-env":
         if not NAME_RE.match(argv[1]):
             print(f"bad repo name: {argv[1]}", file=sys.stderr)
@@ -304,7 +311,7 @@ def main(argv: list[str]) -> int:
         elif value is not None:
             print(value)
         return 0
-    print("usage: config.py check <runner.toml> | get <runner.toml> <dotted.key> | repo-env <name>", file=sys.stderr)
+    print("usage: config.py check <runner.toml> | get <runner.toml> <dotted.key> | repo-env <name> | env-file", file=sys.stderr)
     return 2
 
 

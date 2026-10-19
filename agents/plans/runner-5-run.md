@@ -1,5 +1,5 @@
 # Plan: `run.sh` builds every registered repo
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing installed runs this until the cutover)
 **Depends on:** runner-4-preprod
 
@@ -37,7 +37,7 @@ Drop `AGENT_MERGE_POLICY` and its merge loop (`:55-76`). Add `AGENT_DRY_RUN=1`: 
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_run.py` → with a temp state dir, a temp origin repo holding
 `agents/runner.toml` and a plan, and stub `claude`/`gh` scripts on `PATH`: a dry run logs `would run claude for engineerfamily/x`
 in `worktrees/engineerfamily/x`; a plan missing on `origin/main` → item `blocked`; a config with `deploy-prod` → `blocked`, no claude call.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: validate, gate and merge per repo
 **Runs:** unattended
@@ -48,7 +48,7 @@ held preprod. Anything else → label `awaiting-preprod`, risk-gate comment, as 
 full path runs in tests.
 **Validate:** tests: a `low` engineerfamily item with green stub checks → `gh pr merge 9 --merge --delete-branch`; a Strelitzia
 item → `--rebase`; `gate` returning review → `awaiting-preprod` label and no merge call.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (committed with Task 1: one rewrite of run.sh)
 
 ### Task 3: health gate and upkeep order
 **Runs:** unattended
@@ -57,7 +57,7 @@ item → `--rebase`; `gate` returning review → `awaiting-preprod` label and no
 runs: inbox poll and `preprod.sh tick` come before the gate). Keep the per-run `docker builder prune --keep-storage` (cheap and
 it bounds long chains). Update the header comment and README "How a tick works" for multi-repo and the dry run.
 **Validate:** test: a stub `health.py gate` exiting 1 → no claude call, inbox poll still called. `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
