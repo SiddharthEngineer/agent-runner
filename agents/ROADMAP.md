@@ -19,7 +19,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A1 | `runner.toml` loader, prod guard, config/state dirs | [runner-1-config](plans/runner-1-config.md) | agent-runner | ✅ | - |
 | A3 | VPS health check and fixed-rule cleanup | [health-1-clean](plans/health-1-clean.md) | agent-runner | ✅ | - |
 | A5 | engineerfamily validate script, PR CI, `make prod-changes` | [ef-validate-ci](plans/ef-validate-ci.md) | engineerfamily | ✅ | - |
-| A2 | `agent-runner` CLI, `install.sh <tag>`, CI, README | [runner-2-install](plans/runner-2-install.md) | agent-runner | ⏳ | A1 |
+| A2 | `agent-runner` CLI, `install.sh <tag>`, CI, README | [runner-2-install](plans/runner-2-install.md) | agent-runner | 🟡 (AM1a) | A1 |
 | A4 | VPS health alerts and read-only diagnosis | [health-2-alert](plans/health-2-alert.md) | agent-runner | ⏳ | A1, A3 |
 | A6 | Multi-repo queue keys, inbox projects, shared state | [runner-3-state](plans/runner-3-state.md) | agent-runner | ⏳ | A1, A4 |
 | A7 | Global preprod lock driven by `runner.toml` | [runner-4-preprod](plans/runner-4-preprod.md) | agent-runner | ⏳ | A6 |

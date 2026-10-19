@@ -1,5 +1,5 @@
 # Plan: `agent-runner` CLI, `install.sh <tag>`, CI and README
-**Status:** ❌ Not started
+**Status:** 🟡 Code done 2026-10-19; `ci.yml` left for the user (AM1a: the token has no `workflow` scope)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and decides what code cron runs)
 **Depends on:** runner-1-config
 
