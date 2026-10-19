@@ -546,5 +546,15 @@ def test_no_triage_when_usage_gate_refuses(runner):
 def test_validator_blocked_is_triaged(runner):
     key = awaiting_review(runner)
     runner(STUB_REVIEW=verdict("blocked", "cannot check out"), STUB_TRIAGE=triage_reply("requeue", "transient", note="retry"))
-    assert runner.status(key) == "queued"
+    assert runner.status(key) == "awaiting-review", runner.runs_log()  # back to the validator: the PR is unchanged
+    assert runner.queue("get", key, "triaged").stdout.strip() == "1"
+    assert any("re-queued after triage: transient" in c for c in runner.calls())
+
+
+def test_fresh_attempts_requeue_clears_stage_counters(runner):
+    key = on_preprod(runner, preprod_verdict="changes", preprod_attempts=1, review_attempts=1, resume=1)
+    runner.queue("set", key, "status=blocked", "attempts=2")
+    assert runner.queue("requeue", key, "--note", "flaky", "--fresh-attempts").stdout.strip() == "queued"
     assert runner.queue("get", key, "attempts").stdout.strip() == "0"
+    for field in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts"):
+        assert runner.queue("get", key, field).returncode == 1, field

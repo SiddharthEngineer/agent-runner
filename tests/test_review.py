@@ -84,6 +84,7 @@ def test_triage_prompt_formats():
 
 def test_triage_settings_are_read_only():
     perms = json.loads((ROOT / "settings/triage.json").read_text())["permissions"]
-    assert {"Edit", "Write", "NotebookEdit", "Bash(git push:*)", "Bash(gh pr merge:*)"} <= set(perms["deny"])
+    assert {"Edit", "Write", "NotebookEdit", "Bash(git push:*)", "Bash(gh pr merge:*)", "Bash(*.config*)",
+            "Read(~/.config/agent-runner/**)"} <= set(perms["deny"])
     for rule in perms["allow"]:
         assert not re.search(r"push|merge|commit|rerun|Edit|Write", rule), rule

@@ -29,9 +29,14 @@
       "Bash(gh api:*)",
       "Bash(rm:*)",
       "Bash(sudo:*)",
-      "Read(//home/dev/.config/agent-runner/**)",
-      "Read(//home/dev/.config/strelitzia-agent/**)",
+      "Read(~/.config/agent-runner/**)",
+      "Read(~/.config/strelitzia-agent/**)",
+      "Read(~/.strelitzia/**)",
+      "Read(~/.strelitzia-preprod/**)",
       "Read(**/.env)",
+      "Bash(*.config*)",
+      "Bash(*.strelitzia*)",
+      "Bash(*.env*)",
       "WebFetch",
       "WebSearch"
     ]
