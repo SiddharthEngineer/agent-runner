@@ -34,6 +34,7 @@ lock_since() { awk -F'\t' '{ print $NF }' "$LOCK"; }
 load_repo() {
     local repo=$1 env base_ref problems
     env=$("${CFG[@]}" repo-env "$repo") || { echo "bad repo name: $repo"; return 3; }
+    unset AGENT_REPO PREPROD_NETRC  # never carry one repo's values into another's
     eval "$env"
     if [ -z "${AGENT_REPO:-}" ] || [ ! -d "$AGENT_REPO" ]; then
         echo "preprod not configured for $repo: no AGENT_REPO in ~/.config/agent-runner/repos/$repo.env"
@@ -41,6 +42,7 @@ load_repo() {
     fi
     git -C "$AGENT_REPO" fetch -q origin || { echo "can't fetch $AGENT_REPO"; return 3; }
     base_ref=$(git -C "$AGENT_REPO" rev-parse --abbrev-ref origin/HEAD 2>/dev/null) || base_ref=origin/${AGENT_BASE:-main}
+    rm -f "${RTOML:-}"
     RTOML=$(mktemp)
     if ! git -C "$AGENT_REPO" show "$base_ref:agents/runner.toml" > "$RTOML" 2>/dev/null; then
         echo "preprod not configured for $repo: no agents/runner.toml on $base_ref"
