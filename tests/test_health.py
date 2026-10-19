@@ -346,3 +346,31 @@ def test_gate(ticker):
     ticker.disk = 90
     assert health.gate() == 1
     assert ticker.calls == []
+
+
+def test_notices_call_inbox(home, monkeypatch):
+    calls = []
+
+    def fake_inbox(*args):
+        calls.append(args)
+        return '{"number": 9, "url": "u"}' if args[0] == "notify" else "u"
+
+    monkeypatch.setattr(health, "inbox", fake_inbox)
+    m = health.Metrics(91, 3, 2000, 100, 0.2, 1.0)
+    p = health.Problem("disk-critical", "disk 91% used (alert at 90%)", True)
+    cleaned = [{"rule": "docker build cache (all)", "freed_bytes": 2_000_000_000}]
+    assert health.notify_new(p, m, cleaned, "uv cache is 1 GB") == 9
+    args = calls[0]
+    assert args[:4] == ("notify", "--project", "vps-health", "--json")
+    assert args[args.index("--title") + 1] == "[vps] disk 91% used (alert at 90%) after cleanup"
+    body = args[args.index("--body") + 1]
+    assert "freed 2.0 GB" in body and "uv cache is 1 GB" in body
+    assert health.notify_recovered({"issue": 9}, "disk", m)
+    assert calls[1][:2] == ("comment", "9") and calls[1][-1] == "--close"
+
+
+def test_failed_inbox_call_returns_none(home, monkeypatch):
+    monkeypatch.setattr(health, "inbox", lambda *a: None)
+    m = health.Metrics(91, 3, 2000, 100, 0.2, 1.0)
+    assert health.notify_new(health.Problem("disk", "d", True), m, [], None) is None
+    assert health.notify_again({"issue": 1, "since": "x"}, health.Problem("disk", "d", True), m, []) is False

@@ -68,11 +68,11 @@ def push(title: str, url: str) -> None:
         print(f"ntfy push failed: {exc}", file=sys.stderr)
 
 
-def open_issue(title: str, body: str, label: str) -> tuple[int, str]:
-    for name in (label, PROJECT_LABEL):
+def open_issue(title: str, body: str, label: str, project: str = PROJECT_LABEL) -> tuple[int, str]:
+    for name in (label, project):
         gh("label", "create", name, "--repo", repo(), "--force")
     url = gh("issue", "create", "--repo", repo(), "--title", title, "--body", f"{body}\n\n{MARKER}",
-             "--label", label, "--label", PROJECT_LABEL)
+             "--label", label, "--label", project)
     push(title, url)
     return int(url.rstrip("/").rsplit("/", 1)[1]), url
 
@@ -86,7 +86,18 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def cmd_notify(args: argparse.Namespace) -> int:
     title = f"[{args.slug}] {args.title}" if args.slug else args.title
-    print(open_issue(title, args.body, "agent-notice")[1])
+    number, url = open_issue(title, args.body, "agent-notice", args.project)
+    print(json.dumps({"number": number, "url": url}) if args.json else url)
+    return 0
+
+
+def cmd_comment(args: argparse.Namespace) -> int:
+    """Comment on an inbox issue (and close it with --close), with a push."""
+    url = gh("issue", "comment", str(args.number), "--repo", repo(), "--body", f"{args.body}\n\n{MARKER}")
+    if args.close:
+        gh("issue", "close", str(args.number), "--repo", repo())
+    push(args.body.splitlines()[0][:120] if args.body else f"issue #{args.number}", url)
+    print(url)
     return 0
 
 
@@ -120,7 +131,14 @@ def main() -> int:
     p.add_argument("--title", required=True)
     p.add_argument("--body", required=True)
     p.add_argument("--slug")
+    p.add_argument("--project", default=PROJECT_LABEL, help="project label (default %(default)s)")
+    p.add_argument("--json", action="store_true", help='print {"number", "url"} instead of the URL')
     p.set_defaults(fn=cmd_notify)
+    p = sub.add_parser("comment")
+    p.add_argument("number", type=int)
+    p.add_argument("--body", required=True)
+    p.add_argument("--close", action="store_true")
+    p.set_defaults(fn=cmd_comment)
     sub.add_parser("poll").set_defaults(fn=cmd_poll)
     args = parser.parse_args()
     return args.fn(args)

@@ -481,17 +481,47 @@ def confirmed(found: list[Problem], state: dict, at: datetime) -> list[Problem]:
     return [p for p in found if p.key != "load"]
 
 
+def inbox(*args: str) -> str | None:
+    """Run `inbox.py <args>`; its stdout, or None (logged) when gh or the inbox isn't reachable."""
+    out = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "inbox.py"), *args],
+                         capture_output=True, text=True, timeout=120)
+    if out.returncode != 0:
+        log({"rule": "notice-failed", "args": args[:1], "error": (out.stderr or out.stdout).strip()[-300:]})
+        return None
+    return out.stdout.strip()
+
+
+def report(m: Metrics, cleaned: list[dict], diagnosis: str | None = None) -> str:
+    """Issue/comment body: metrics, what this tick's cleanup freed, the diagnosis. Never file contents."""
+    lines = ["**Metrics**", "```", json.dumps(asdict(m), indent=2), "```"]
+    if cleaned:
+        lines += ["", "**Cleanup this tick**"]
+        lines += [f"- {r['rule']}: freed {human(r['freed_bytes'])}" + (f" (error: {r['error']})" if "error" in r else "")
+                  for r in cleaned]
+    if diagnosis:
+        lines += ["", "**Diagnosis** (read-only Sonnet run; nothing was changed)", "", diagnosis]
+    return "\n".join(lines)
+
+
 def notify_new(problem: Problem, m: Metrics, cleaned: list[dict], diagnosis: str | None) -> int | None:
     """Open the problem's issue; its number, or None if that failed (retried next tick)."""
-    raise NotImplementedError  # Task 2
+    after = " after cleanup" if problem.cleanable else ""
+    out = inbox("notify", "--project", "vps-health", "--json", "--title", f"[vps] {problem.summary}{after}",
+                "--body", report(m, cleaned, diagnosis))
+    try:
+        return int(json.loads(out)["number"]) if out else None
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def notify_again(entry: dict, problem: Problem, m: Metrics, cleaned: list[dict]) -> bool:
-    raise NotImplementedError  # Task 2
+    body = f"Still open: {problem.summary} (since {entry['since']}).\n\n{report(m, cleaned)}"
+    return inbox("comment", str(entry["issue"]), "--body", body) is not None
 
 
 def notify_recovered(entry: dict, key: str, m: Metrics) -> bool:
-    raise NotImplementedError  # Task 2
+    body = f"Recovered: `{key}` is back under its threshold.\n\n{report(m, [])}"
+    return inbox("comment", str(entry["issue"]), "--body", body, "--close") is not None
 
 
 def diagnose(found: list[Problem], m: Metrics, cleaned: list[dict], state: dict) -> str | None:

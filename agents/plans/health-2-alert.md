@@ -43,7 +43,7 @@ bytes per rule from this tick, and the diagnosis (Task 3), never file contents. 
 (`--close` for recovered). A failed `gh` call is logged and retried next tick (the state isn't updated).
 **Validate:** `tests/test_runner.py` stubs `gh`: `notify --project vps-health` creates and uses that label and not `strelitzia`;
 `comment --close` makes a comment and a close call. Existing inbox tests pass unchanged.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: read-only diagnosis
 **Runs:** unattended
