@@ -37,7 +37,8 @@ def test_cli_unknown_and_missing_command():
 
 def test_cli_version_from_git_tag(tmp_path):
     clone = tmp_path / "clone"
-    shutil.copytree(ROOT, clone, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache"))
+    # Leave out VERSION: install.sh writes it into a release before running this suite there, and it would win over the tag.
+    shutil.copytree(ROOT, clone, ignore=shutil.ignore_patterns(".git", ".venv", "__pycache__", ".pytest_cache", "VERSION"))
     git(clone, "init", "-q")
     git(clone, "add", "-A")
     git(clone, "commit", "-qm", "x")
