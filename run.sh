@@ -161,7 +161,7 @@ preprod_stage() {
     vsettings=$pwt/agents/settings/validate.json
     [ -f "$vsettings" ] || vsettings=$HERE/settings/validate.json
     python3 -c 'import json, sys
-s = json.load(open(sys.argv[1])); s["permissions"]["allow"].append("mcp__playwright")
+s = json.load(open(sys.argv[1])); s["permissions"]["allow"] += ["mcp__playwright", "Bash(curl:*)"]
 json.dump(s, open(sys.argv[2], "w"))' "$vsettings" "$tmpd/settings.json"
     vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
 base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \

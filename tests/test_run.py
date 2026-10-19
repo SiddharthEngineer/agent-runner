@@ -289,6 +289,7 @@ def test_preprod_stage_runs_once_and_cleans_up(runner, tmp_path):
     assert "Signed in as the dev test account: false" in claude
     seen = (tmp_path / "stub.log.mcpdir").read_text().split()
     assert {"mcp.json", "mcp.playwright.json", "settings.json"} <= set(seen)
+    assert "--settings" in claude
     mcp_dir = claude.split("--mcp-config ")[1].split()[0]
     assert not Path(mcp_dir).exists()  # the temp config (basic-auth password) is gone
     assert runner.queue("get", key, "preprod_verdict").stdout.strip() == "approve"
