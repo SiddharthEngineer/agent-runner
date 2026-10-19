@@ -3,6 +3,8 @@
 
 Usage: python3 health.py check                          (JSON metrics and problems; exit 1 when there are problems)
        python3 health.py clean [--dry-run] [--pressure]  (one line per rule: what it would free, or freed)
+       python3 health.py tick                           (cron, every 15 min: measure, clean, measure, notify)
+       python3 health.py gate                           (exit 1 while disk is at or over disk_alert_pct)
 
 Thresholds default to DEFAULTS and can be overridden in ~/.config/agent-runner/health.toml under [thresholds].
 Rules are code, not config: each one deletes only under its own root, and never follows symlinks.
@@ -11,6 +13,7 @@ Standard library only.
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -461,6 +464,83 @@ def cmd_clean(argv: list[str]) -> int:
     return 1 if any("error" in r for r in results) else 0
 
 
+# --- tick: measure, clean, measure again, and keep one inbox issue per open problem.
+
+LOAD_CONFIRM = timedelta(minutes=15)  # load is a problem only when it was also high on a tick at least this much earlier
+RENOTIFY = timedelta(hours=24)
+
+
+def confirmed(found: list[Problem], state: dict, at: datetime) -> list[Problem]:
+    """Drop `load` unless it was already high at least LOAD_CONFIRM ago (`state["load_since"]`)."""
+    if not any(p.key == "load" for p in found):
+        state.pop("load_since", None)
+        return found
+    since = state.setdefault("load_since", at.isoformat())
+    if at - datetime.fromisoformat(since) >= LOAD_CONFIRM:
+        return found
+    return [p for p in found if p.key != "load"]
+
+
+def notify_new(problem: Problem, m: Metrics, cleaned: list[dict], diagnosis: str | None) -> int | None:
+    """Open the problem's issue; its number, or None if that failed (retried next tick)."""
+    raise NotImplementedError  # Task 2
+
+
+def notify_again(entry: dict, problem: Problem, m: Metrics, cleaned: list[dict]) -> bool:
+    raise NotImplementedError  # Task 2
+
+
+def notify_recovered(entry: dict, key: str, m: Metrics) -> bool:
+    raise NotImplementedError  # Task 2
+
+
+def diagnose(found: list[Problem], m: Metrics, cleaned: list[dict], state: dict) -> str | None:
+    return None  # Task 3
+
+
+def tick() -> int:
+    config.state_dir().mkdir(parents=True, exist_ok=True)
+    lock = open(config.state_dir() / "health.lock", "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 0  # another tick is running
+    try:
+        config.load_env()
+        th = thresholds()
+        cleaned = clean()  # routine once a day; pressure rules only while disk is over disk_clean_pct
+        m = measure()
+        state = load_state()  # after clean(), which records routine_at
+        at = now()
+        found = confirmed(problems(m, th), state, at)
+        open_ = state.setdefault("open", {})
+
+        new = [p for p in found if p.key not in open_]
+        diagnosis = diagnose(new, m, cleaned, state) if new else None
+        for p in found:
+            entry = open_.get(p.key)
+            if entry is None:
+                issue = notify_new(p, m, cleaned, diagnosis)
+                if issue is not None:
+                    open_[p.key] = {"since": at.isoformat(), "issue": issue, "last_notified": at.isoformat()}
+            elif at - datetime.fromisoformat(entry["last_notified"]) >= RENOTIFY:
+                if notify_again(entry, p, m, cleaned):
+                    entry["last_notified"] = at.isoformat()
+        for key in [k for k in open_ if k not in {p.key for p in found}]:
+            if notify_recovered(open_[key], key, m):
+                del open_[key]
+        save_state(state)
+        return 0
+    finally:
+        lock.close()
+
+
+def gate() -> int:
+    """1 while disk is at or over disk_alert_pct (run.sh starts no Claude run then), else 0. No cleanup, no notices."""
+    m = measure()
+    return 1 if m.disk_pct >= thresholds()["disk_alert_pct"] else 0
+
+
 def cmd_check() -> int:
     m = measure()
     found = problems(m, thresholds())
@@ -474,10 +554,14 @@ def main(argv: list[str]) -> int:
             return cmd_check()
         if argv[:1] == ["clean"] and set(argv[1:]) <= {"--dry-run", "--pressure"}:
             return cmd_clean(argv[1:])
+        if argv == ["tick"]:
+            return tick()
+        if argv == ["gate"]:
+            return gate()
     except HealthError as exc:
         print(exc, file=sys.stderr)
         return 2
-    print("usage: health.py check | clean [--dry-run] [--pressure]", file=sys.stderr)
+    print("usage: health.py check | clean [--dry-run] [--pressure] | tick | gate", file=sys.stderr)
     return 2
 
 

@@ -264,3 +264,85 @@ def test_worktree_with_live_branch_survives(home):
     assert [wt.name for _, wt in health.finished_worktrees()] == ["gone"]
     health.worktree_rule().apply()
     assert (wts / "alive").exists() and not (wts / "gone").exists()
+
+
+@pytest.fixture
+def ticker(home, monkeypatch):
+    """tick() with measure/clean/notify stubbed; `t.disk` and `t.load` set the next reading, `t.at` the clock."""
+    from datetime import datetime, timezone
+
+    class T:
+        disk, load = 70, 0.2
+        at = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+        calls: list = []
+
+    t = T()
+    t.calls = []
+    monkeypatch.setattr(health, "measure", lambda *a, **k: health.Metrics(t.disk, 10, 2000, 100, t.load, 1.0))
+    monkeypatch.setattr(health, "clean", lambda *a, **k: t.calls.append("clean") or [])
+    monkeypatch.setattr(health, "now", lambda: t.at)
+    monkeypatch.setattr(health, "notify_new", lambda p, *a: t.calls.append(("new", p.key)) or 7)
+    monkeypatch.setattr(health, "notify_again", lambda e, p, *a: t.calls.append(("again", p.key)) or True)
+    monkeypatch.setattr(health, "notify_recovered", lambda e, key, m: t.calls.append(("recovered", key)) or True)
+    monkeypatch.setattr(health.config, "load_env", lambda: None)
+    return t
+
+
+def notices(t):
+    return [c for c in t.calls if c != "clean"]
+
+
+def test_tick_one_notice_per_problem(ticker):
+    from datetime import timedelta
+
+    ticker.disk = 85
+    health.tick()
+    ticker.at += timedelta(minutes=15)
+    health.tick()
+    assert notices(ticker) == [("new", "disk")]
+    ticker.at += timedelta(hours=24)
+    health.tick()
+    assert notices(ticker)[-1] == ("again", "disk")
+    ticker.disk = 70
+    health.tick()
+    assert notices(ticker)[-1] == ("recovered", "disk")
+    assert health.load_state()["open"] == {}
+
+
+def test_tick_load_needs_two_ticks_15_min_apart(ticker):
+    from datetime import timedelta
+
+    ticker.load = 3.0
+    health.tick()
+    ticker.at += timedelta(minutes=5)
+    health.tick()
+    assert notices(ticker) == []
+    ticker.at += timedelta(minutes=10)
+    health.tick()
+    assert notices(ticker) == [("new", "load")]
+
+
+def test_tick_failed_notice_is_retried(ticker, monkeypatch):
+    ticker.disk = 85
+    monkeypatch.setattr(health, "notify_new", lambda *a: None)
+    health.tick()
+    assert health.load_state()["open"] == {}
+
+
+def test_tick_lock_held_exits_quietly(ticker):
+    import fcntl
+
+    (ticker_state := health.config.state_dir()).mkdir(parents=True, exist_ok=True)
+    with open(ticker_state / "health.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        ticker.disk = 95
+        assert health.tick() == 0
+    assert ticker.calls == []
+
+
+def test_gate(ticker):
+    ticker.disk = 89
+    assert health.gate() == 0
+    ticker.disk = 90
+    assert health.gate() == 1
+    assert ticker.calls == []

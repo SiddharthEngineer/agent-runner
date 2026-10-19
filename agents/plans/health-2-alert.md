@@ -31,7 +31,7 @@ Load is a problem only if it was also over the threshold on the previous tick at
 else 0, with no cleanup or notices. `tick` holds `flock` on `health.lock` (non-blocking; if another tick holds it, exit 0).
 **Validate:** tests with monkeypatched `measure`, `clean` and notify functions: one problem over three ticks → one `new`, no
 `again` within 24 h, then `recovered`; load over the threshold on one tick → no problem, on two ticks 15 min apart → `load`; a held `health.lock` → exit 0 with no calls.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: notices
 **Runs:** unattended
