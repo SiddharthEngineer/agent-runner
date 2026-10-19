@@ -1,5 +1,5 @@
 # Plan: `install.sh` skips the test suite when CI already passed on the tag
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-11-autopilot (merged)
 
@@ -42,7 +42,7 @@ exits non-zero → full suite; `--full` with a green run → full suite. `script
 **Files:** agents/ROADMAP.md (modify)
 **What:** Row A17 ✅ with the PR number.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
