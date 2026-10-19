@@ -1,5 +1,5 @@
 # Plan: validator, review stage (fresh-context code review of `review` PRs)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing installed runs this until the cutover)
 **Depends on:** runner-5-run
 
