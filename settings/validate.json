@@ -7,7 +7,7 @@
       "TodoWrite",
       "Agent",
       "Skill",
-      "Write(~/.local/state/agent-runner/results/**)",
+      "Edit(~/.local/state/agent-runner/results/**)",
       "Bash(scripts/validate.sh:*)",
       "Bash(.venv/bin/pytest:*)",
       "Bash(.venv/bin/python:*)",
@@ -24,7 +24,7 @@
       "Bash(gh pr diff:*)",
       "Bash(gh pr view:*)",
       "Bash(gh pr checks:*)",
-      "Bash(gh pr review * --comment:*)",
+      "Bash(gh pr review:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(head:*)",
@@ -34,7 +34,7 @@
       "Bash(find:*)"
     ],
     "deny": [
-      "Edit",
+      "Edit(./**)",
       "NotebookEdit",
       "Bash(git add:*)",
       "Bash(git commit:*)",

@@ -19,12 +19,12 @@ def test_prompt_formats_with_every_placeholder():
 
 def test_settings_are_read_only():
     perms = json.loads((ROOT / "settings/validate.json").read_text())["permissions"]
-    assert {"Edit", "Bash(git push:*)", "Bash(gh pr merge:*)", "Bash(git commit:*)", "Bash(make:*)", "Bash(sudo:*)",
+    assert {"Edit(./**)", "Bash(git push:*)", "Bash(gh pr merge:*)", "Bash(git commit:*)", "Bash(make:*)", "Bash(sudo:*)",
             "Bash(docker compose:*)"} <= set(perms["deny"])
     for rule in perms["allow"]:
         assert not re.search(r"push|merge|commit", rule), rule
-    writes = [r for r in perms["allow"] if r.startswith("Write")]
-    assert writes == ["Write(~/.local/state/agent-runner/results/**)"]
+    writes = [r for r in perms["allow"] if r.startswith(("Write", "Edit"))]
+    assert writes == ["Edit(~/.local/state/agent-runner/results/**)"]
 
 
 def test_preprod_prompt_formats():
