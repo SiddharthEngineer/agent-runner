@@ -17,7 +17,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | ID | Initiative | Plan | Repo | Status | Depends on |
 |---|---|---|---|---|---|
 | A1 | `runner.toml` loader, prod guard, config/state dirs | [runner-1-config](plans/runner-1-config.md) | agent-runner | ✅ | - |
-| A3 | VPS health check and fixed-rule cleanup | [health-1-clean](plans/health-1-clean.md) | agent-runner | ⏳ | - |
+| A3 | VPS health check and fixed-rule cleanup | [health-1-clean](plans/health-1-clean.md) | agent-runner | ✅ | - |
 | A5 | engineerfamily validate script, PR CI, `make prod-changes` | [ef-validate-ci](plans/ef-validate-ci.md) | engineerfamily | ⏳ | - |
 | A2 | `agent-runner` CLI, `install.sh <tag>`, CI, README | [runner-2-install](plans/runner-2-install.md) | agent-runner | ⏳ | A1 |
 | A4 | VPS health alerts and read-only diagnosis | [health-2-alert](plans/health-2-alert.md) | agent-runner | ⏳ | A1, A3 |

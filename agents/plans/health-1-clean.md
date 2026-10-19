@@ -1,5 +1,5 @@
 # Plan: VPS health check and fixed-rule cleanup (`health.py check`, `clean`)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks; the real `health.py clean` is the user's, AM2)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: deletes files and Docker data on the shared VPS)
 **Depends on:** - (independent of the runner Parts; design [shared-agent-runner](shared-agent-runner.md) D6)
 
