@@ -70,6 +70,14 @@ Until the cutover the live cron runs Strelitzia's own `scripts/agent/run.sh`.
 
 ## Day to day
 - Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).
+- **Queue keys.** One queue serves every repo. Items are keyed `<repo>/<slug>` (`strelitzia/site-sso-3-proxy-mode`,
+  `engineerfamily/ef-agents-layout`): `agent-runner queue add <slug> --repo engineerfamily` (default `$AGENT_DEFAULT_REPO`,
+  `strelitzia`). `--after` takes `repo/slug`, so a plan can wait for a merge in another repo; a bare slug means the same repo.
+  Every other command takes the full key, or a bare slug when only one repo has an item with it (several → it exits and names them).
+  Inbox issues are labelled with the item's repo.
+- **Migration.** A `queue.json` from the old runner (bare keys) is rewritten once on first load: `<slug>` becomes
+  `$AGENT_DEFAULT_REPO/<slug>`, and so does a bare `after`. State is in `$AGENT_RUNNER_STATE` (default
+  `~/.local/state/agent-runner`); `$STRELITZIA_AGENT_STATE` still works as an alias until the cutover.
 - Logs: `runs.log` (one line per event) and `logs/<time>-<slug>.log` (full JSON output) in the state dir.
 - When an agent asks a question, reply on the inbox issue. The next tick re-queues the item with your answer and resumes the
   agent's own session.

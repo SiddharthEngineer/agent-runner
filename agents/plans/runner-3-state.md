@@ -1,5 +1,5 @@
 # Plan: multi-repo queue keys, inbox projects, shared state dir
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing installed runs this until the cutover)
 **Depends on:** runner-1-config, health-2-alert (both edit `inbox.py`; build after them to avoid conflicts)
 
@@ -35,7 +35,7 @@ part resolves to it; zero or several matches → `sys.exit` naming the candidate
 loads as `strelitzia/*` and is rewritten once; `add x --repo engineerfamily --after strelitzia/y` waits until `strelitzia/y` is
 `done`; `set x status=done` with two `x` in different repos exits naming both; the existing tests pass with bare slugs. The
 default-dir test now expects `~/.local/state/agent-runner` (test updated, not weakened: same assertion, new path).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: inbox and usage on the shared config
 **Runs:** unattended
@@ -46,14 +46,14 @@ full keys. `MARKER` becomes `<!-- agent-runner -->`; `strelitzia-agent` and `app
 `usage.probe` uses `buildqueue.STATE`, unchanged in behavior.
 **Validate:** tests stub `gh`: `ask engineerfamily/x` creates labels `agent-question` and `engineerfamily`; a reply comment with
 the old `strelitzia-agent` marker isn't taken as the user's answer; `poll` re-queues `engineerfamily/x` with the answer.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: docs
 **Runs:** unattended
 **Files:** README.md (modify)
 **What:** README: queue keys, `--repo`, cross-repo `--after`, the bare-slug migration, `AGENT_RUNNER_STATE`/`AGENT_DEFAULT_REPO`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

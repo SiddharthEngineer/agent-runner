@@ -2,11 +2,15 @@
 """Agent ↔ user inbox: issues in a private GitHub repo, plus an optional ntfy push.
 
 Usage:
-  inbox.py ask <slug> --title T --body-file F   open an `agent-question` issue; the item waits for your reply
-  inbox.py notify --title T --body B [--slug S]  open an `agent-notice` issue (PR on preprod, item blocked, …)
+  inbox.py ask <key> --title T --body-file F    open an `agent-question` issue; the item waits for your reply
+  inbox.py notify --title T --body B [--slug K] [--project P] [--json]
+                                                 open an `agent-notice` issue (PR on preprod, item blocked, …)
+  inbox.py comment <n> --body B [--close]        comment on an inbox issue (and close it)
   inbox.py poll                                  re-queue items whose question issue has a reply (cron, no Claude)
 
-Config (~/.config/strelitzia-agent/env, or the environment):
+<key> is a queue key (`<repo>/<slug>`, or a bare slug only one repo has). Issues are labelled with the item's repo.
+
+Config (~/.config/agent-runner/env, falling back to ~/.config/strelitzia-agent/env; or the environment):
   AGENT_INBOX_REPO  owner/name of the private inbox repo (required)
   NTFY_TOPIC        optional ntfy.sh topic. GitHub doesn't push-notify you about issues your own account
                     opens, so without this you only see them in the app's inbox.
@@ -24,22 +28,29 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-MARKER = "<!-- strelitzia-agent -->"  # tags comments the agent wrote, so any other comment is your answer
-LEGACY_MARKER = "<!-- applypilot-agent -->"  # on comments written before the rename
+sys.path.insert(0, str(HERE))
+import config  # noqa: E402
+
+MARKER = "<!-- agent-runner -->"  # tags comments the agent wrote, so any other comment is your answer
+LEGACY_MARKERS = ("<!-- strelitzia-agent -->", "<!-- applypilot-agent -->")  # on comments written before the renames
 PROJECT_LABEL = "strelitzia"
+load_env = config.load_env
 
 
-def load_env() -> None:
-    from buildqueue import CONFIG_DIR  # same directory
+def by_agent(body: str) -> bool:
+    return any(marker in body for marker in (MARKER, *LEGACY_MARKERS))
 
-    env_file = CONFIG_DIR / "env"
-    if not env_file.exists():
-        return
-    for line in env_file.read_text().splitlines():
-        line = line.strip().removeprefix("export ")
-        if line and not line.startswith("#") and "=" in line:
-            key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+
+def queue_item(ref: str) -> tuple[str, dict] | None:
+    """(full key, item) for a queue key or bare slug, or None if it isn't queued (or is ambiguous)."""
+    import buildqueue  # same directory
+
+    data = buildqueue.load()
+    try:
+        key = buildqueue.resolve(data, ref)
+    except SystemExit:
+        return None
+    return key, data["items"][key]
 
 
 def repo() -> str:
@@ -78,15 +89,24 @@ def open_issue(title: str, body: str, label: str, project: str = PROJECT_LABEL) 
 
 
 def cmd_ask(args: argparse.Namespace) -> int:
-    number, url = open_issue(f"[{args.slug}] {args.title}", args.body_file.read_text(), "agent-question")
-    buildqueue("set", args.slug, f"issue={number}", "status=waiting-answer")
+    found = queue_item(args.slug)
+    if found is None:
+        sys.exit(f"not queued (or ambiguous): {args.slug}")
+    key, it = found
+    number, url = open_issue(f"[{key}] {args.title}", args.body_file.read_text(), "agent-question",
+                             it.get("repo") or PROJECT_LABEL)
+    buildqueue("set", key, f"issue={number}", "status=waiting-answer")
     print(url)
     return 0
 
 
 def cmd_notify(args: argparse.Namespace) -> int:
     title = f"[{args.slug}] {args.title}" if args.slug else args.title
-    number, url = open_issue(title, args.body, "agent-notice", args.project)
+    project = args.project
+    if project is None:
+        found = queue_item(args.slug) if args.slug else None
+        project = (found[1].get("repo") if found else None) or PROJECT_LABEL
+    number, url = open_issue(title, args.body, "agent-notice", project)
     print(json.dumps({"number": number, "url": url}) if args.json else url)
     return 0
 
@@ -108,7 +128,7 @@ def cmd_poll(_: argparse.Namespace) -> int:
         if it["status"] != "waiting-answer" or not it.get("issue"):
             continue
         issue = json.loads(gh("issue", "view", str(it["issue"]), "--repo", repo(), "--json", "comments"))
-        replies = [c["body"] for c in issue["comments"] if MARKER not in c["body"] and LEGACY_MARKER not in c["body"]]
+        replies = [c["body"] for c in issue["comments"] if not by_agent(c["body"])]
         if not replies:
             continue
         buildqueue("answer", slug, "\n\n".join(replies))
@@ -131,7 +151,7 @@ def main() -> int:
     p.add_argument("--title", required=True)
     p.add_argument("--body", required=True)
     p.add_argument("--slug")
-    p.add_argument("--project", default=PROJECT_LABEL, help="project label (default %(default)s)")
+    p.add_argument("--project", help=f"project label (default: the --slug item's repo, else {PROJECT_LABEL})")
     p.add_argument("--json", action="store_true", help='print {"number", "url"} instead of the URL')
     p.set_defaults(fn=cmd_notify)
     p = sub.add_parser("comment")

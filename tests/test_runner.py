@@ -29,9 +29,9 @@ def q(tmp_path, monkeypatch):
     return run
 
 
-def test_queue_uses_strelitzia_state_dir(tmp_path):
-    """Without $STRELITZIA_AGENT_STATE the queue lives in ~/.local/state/strelitzia-agent."""
-    env = {k: v for k, v in os.environ.items() if not k.endswith("_AGENT_STATE")}
+def test_queue_uses_agent_runner_state_dir(tmp_path):
+    """Without $AGENT_RUNNER_STATE (or the old $STRELITZIA_AGENT_STATE) the queue lives in ~/.local/state/agent-runner."""
+    env = {k: v for k, v in os.environ.items() if not k.endswith("_AGENT_STATE") and k != "AGENT_RUNNER_STATE"}
     env["HOME"] = str(tmp_path)
 
     def run(*args: str) -> subprocess.CompletedProcess:
@@ -40,7 +40,7 @@ def test_queue_uses_strelitzia_state_dir(tmp_path):
     assert run("add", "an-item").returncode == 0
     listed = run("list")
     assert listed.returncode == 0 and "an-item" in listed.stdout
-    assert (tmp_path / ".local/state/strelitzia-agent/queue.json").exists()
+    assert (tmp_path / ".local/state/agent-runner/queue.json").exists()
 
 
 def test_empty_queue_has_nothing_next(q):
@@ -55,7 +55,7 @@ def test_future_item_is_not_due(q):
 def test_failed_attempts_end_in_blocked(q):
     q("add", "plan-a")
     for expected in ("queued", "blocked"):
-        assert q("next").stdout.strip() == "plan-a"
+        assert q("next").stdout.strip() == "strelitzia/plan-a"
         q("start", "plan-a")
         assert q("finish", "plan-a", "/nonexistent").stdout.strip() == expected
     assert q("next").returncode == 1
@@ -68,7 +68,7 @@ def test_question_then_answer_requeues_with_fresh_attempts(q):
     q("answer", "plan-a", "use option B")
     assert q("get", "plan-a", "attempts").stdout.strip() == "0"
     assert "use option B" in q("get", "plan-a", "notes").stdout
-    assert q("next").stdout.strip() == "plan-a"
+    assert q("next").stdout.strip() == "strelitzia/plan-a"
 
 
 def test_answer_sets_resume_and_failed_attempt_clears_it(q):
@@ -109,7 +109,7 @@ def test_no_daily_cap_by_default(q, monkeypatch):
         q("add", slug)
     for slug in ("plan-a", "plan-b", "plan-c", "plan-d", "plan-e"):
         q("start", slug)
-    assert q("next").stdout.strip() == "plan-f"
+    assert q("next").stdout.strip() == "strelitzia/plan-f"
     assert "no daily cap" in q("list").stdout
 
 
@@ -135,12 +135,12 @@ def test_review_result_waits_for_preprod(q):
 def test_after_waits_until_the_dependency_merged(q):
     q("add", "first")
     q("add", "second", "--after", "first")
-    assert q("next").stdout.strip() == "first"
+    assert q("next").stdout.strip() == "strelitzia/first"
     q("start", "first")
     q("finish", "first", q.result({"status": "review", "pr": 1}))
     assert q("next").returncode == 1  # an open PR isn't enough: the dependency must be merged
     q("set", "first", "status=done")
-    assert q("next").stdout.strip() == "second"
+    assert q("next").stdout.strip() == "strelitzia/second"
 
 
 @pytest.fixture
@@ -412,13 +412,23 @@ def fake_gh(tmp_path):
         f"open({str(log)!r}, 'a').write(json.dumps(sys.argv[1:]) + '\\n')\n"
         "if sys.argv[1:3] == ['issue', 'create']: print('https://github.com/o/r/issues/42')\n"
         "if sys.argv[1:3] == ['issue', 'comment']: print('https://github.com/o/r/issues/42#issuecomment-1')\n"
+        f"if sys.argv[1:3] == ['issue', 'view']: print(open({str(tmp_path / 'view.json')!r}).read())\n"
     )
     gh.chmod(0o755)
-    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "AGENT_INBOX_REPO": "o/r"}
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "AGENT_INBOX_REPO": "o/r",
+           "AGENT_RUNNER_STATE": str(tmp_path / "state")}
     env.pop("NTFY_TOPIC", None)
+    env.pop("STRELITZIA_AGENT_STATE", None)
 
     def inbox(*args):
         return subprocess.run([sys.executable, str(AGENT / "inbox.py"), *args], env=env, capture_output=True, text=True)
+
+    def queue(*args):
+        return subprocess.run([sys.executable, str(AGENT / "buildqueue.py"), *args], env=env, capture_output=True, text=True)
+
+    inbox.queue = queue
+    inbox.tmp = tmp_path
+    inbox.view = lambda comments: (tmp_path / "view.json").write_text(json.dumps({"comments": [{"body": b} for b in comments]}))
 
     inbox.calls = lambda: [json.loads(line) for line in log.read_text().splitlines()]
     return inbox
@@ -443,5 +453,73 @@ def test_inbox_notify_defaults_to_strelitzia(fake_gh):
 def test_inbox_comment_close(fake_gh):
     assert fake_gh("comment", "42", "--body", "Recovered", "--close").returncode == 0
     calls = fake_gh.calls()
-    assert calls[0][:3] == ["issue", "comment", "42"] and "<!-- strelitzia-agent -->" in calls[0][-1]
+    assert calls[0][:3] == ["issue", "comment", "42"] and "<!-- agent-runner -->" in calls[0][-1]
     assert calls[1] == ["issue", "close", "42", "--repo", "o/r"]
+
+
+def test_queue_migrates_bare_keys_once(tmp_path, q):
+    state = tmp_path / "state"
+    state.mkdir()
+    old = {"paused_until": None, "items": {
+        "a": {"plan": "agents/plans/a.md", "status": "done", "not_before": "2026-10-01T00:00:00+00:00", "attempts": 1, "notes": []},
+        "b": {"plan": "agents/plans/b.md", "status": "queued", "not_before": "2026-10-01T00:00:00+00:00", "attempts": 0,
+              "notes": [], "after": "a"},
+    }}
+    (state / "queue.json").write_text(json.dumps(old))
+    assert q("next").stdout.strip() == "strelitzia/b"
+    data = json.loads((state / "queue.json").read_text())
+    assert sorted(data["items"]) == ["strelitzia/a", "strelitzia/b"]
+    assert data["items"]["strelitzia/b"]["after"] == "strelitzia/a"
+    assert data["items"]["strelitzia/a"]["repo"] == "strelitzia"
+    mtime = (state / "queue.json").stat().st_mtime_ns
+    q("list")
+    assert (state / "queue.json").stat().st_mtime_ns == mtime  # nothing left to migrate: not rewritten
+
+
+def test_queue_after_across_repos(q):
+    q("add", "y")
+    q("add", "x", "--repo", "engineerfamily", "--after", "strelitzia/y")
+    q("set", "y", "status=running")
+    assert q("next").returncode == 1
+    q("set", "strelitzia/y", "status=done")
+    assert q("next").stdout.strip() == "engineerfamily/x"
+    assert q("get", "engineerfamily/x", "repo").stdout.strip() == "engineerfamily"
+
+
+def test_queue_ambiguous_bare_slug(q):
+    q("add", "x")
+    q("add", "x", "--repo", "engineerfamily")
+    out = q("set", "x", "status=done")
+    assert out.returncode != 0
+    assert "engineerfamily/x" in out.stderr and "strelitzia/x" in out.stderr
+
+
+def test_inbox_ask_labels_item_repo(fake_gh):
+    fake_gh.queue("add", "x", "--repo", "engineerfamily")
+    body = fake_gh.tmp / "q.md"
+    body.write_text("which option?")
+    assert fake_gh("ask", "engineerfamily/x", "--title", "q", "--body-file", str(body)).returncode == 0
+    create = next(c for c in fake_gh.calls() if c[:2] == ["issue", "create"])
+    assert create[create.index("--title") + 1] == "[engineerfamily/x] q"
+    labels = [create[i + 1] for i, a in enumerate(create) if a == "--label"]
+    assert labels == ["agent-question", "engineerfamily"]
+    assert fake_gh.queue("get", "engineerfamily/x", "status").stdout.strip() == "waiting-answer"
+
+
+def test_inbox_poll_ignores_legacy_marker_and_requeues(fake_gh):
+    fake_gh.queue("add", "x", "--repo", "engineerfamily")
+    fake_gh.queue("set", "engineerfamily/x", "status=waiting-answer", "issue=42")
+    fake_gh.view(["question\n\n<!-- strelitzia-agent -->", "old\n<!-- applypilot-agent -->"])
+    assert fake_gh("poll").stdout == ""
+    assert fake_gh.queue("get", "engineerfamily/x", "status").stdout.strip() == "waiting-answer"
+    fake_gh.view(["question\n\n<!-- strelitzia-agent -->", "use option B"])
+    assert "re-queued engineerfamily/x" in fake_gh("poll").stdout
+    assert fake_gh.queue("get", "engineerfamily/x", "status").stdout.strip() == "queued"
+    assert "use option B" in fake_gh.queue("get", "engineerfamily/x", "notes").stdout
+
+
+def test_inbox_notify_slug_uses_item_repo(fake_gh):
+    fake_gh.queue("add", "x", "--repo", "engineerfamily")
+    fake_gh("notify", "--slug", "x", "--title", "t", "--body", "b")
+    create = next(c for c in fake_gh.calls() if c[:2] == ["issue", "create"])
+    assert "engineerfamily" in create and "strelitzia" not in create
