@@ -1,5 +1,5 @@
 # Plan: ROADMAP records the cutover (smoke test, low, agent-runner)
-**Status:** ❌ Not started
+**Status:** ✅ 2026-10-19
 **Risk:** low (docs only; auto-merges on green CI, user 2026-10-19)
 **Depends on:** the cutover (done 2026-10-19, runner v0.1.4 installed)
 
