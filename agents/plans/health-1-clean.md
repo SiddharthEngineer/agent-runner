@@ -1,5 +1,5 @@
 # Plan: VPS health check and fixed-rule cleanup (`health.py check`, `clean`)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks; the real `health.py clean` is the user's, AM2)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: deletes files and Docker data on the shared VPS)
 **Depends on:** - (independent of the runner Parts; design [shared-agent-runner](shared-agent-runner.md) D6)
 
@@ -34,7 +34,7 @@
 **Validate:** tests with a fake meminfo file and monkeypatched `disk_usage`/`getloadavg`: 85% disk → `disk` cleanable; 92% →
 also `disk-critical`; 350 MB available → `memory` not cleanable; a bad key in a temp `health.toml` → error naming it.
 `python3 health.py check` on the VPS → JSON with `disk_pct` near 71.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: rule engine and Docker rules
 **Runs:** unattended
@@ -48,7 +48,7 @@ Docker rules: routine `builder prune -f --keep-storage 3GB` and `container prune
 and the next rule runs. CLI: `health.py clean [--dry-run] [--pressure]` prints one line per rule: name, estimate or freed size.
 **Validate:** tests stub `subprocess.run` and assert the exact Docker argv lists (no `volume`, no `system`), that pressure stops
 after the first rule that gets disk under threshold, and that a second routine run within 23 h is skipped.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: file rules with root guards
 **Runs:** unattended
@@ -64,7 +64,7 @@ worktrees older than 7 d whose `agent/<slug>` branch is gone from origin (`git l
 routine but not pressure; a 2-hour-old one survives both; `/tmp/claude-*` is never selected; a worktree whose branch still exists
 survives. `python3 health.py clean --dry-run --pressure` on the VPS → lists every rule with an estimate, and `docker system df`
 and `df /` are unchanged afterwards.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended
@@ -72,7 +72,7 @@ and `df /` are unchanged afterwards.
 **What:** README section "VPS health": the thresholds, both rule tiers, the never-list (design D6), `health.toml` override example,
 and how to read `health.log`. AGENTS.md map row for `health.py`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

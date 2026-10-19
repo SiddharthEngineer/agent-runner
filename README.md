@@ -55,3 +55,40 @@ Paths: the runner uses `~/.config/strelitzia-agent` and `~/.local/state/strelitz
 - When an agent asks a question, reply on the inbox issue. The next tick (within 5 minutes) re-queues the item with your answer.
   That run resumes the agent's own session (`claude --resume`), or starts fresh if Claude can't find it.
 - Merging or closing the PR on preprod frees the lock. The next tick resets preprod to trunk and deploys the next waiting PR.
+
+## VPS health (`health.py`)
+The VPS runs prod, preprod and every agent run, so a full disk or memory pressure breaks them all at once. `health.py` measures
+the box cheaply (no Claude) and frees disk with fixed rules. Alerts and the cron line come with health-2-alert.
+
+```
+python3 health.py check                        # JSON {"metrics": …, "problems": […]}; exit 1 when there are problems
+python3 health.py clean --dry-run --pressure   # every rule and what it would free; deletes nothing
+python3 health.py clean                        # routine rules (once a day), plus pressure rules while disk is over 80%
+```
+
+**Thresholds** (override any of them in `~/.config/agent-runner/health.toml`; an unknown key is an error):
+```toml
+[thresholds]
+disk_clean_pct = 80      # clean up at or over this disk use
+disk_alert_pct = 90      # alert at or over this, whatever cleanup does
+mem_available_mb = 400   # MemAvailable under this is a problem (alert only)
+swap_used_mb = 2048      # swap used over this is a problem (alert only)
+load_per_cpu = 2.0       # 15-minute load per CPU over this is a problem (alert only)
+```
+
+**Routine rules** (at most once every 23 h): Docker build cache down to 3 GB (`builder prune --keep-storage 3GB`), exited
+containers older than 24 h, runner logs older than 14 days and results older than 30 days (both the `agent-runner` and the old
+`strelitzia-agent` state dirs), runner worktrees older than 7 days whose branch is gone from origin, your own top-level `/tmp`
+entries untouched for 3 days (never `/tmp/claude-*`), and backups in `~/backups` and `/srv/backups` older than 7 days.
+
+**Pressure rules** (only while disk is over `disk_clean_pct`, or with `--pressure`; in this order, re-measuring after each and
+stopping once under): all build cache, images unused for 7 days, backups older than 24 h, `uv cache prune`, `pip cache purge`,
+and all but the newest Playwright build of each browser.
+
+**Never touched:** Docker volumes (`volume` and `system prune` are never called), running or compose-managed containers' images,
+`/srv/*` checkouts, any `.env` outside the backup dirs, databases, `/var/log` and the journal, and processes. Memory and load
+never trigger a deletion. Every rule deletes only strictly inside its own root and skips symlinks; a refused path is logged.
+
+**`health.log`** (in the state dir, `~/.local/state/agent-runner/`) has one JSON line per rule run:
+`{"time", "rule", "tier", "dry_run", "freed_bytes"}`, plus `"error"` when the rule failed (the next rule still runs), and
+`"rule": "refused"` lines for paths a guard skipped. `health.json` next to it records when the routine rules last ran.

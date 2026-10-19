@@ -13,6 +13,8 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
 | `inbox.py` | Inbox issues in this repo, plus an ntfy push |
 | `usage.py` | Claude session-usage gate |
+| `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
+| `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded) |
 | `tests/` | Hermetic pytest (temp state dirs, temp git repos; never the real `~/.local/state`) |
 | `agents/ROADMAP.md`, `agents/plans/` | Tracker and plans for this repo, and the cross-repo design `shared-agent-runner.md` |
 
