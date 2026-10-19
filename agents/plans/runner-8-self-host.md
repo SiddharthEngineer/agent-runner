@@ -1,5 +1,5 @@
 # Plan: agent-runner builds itself (its own `runner.toml`, agent settings and PIV commands)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-7-preprod-check
 
