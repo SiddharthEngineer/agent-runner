@@ -129,11 +129,32 @@ cfg() { "${CFG[@]}" get "$toml" "$1" 2>/dev/null; }
 
 merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed
     local checks
+    local checks rc
     if ! checks=$(timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast 2>&1); then
-        [[ $checks == *"no checks reported"* ]] && return 2
-        return 1
+        if [[ $checks == *"Resource not accessible"* ]]; then
+            ci_runs "$1"
+            rc=$?
+            [ "$rc" = 0 ] || return "$rc"
+        else
+            [[ $checks == *"no checks reported"* ]] && return 2
+            return 1
+        fi
     fi
     gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null 2>&1 || return 3
+}
+# ci_runs <pr>: CI through the Actions runs of the PR head, for a token that can't read the check rollup (agent-runner).
+# Waits up to 30 min for a run to show up. 0 = all green, 1 = one failed, 2 = no run.
+ci_runs() {
+    local sha ids id waited=0
+    sha=$(gh pr view "$1" --repo "$GH_REPO" --json headRefOid -q .headRefOid 2>/dev/null) && [ -n "$sha" ] || return 1
+    while ids=$(gh run list --repo "$GH_REPO" --commit "$sha" --json databaseId -q '.[].databaseId' 2>/dev/null); [ -z "$ids" ]; do
+        [ "$waited" -ge "${AGENT_CI_WAIT:-1800}" ] && return 2
+        sleep 30
+        waited=$((waited + 30))
+    done
+    for id in $ids; do
+        timeout 30m gh run watch "$id" --repo "$GH_REPO" --exit-status >/dev/null 2>&1 || return 1
+    done
 }
 merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, for a notice
     case $1 in

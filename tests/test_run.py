@@ -68,13 +68,25 @@ def runner(tmp_path):
                '  printf "%s" "${STUB_RESULT:-{\\"status\\": \\"ready\\", \\"pr\\": 9}}" > "$AGENT_RESULT_FILE"\n'
                'fi\n'
                'echo \'{"session_id": "s1"}\'\n')
-    # gh: `pr checks` fails with $STUB_CHECKS (red, or none: "no checks reported"); `pr merge` exits $STUB_MERGE_EXIT.
+    # gh: `pr checks` fails with $STUB_CHECKS (red; none: "no checks reported"; denied: no access to the check rollup);
+    # `pr merge` exits $STUB_MERGE_EXIT; `run list` prints the run ids in $STUB_RUNS, and `run watch` fails for those in
+    # $STUB_RUNS_RED; `pr view --json state` prints $STUB_PR_STATE (default OPEN).
     write_stub(bin_dir / "gh", "gh",
                'if [[ "$*" == "pr checks"* ]]; then\n'
                '  [ "${STUB_CHECKS:-}" = red ] && { echo "build  fail  1m  https://ci.example/1"; exit 1; }\n'
                '  [ "${STUB_CHECKS:-}" = none ] && { echo "no checks reported on the \'x\' branch" >&2; exit 1; }\n'
+               '  [ "${STUB_CHECKS:-}" = denied ] && { echo "GraphQL: Resource not accessible by personal access token'
+               ' (repository.pullRequest.statusCheckRollup)" >&2; exit 1; }\n'
                'elif [[ "$*" == "pr merge"* ]]; then\n'
                '  exit "${STUB_MERGE_EXIT:-0}"\n'
+               'elif [[ "$*" == "pr view"*headRefOid* ]]; then\n'
+               '  echo abc123\n'
+               'elif [[ "$*" == "pr view"*state* ]]; then\n'
+               '  echo "${STUB_PR_STATE:-OPEN}"\n'
+               'elif [[ "$*" == "run list"* ]]; then\n'
+               '  for id in ${STUB_RUNS:-}; do echo "$id"; done\n'
+               'elif [[ "$*" == "run watch"* ]]; then\n'
+               '  for id in ${STUB_RUNS_RED:-}; do [ "$3" = "$id" ] && exit 1; done\n'
                'fi\n'
                'exit 0\n')
     write_stub(bin_dir / "docker", "docker")
@@ -196,6 +208,27 @@ def test_low_not_merged_blocks_with_notice(runner, env, why):
     if "STUB_MERGE_EXIT" not in env:
         assert not any(c.startswith("gh pr merge") for c in calls)
     assert why in json.loads(runner.queue("get", "agent-runner/x", "last_result").stdout)["summary"]
+
+
+@pytest.mark.parametrize("env, why", [
+    ({"STUB_RUNS": "1 2"}, None),
+    ({"STUB_RUNS": "1 2", "STUB_RUNS_RED": "2"}, "CI is red or timed out"),
+    ({"AGENT_CI_WAIT": "0"}, "no CI checks on this repo"),
+])
+def test_ci_falls_back_to_actions_runs(runner, env, why):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner(STUB_CHECKS="denied", **env)
+    calls = runner.calls()
+    assert "gh run list --repo o/agent-runner --commit abc123 --json databaseId -q .[].databaseId" in calls
+    merged = "gh pr merge 9 --repo o/agent-runner --squash --delete-branch" in calls
+    if why is None:
+        assert merged and runner.status("agent-runner/x") == "done", runner.runs_log() + runner.out.stderr
+        assert {"gh run watch 1 --repo o/agent-runner --exit-status", "gh run watch 2 --repo o/agent-runner --exit-status"} <= set(calls)
+    else:
+        assert not merged and runner.status("agent-runner/x") == "blocked"
+        [notice] = [c for c in calls if c.startswith("inbox notify")]
+        assert why in notice
 
 
 def test_strelitzia_rebases(runner):
