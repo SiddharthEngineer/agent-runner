@@ -65,7 +65,7 @@ green → merge with the repo's method, notice "merged after review", item `done
 **What:** README: the item lifecycle with `awaiting-review`, the validator's limits, where its result and log live. AGENTS.md map:
 `prompts/`, `settings/validate.json`.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

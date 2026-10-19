@@ -17,8 +17,8 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `usage.py` | Claude session-usage gate |
 | `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
 | `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis), `gate` |
-| `settings/` | Headless Claude settings per role (`health-diagnose.json`: read-only diagnosis) |
-| `prompts/` | Prompts for headless runs (`health-diagnose.md`) |
+| `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
+| `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, review stage) |
 | `tests/` | Hermetic pytest (temp state dirs, temp git repos; never the real `~/.local/state`) |
 | `agents/ROADMAP.md`, `agents/plans/` | Tracker and plans for this repo, and the cross-repo design `shared-agent-runner.md` |
 
