@@ -1,0 +1,41 @@
+# Strelitzia's values as the runner hard-codes them today (gate.py, run.sh, the strelitzia-agent env).
+[repo]
+name = "strelitzia"
+github = "SiddharthEngineer/Strelitzia"
+base = "trunk"
+merge = "rebase"
+
+[validate]
+fast = "scripts/validate.sh"
+full = "scripts/validate.sh --full"
+
+[gate]
+high_risk = [
+    "Dockerfile",
+    ".dockerignore",
+    "pyproject.toml",
+    ".github/*",
+    ".claude/settings.json",
+    "scripts/agent/*",
+    "scripts/validate.sh",
+    "scripts/migrate_to_strelitzia.sh",
+    "src/strelitzia/database.py",
+    "src/strelitzia/db_pg.py",
+    "src/strelitzia/migrate.py",
+    "src/strelitzia/config.py",
+    "src/strelitzia/web/*",
+    "dashboard/*",
+    "*password*",
+    "*credential*",
+    "*secret*",
+    "agents/runner.toml",
+    "agents/settings/*",
+]
+doc_or_test = ["*.md", "agents/*", ".claude/commands/*", ".claude/agents/*", "tests/*"]
+code_line_budget = 250
+tests_dir = "tests/"
+
+[preprod]
+deploy = "make -C /srv/engineerfamily-preprod preprod-strelitzia-up"
+seed = "docker compose -p engineerfamily-preprod --project-directory /srv/engineerfamily-preprod -f /srv/engineerfamily-preprod/docker-compose.base.yml -f /srv/engineerfamily-preprod/docker-compose.preprod.yml run --rm --no-deps -T -v /srv/Strelitzia-preprod:/seed:ro strelitzia python /seed/scripts/seed_preprod.py"
+health = [{ url = "http://127.0.0.1:8080/strelitzia/dashboard/api/health", json_ok = true }]

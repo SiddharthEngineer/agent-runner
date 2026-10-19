@@ -42,7 +42,7 @@ The fixtures hold today's Strelitzia values and design D5's engineerfamily value
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_config.py` → passes, including: both fixtures load; a missing
 `repo.base` and a bad `merge` are both reported in one error; each `PROD_PATTERNS` entry in a `preprod.deploy` is refused;
 `preprod-deploy ref={sha}` is accepted. `python3 config.py get tests/fixtures/engineerfamily.runner.toml repo.base` → `main`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: config and state dirs, env loading
 **Runs:** unattended
