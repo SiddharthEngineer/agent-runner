@@ -17,6 +17,7 @@ Usage = namedtuple("Usage", "total used free")
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("AGENT_RUNNER_STATE", str(tmp_path / "state"))
+    monkeypatch.setenv("STRELITZIA_AGENT_STATE", str(tmp_path / "old-state"))
     return tmp_path
 
 
@@ -167,3 +168,99 @@ def test_docker_error_is_logged_and_next_rule_runs(home, monkeypatch):
     results = health.clean(measure_fn=lambda: metrics(70))
     assert "daemon down" in results[0]["error"]
     assert results[1]["freed_bytes"] == 1_500_000_000
+
+
+def aged(path: Path, days: float, content: str = "x" * 100) -> Path:
+    import os
+    import time
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        path.write_text(content)
+    t = time.time() - days * 86400
+    os.utime(path, (t, t), follow_symlinks=False)
+    return path
+
+
+def test_symlink_and_outside_paths_refused(home, tmp_path):
+    root = tmp_path / "root"
+    outside = aged(tmp_path / "outside/keep.txt", 30)
+    root.mkdir()
+    link = root / "link"
+    link.symlink_to(outside)
+    dir_link = root / "dirlink"
+    dir_link.symlink_to(outside.parent)
+    assert health.delete_under(root, [link, dir_link, dir_link / "keep.txt", outside, root], dry_run=False) == 0
+    assert link.is_symlink() and outside.exists()
+    victim = aged(root / "old.txt", 30)
+    assert health.delete_under(root, [victim], dry_run=True) == 100 and victim.exists()
+    assert health.delete_under(root, [victim], dry_run=False) == 100 and not victim.exists()
+
+
+def test_backups_by_tier(home, monkeypatch):
+    backups = home / "backups"
+    monkeypatch.setattr(health, "backup_dirs", lambda: [backups])
+    two_days = aged(backups / "two-days.sql.gz", 2)
+    two_hours = aged(backups / "two-hours.sql.gz", 2 / 24)
+    old = aged(backups / "ten-days.sql.gz", 10)
+    rules = {r.name: r for r in health.file_rules()}
+    rules["backups over 7d"].apply()
+    assert not old.exists() and two_days.exists()
+    rules["backups over 24h"].apply()
+    assert not two_days.exists() and two_hours.exists()
+
+
+def test_tmp_skips_claude_and_recent(home, tmp_path):
+    tmp = tmp_path / "tmp"
+    aged(tmp / "claude-1000/scratch.txt", 10)
+    aged(tmp / "claude-1000", 10)
+    old = aged(tmp / "pytest-of-dev/x.txt", 10)
+    aged(tmp / "pytest-of-dev", 10)
+    recent_dir = tmp / "recent"
+    aged(recent_dir / "old.txt", 10)
+    aged(recent_dir / "new.txt", 0)
+    [(root, paths)] = health.tmp_targets(tmp)
+    assert paths == [old.parent]
+
+
+def test_logs_and_results_ages(home):
+    state = home / "state"
+    old_log, new_log = aged(state / "logs/a.log", 15), aged(state / "logs/b.log", 13)
+    old_res, new_res = aged(state / "results/a.json", 31), aged(state / "results/b.json", 20)
+    for rule in health.file_rules()[:2]:
+        rule.apply()
+    assert (old_log.exists(), new_log.exists(), old_res.exists(), new_res.exists()) == (False, True, False, True)
+
+
+def test_playwright_keeps_newest_build(tmp_path):
+    cache = tmp_path / "ms-playwright"
+    for name in ("chromium-1100", "chromium-1248", "chromium_headless_shell-1248", "ffmpeg-1013", ".links"):
+        (cache / name).mkdir(parents=True)
+    [(root, old)] = health.playwright_old_builds(cache)
+    assert [p.name for p in old] == ["chromium-1100"]
+
+
+def git(cwd, *args):
+    import subprocess
+
+    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+def test_worktree_with_live_branch_survives(home):
+    import os
+    import time
+
+    origin, clone = home / "origin.git", home / "clone"
+    git(home, "init", "-q", "--bare", str(origin))
+    git(home, "clone", "-q", str(origin), str(clone))
+    git(clone, "-c", "user.email=t@e", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base")
+    git(clone, "push", "-q", "origin", "HEAD:refs/heads/main")
+    wts = home / "state/worktrees"
+    for slug in ("alive", "gone"):
+        git(clone, "worktree", "add", "-q", "-b", f"agent/{slug}", str(wts / slug))
+        old = time.time() - 8 * 86400
+        os.utime(wts / slug, (old, old))
+    git(clone, "push", "-q", "origin", "agent/alive")
+    assert [wt.name for _, wt in health.finished_worktrees()] == ["gone"]
+    health.worktree_rule().apply()
+    assert (wts / "alive").exists() and not (wts / "gone").exists()

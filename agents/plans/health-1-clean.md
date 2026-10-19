@@ -64,7 +64,7 @@ worktrees older than 7 d whose `agent/<slug>` branch is gone from origin (`git l
 routine but not pressure; a 2-hour-old one survives both; `/tmp/claude-*` is never selected; a worktree whose branch still exists
 survives. `python3 health.py clean --dry-run --pressure` on the VPS → lists every rule with an estimate, and `docker system df`
 and `df /` are unchanged afterwards.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended
