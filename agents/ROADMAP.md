@@ -10,6 +10,8 @@ All Parts planned on 2026-10-19. Every plan is `low` risk with unattended tasks,
 here goes live only when the user installs a tag. Four plans list paths on `gate.py`'s built-in Strelitzia high-risk list
 (`.github/*`, `.claude/settings.json`, `scripts/validate.sh`): A2, A5, A13 and S2. The user's low-risk rule overrides that.
 
+**Run of 2026-10-19:** A1-A13 and S1 are merged. A2's CI workflow is left for the user (AM1a: the agents' token can't push workflow files here). Next: AM1, AM1a, AM2, then the cutover (AM3-AM5).
+
 **Who builds what.** The live runner (Strelitzia `scripts/agent/run.sh`) only builds Strelitzia plans, so it can build S1 from its queue.
 Everything else is built by Claude sessions, one at a time in this order, until the cutover (AM5). After that, the new runner builds every repo.
 Later plans cite the planned interfaces of earlier ones, and each has a Task 0 check that its predecessor really merged.
@@ -29,7 +31,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A11 | agent-runner builds itself (config, settings, commands, `check-commands`) | [runner-8-self-host](plans/runner-8-self-host.md) | agent-runner | ✅ | A10 |
 | A12 | engineerfamily layout: AGENTS.md, `agents/`, settings | [ef-agents-layout](plans/ef-agents-layout.md) | engineerfamily | ✅ | A5 |
 | A13 | engineerfamily `runner.toml`, agent settings, commands | [ef-runner-config](plans/ef-runner-config.md) | engineerfamily | ✅ | A12, A11 |
-| S1 | Strelitzia `runner.toml`, agent settings (add-only) | Strelitzia R44 [strelitzia-runner-config](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-config.md) | Strelitzia | ⏳ | A10 |
+| S1 | Strelitzia `runner.toml`, agent settings (add-only) | Strelitzia R44 [strelitzia-runner-config](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-config.md) | Strelitzia | ✅ (Strelitzia#81) | A10 |
 | — | **Cutover** (AM3-AM5) | design Rollout 2-6 | VPS | ☐ user | A13, S1, A2 installed |
 | S2 | Strelitzia commands on the CLI, delete `scripts/agent/` | Strelitzia R45 [strelitzia-runner-cleanup](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-cleanup.md) | Strelitzia | ⏳ | cutover + 1 week |
 | A14 | Drop the Strelitzia-era fallbacks | [runner-9-cleanup](plans/runner-9-cleanup.md) | agent-runner | ⏳ | S2, AM6 |
