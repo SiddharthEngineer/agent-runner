@@ -29,7 +29,7 @@ STUB_LOGGER = "#!/usr/bin/env bash\nargs=\"$*\"\necho \"{name} ${{args//$'\\n'/ 
 
 
 PY_STUB = """import os, sys
-open(os.environ["STUB_LOG"], "a").write("{name} " + " ".join(sys.argv[1:]) + "\\n")
+open(os.environ["STUB_LOG"], "a").write("{name} " + " ".join(a.replace("\\n", " ") for a in sys.argv[1:]) + "\\n")
 sys.exit(int(os.environ.get("{exit_env}", "0")))
 """
 
@@ -57,7 +57,10 @@ def runner(tmp_path):
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id.
     write_stub(bin_dir / "claude", "claude",
-               'if [[ "$*" == *"You are the validator"* ]]; then\n'
+               'if [[ "$*" == *"preprod stage"* ]]; then\n'
+               '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
+               '  [ -n "${STUB_PREPROD:-}" ] && printf "%s" "$STUB_PREPROD" > "$AGENT_RESULT_FILE"\n'
+               'elif [[ "$*" == *"You are the validator"* ]]; then\n'
                '  [ -n "${STUB_REVIEW:-}" ] && printf "%s" "$STUB_REVIEW" > "$AGENT_RESULT_FILE"\n'
                'else\n'
                '  printf "%s" "${STUB_RESULT:-{\\"status\\": \\"ready\\", \\"pr\\": 9}}" > "$AGENT_RESULT_FILE"\n'
@@ -75,7 +78,8 @@ def runner(tmp_path):
         work = tmp_path / f"{name}-work"
         git("init", "-q", "-b", base, work)
         (work / "agents/plans").mkdir(parents=True)
-        preprod = f'[preprod]\ndeploy = "{deploy}"\n' if deploy else ""
+        health = 'health = [{ url = "https://preprod.example/", status = 200 }]\n'
+        preprod = f'[preprod]\ndeploy = "{deploy}"\n{health}' if deploy else ""
         (work / "agents/runner.toml").write_text(TOML.format(name=name, base=base, merge=merge, preprod=preprod))
         if plan:
             (work / "agents/plans/x.md").write_text(f"# Plan: x\n**Risk:** {plan}\n")
@@ -256,3 +260,59 @@ def test_review_missing_result_twice_blocks(runner):
     runner()
     assert runner.status(key) == "blocked"
     assert any(c.startswith("inbox notify") and "validator failed 2 times" in c for c in runner.calls())
+
+
+def on_preprod(runner, **fields):
+    runner.register("engineerfamily", plan="review")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    runner.queue("set", key, "status=on-preprod", "pr=9", "attempts=1", *[f"{k}={v}" for k, v in fields.items()])
+    return key
+
+
+def preprod_verdict(v: str, **extra) -> str:
+    return json.dumps({"verdict": v, "passed": ["1"], "failed": extra.get("failed", []),
+                       "left_for_you": extra.get("left", []), "summary": "s"})
+
+
+def test_preprod_dry_run(runner):
+    key = on_preprod(runner)
+    runner(AGENT_DRY_RUN="1")
+    assert f"would run validator (preprod) for {key} PR #9 signed_in=false" in runner.runs_log()
+
+
+def test_preprod_stage_runs_once_and_cleans_up(runner, tmp_path):
+    key = on_preprod(runner)
+    runner(STUB_PREPROD=preprod_verdict("approve", left=["2. sign in with your own account"]))
+    [claude] = claude_calls(runner)
+    assert "--model claude-sonnet-5-5" in claude and "--mcp-config" in claude
+    assert "Signed in as the dev test account: false" in claude
+    seen = (tmp_path / "stub.log.mcpdir").read_text().split()
+    assert {"mcp.json", "mcp.playwright.json", "settings.json"} <= set(seen)
+    assert "--settings" in claude
+    mcp_dir = claude.split("--mcp-config ")[1].split()[0]
+    assert not Path(mcp_dir).exists()  # the temp config (basic-auth password) is gone
+    assert runner.queue("get", key, "preprod_verdict").stdout.strip() == "approve"
+    runner()  # already has a verdict: no second validator run
+    assert len(claude_calls(runner)) == 1
+
+
+def test_preprod_approve_merges_releases_notifies(runner):
+    key = on_preprod(runner)
+    runner(STUB_PREPROD=preprod_verdict("approve", left=["2. check the email"]))
+    calls = [c for c in runner.calls() if c.startswith(("gh pr merge", "preprod release", "inbox notify"))]
+    assert calls[0] == "gh pr merge 9 --repo o/engineerfamily --merge --delete-branch"
+    assert calls[1] == "preprod release engineerfamily"
+    assert calls[2].startswith("inbox notify") and "merged; 1 steps left for you" in calls[2] and "check the email" in calls[2]
+    assert runner.status(key) == "done"
+
+
+def test_preprod_changes_releases_and_requeues(runner):
+    key = on_preprod(runner)
+    runner(STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
+    calls = runner.calls()
+    assert "preprod release engineerfamily" in calls
+    assert not any(c.startswith("gh pr merge") for c in calls)
+    assert runner.status(key) == "queued"
+    assert "the page is blank" in runner.queue("get", key, "notes").stdout
+    assert runner.queue("get", key, "preprod_verdict").returncode == 1  # cleared for the next round

@@ -1,5 +1,5 @@
 # Plan: validator, preprod stage (run the Human test steps on preprod)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 4 tasks; AM3 is the user's)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing installed runs this until the cutover)
 **Depends on:** runner-6-review
 
@@ -31,7 +31,7 @@ comment with the checklist, then write `{"verdict": "approve"|"changes"|"blocked
 `signed_in=true|false`.
 **Validate:** `pytest -q tests/test_review.py` → the template fills; the MCP config has `httpCredentials` from a temp netrc and
 mode `0o600`; a missing storage-state file → `signed_in=false` and no `storageState` key.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: the preprod stage in `run.sh`
 **Runs:** unattended
@@ -42,7 +42,7 @@ mode `0o600`; a missing storage-state file → `signed_in=false` and no `storage
 `results/<repo>/<slug>.preprod.json` → delete the temp config → set `preprod_verdict`.
 **Validate:** `pytest -q tests/test_run.py`: with a stub `claude`, an `on-preprod` item gets exactly one validator run and
 `preprod_verdict` is set; an item that already has one isn't re-run; the temp MCP config is gone afterwards.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: after the verdict
 **Runs:** unattended
@@ -51,7 +51,7 @@ mode `0o600`; a missing storage-state file → `signed_in=false` and no `storage
 `[<key>] merged; N steps left for you` that lists `left_for_you` (or "nothing left"). `changes` → `preprod.sh release`,
 `buildqueue.py requeue <key> --note <failed steps + summary>` (counts an attempt). `blocked` → release, item `blocked`, notice.
 **Validate:** tests: `approve` → merge, release and notice calls in that order; `changes` → release, then queued with the failed steps in notes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (committed with Task 2)
 
 ### Task 4: docs and the storage-state step
 **Runs:** unattended
@@ -59,7 +59,7 @@ mode `0o600`; a missing storage-state file → `signed_in=false` and no `storage
 **What:** README: the preprod stage, what the validator can and can't test, and how to refresh the storage state. Confirm that ROADMAP
 manual step AM3 matches what was built (file path, the export command) and fix it if not.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

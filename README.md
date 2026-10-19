@@ -120,6 +120,21 @@ approve its own PR) and writes `results/<repo>/<slug>.review.json` (`approve | c
 - `changes` → re-queued for the implementer with the review as a note, resuming its session. It costs an attempt, so out of
   attempts it is `blocked` and you get a notice.
 - `blocked`, or no verdict twice → `blocked`, with a notice.
+**Validator, preprod stage.** Once an approved `review` PR is `on-preprod` (`preprod.sh tick` deployed it), the next tick runs
+one Sonnet validator (45 min at most) with [prompts/preprod-check.md](prompts/preprod-check.md). It works through the plan's
+Human test steps on the public preprod host: `curl` with the repo's netrc, and the Playwright MCP, whose browser gets the
+basic-auth credentials and, if `~/.config/agent-runner/preprod-storage-state.json` exists, the dev test account's session
+(ROADMAP AM3). Both go in a 0600 temp config (`mcp_config.py`) that is deleted after the run. It never signs in itself and never
+types a password. Steps that need your own account, prod, email, money, a device, or a sign-in it doesn't have are
+"left for you". It comments a checklist on the PR and writes `results/<repo>/<slug>.preprod.json`.
+- `approve` → merged after green CI, preprod back on the base branch, and one notice "`[<key>] merged; N steps left for you`"
+  listing the steps only you can do (left-for-you steps never block the merge).
+- `changes` → preprod released and the item re-queued for the implementer with the failed steps as a note (costs an attempt).
+- `blocked`, or no verdict twice → preprod released, item `blocked`, notice.
+**Refresh the session** when it expires (about 30 days), as in AM3: sign the dev test account in with
+`npx playwright open --save-storage=state.json https://preprod.engineerfamily.net/`, then copy `state.json` to
+`~/.config/agent-runner/preprod-storage-state.json` (mode 600). Without it the validator still runs and leaves signed-in steps to you.
+
 Its permissions ([settings/validate.json](settings/validate.json), or the repo's `agents/settings/validate.json`) allow reading,
 the validate commands, `gh pr diff/view/checks` and `gh pr review --comment`, and writing only its result file. They deny
 edits, commits, pushes, merges, `make`, `docker compose` and `sudo`. Its log is `logs/<time>-<repo>-<slug>.review.log`.
