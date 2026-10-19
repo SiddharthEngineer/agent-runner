@@ -65,7 +65,7 @@ Nothing calls these yet besides tests and `health.py` (Parts health-1/2).
 output is byte-for-byte what it is today. Update the module docstring's usage lines (drop the `scripts/agent/` prefix).
 **Validate:** `scripts/validate.sh` → all PASS. New tests: with the engineerfamily fixture, a diff touching `services/nginx/x.conf`
 is `review` and one touching only `README.md` is `low`; `--plan --config` uses the config's `high_risk`. Existing gate tests pass unchanged.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
