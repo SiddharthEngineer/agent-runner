@@ -31,7 +31,7 @@ comment with the checklist, then write `{"verdict": "approve"|"changes"|"blocked
 `signed_in=true|false`.
 **Validate:** `pytest -q tests/test_review.py` → the template fills; the MCP config has `httpCredentials` from a temp netrc and
 mode `0o600`; a missing storage-state file → `signed_in=false` and no `storageState` key.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: the preprod stage in `run.sh`
 **Runs:** unattended
