@@ -1,5 +1,5 @@
 # Plan: `run.sh` builds every registered repo
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing installed runs this until the cutover)
 **Depends on:** runner-4-preprod
 
