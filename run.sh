@@ -162,6 +162,11 @@ preprod_stage() {
     plog=$STATE/logs/$(date -u +%Y%m%dT%H%MZ)-$repo-$slug.preprod.log
     mkdir -p "$(dirname "$pwt")" "$(dirname "$presult")"
     rm -f "$presult"
+    # The validator settings deny reading ~/.config/agent-runner, so its curl gets a private copy of the netrc in $tmpd.
+    if [ -n "$netrc" ] && [ -f "$netrc" ]; then
+        install -m 600 "$netrc" "$tmpd/preprod.netrc"
+        netrc=$tmpd/preprod.netrc
+    fi
     signed=$(python3 "$HERE/mcp_config.py" write "$tmpd/mcp.json" ${netrc:+--netrc "$netrc"} --host "$host" \
         --storage-state "$STORAGE_STATE" | sed -n 's/^signed_in=//p')
     if ! { git -C "$AGENT_REPO" fetch -q origin "pull/$pr/head" && git -C "$AGENT_REPO" worktree add -q --detach "$pwt" FETCH_HEAD; }; then
@@ -172,7 +177,7 @@ preprod_stage() {
     vsettings=$pwt/agents/settings/validate.json
     [ -f "$vsettings" ] || vsettings=$HERE/settings/validate.json
     python3 -c 'import json, sys
-s = json.load(open(sys.argv[1])); s["permissions"]["allow"] += ["mcp__playwright", "Bash(curl:*)"]
+s = json.load(open(sys.argv[1])); s["permissions"]["allow"] += ["mcp__playwright", "Bash(curl:*)", "Bash(gh pr comment:*)"]
 json.dump(s, open(sys.argv[2], "w"))' "$vsettings" "$tmpd/settings.json"
     vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
 base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
