@@ -34,7 +34,7 @@
 **Validate:** tests with a fake meminfo file and monkeypatched `disk_usage`/`getloadavg`: 85% disk → `disk` cleanable; 92% →
 also `disk-critical`; 350 MB available → `memory` not cleanable; a bad key in a temp `health.toml` → error naming it.
 `python3 health.py check` on the VPS → JSON with `disk_pct` near 71.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: rule engine and Docker rules
 **Runs:** unattended
