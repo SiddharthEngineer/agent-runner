@@ -35,7 +35,7 @@ failed, or any `gh` error) run the full `validate.sh` as today and print why. A 
 runs the full suite. Usage text and README mention both. Keep the 3-release pruning and atomic relink as they are.
 **Validate:** `pytest -q tests/test_install.py` with a stub `gh` on PATH: green run → quick checks only; failed run / no run / `gh`
 exits non-zero → full suite; `--full` with a green run → full suite. `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: tracking
 **Runs:** unattended

@@ -1,5 +1,6 @@
 """Tests for the agent-runner CLI and install.sh. Temp HOME and temp repos only; never the real install."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -57,7 +58,7 @@ def remote(tmp_path):
     git(work, "init", "-q", "-b", "main")
     for n in range(1, 6):
         validate = work / "scripts/validate.sh"
-        validate.write_text("#!/bin/sh\nexit %d\n" % (1 if n == 4 else 0))
+        validate.write_text('#!/bin/sh\necho "validate [$*]"\nexit %d\n' % (1 if n == 4 else 0))
         validate.chmod(0o755)
         git(work, "add", "-A")
         git(work, "commit", "-qm", f"release {n}", "--allow-empty")
@@ -68,7 +69,13 @@ def remote(tmp_path):
 
 @pytest.fixture
 def install(tmp_path, remote):
-    env = {**os.environ, "HOME": str(tmp_path / "home"), "AGENT_RUNNER_REMOTE": str(remote)}
+    """install.sh against `remote`, with a stub gh first on PATH: it prints gh.json, or fails when there is none."""
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    (bin_ / "gh").write_text('#!/bin/sh\necho "$*" >> "$0.log"\ncat "$0.json" 2>/dev/null || exit 1\n')
+    (bin_ / "gh").chmod(0o755)
+    env = {**os.environ, "HOME": str(tmp_path / "home"), "AGENT_RUNNER_REMOTE": str(remote),
+           "PATH": f"{bin_}{os.pathsep}{os.environ['PATH']}"}
 
     def go(*args):
         return run(ROOT / "install.sh", *args, env=env)
@@ -76,6 +83,8 @@ def install(tmp_path, remote):
     go.home = tmp_path / "home"
     go.share = go.home / ".local/share/agent-runner"
     go.current = lambda: os.path.realpath(go.share / "current")
+    go.gh_json = bin_ / "gh.json"
+    go.gh_log = bin_ / "gh.log"
     return go
 
 
@@ -111,6 +120,54 @@ def test_install_keeps_three_plus_active(install):
     install("v0.0.1")  # rollback to an old tag: it is active, so it stays beside the newest 3
     assert sorted(p.name for p in (install.share / "releases").iterdir()) == ["v0.0.1", "v0.0.2", "v0.0.3", "v0.0.5"]
     assert install.current() == str(install.share / "releases/v0.0.1")
+
+
+def tag_sha(install, tag):
+    return git(install.share / f"releases/{tag}", "rev-parse", "HEAD").strip()
+
+
+@pytest.mark.parametrize("runs", [
+    [{"status": "completed", "conclusion": "failure"}],
+    [],
+    [{"status": "in_progress", "conclusion": ""}],
+])
+def test_install_full_suite_unless_ci_passed(install, runs):
+    install.gh_json.write_text(json.dumps(runs))
+    out = install("v0.0.1")
+    assert out.returncode == 0 and "validate []" in out.stdout and "running the full suite" in out.stdout, out.stdout
+
+
+def test_install_full_suite_when_gh_fails(install):
+    out = install("v0.0.1")  # no gh.json: the stub exits 1
+    assert out.returncode == 0 and "gh run list failed" in out.stdout and "validate []" in out.stdout
+
+
+def test_install_quick_when_ci_passed_on_the_commit(install):
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "failure"},'
+                               ' {"status": "completed", "conclusion": "success"}]')
+    out = install("v0.0.2")
+    sha = tag_sha(install, "v0.0.2")
+    assert out.returncode == 0 and "validate [--quick]" in out.stdout
+    assert f"CI passed on {sha[:7]}; ran the quick checks only" in out.stdout
+    assert install.current() == str(install.share / "releases/v0.0.2")
+    args = install.gh_log.read_text()
+    assert f"--commit {sha} --workflow CI" in args and "--repo " in args and "/remote " in args
+
+
+def test_install_full_flag_ignores_green_ci(install):
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "success"}]')
+    out = install("--full", "v0.0.1")
+    assert out.returncode == 0 and "validate []" in out.stdout and "quick" not in out.stdout
+    assert not install.gh_log.exists()
+    assert install("--full", "--list").returncode == 2
+
+
+def test_install_quick_still_aborts_on_failure(install):
+    install("v0.0.3")
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "success"}]')
+    out = install("v0.0.4")
+    assert out.returncode == 1 and "validate [--quick]" in out.stdout and "failed its own validation" in out.stderr
+    assert install.current() == str(install.share / "releases/v0.0.3")
 
 
 RUNNER_TOML = """[repo]

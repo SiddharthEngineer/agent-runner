@@ -10,6 +10,7 @@ One copy is installed on the VPS, and cron and every repo call it, so runner cha
 ```bash
 git -C ~/src/agent-runner pull && git -C ~/src/agent-runner tag v0.2.0 origin/main && git -C ~/src/agent-runner push origin v0.2.0
 ~/src/agent-runner/install.sh v0.2.0    # mirror, check out releases/v0.2.0, run its validate.sh, then switch current
+~/src/agent-runner/install.sh --full v0.2.0  # same, but always run the full test suite
 agent-runner version                    # → v0.2.0
 ~/src/agent-runner/install.sh --list    # installed releases; * is active
 ~/src/agent-runner/install.sh v0.1.0    # rollback: switch back to an installed (or any) older tag
@@ -17,6 +18,9 @@ agent-runner version                    # → v0.2.0
 `install.sh` keeps a bare mirror at `~/.local/share/agent-runner/mirror.git`, one detached worktree per release under
 `releases/<tag>`, and `current -> releases/<tag>` (switched atomically, only after the release's own `scripts/validate.sh`
 passes). `~/.local/bin/agent-runner` points at `current/agent-runner`. The newest 3 releases and the active one are kept.
+If CI's run on the tag's exact commit succeeded (`gh run list`), install runs only `validate.sh --quick` (`bash -n`,
+`py_compile`) and takes seconds; with no `gh`, no run, a run still going or failed, or any `gh` error, it runs the full suite
+and says why. `--full` always runs the full suite.
 Agents never push tags or run `install.sh`.
 
 ## CLI
