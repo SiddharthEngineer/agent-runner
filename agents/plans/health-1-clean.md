@@ -48,7 +48,7 @@ Docker rules: routine `builder prune -f --keep-storage 3GB` and `container prune
 and the next rule runs. CLI: `health.py clean [--dry-run] [--pressure]` prints one line per rule: name, estimate or freed size.
 **Validate:** tests stub `subprocess.run` and assert the exact Docker argv lists (no `volume`, no `system`), that pressure stops
 after the first rule that gets disk under threshold, and that a second routine run within 23 h is skipped.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: file rules with root guards
 **Runs:** unattended

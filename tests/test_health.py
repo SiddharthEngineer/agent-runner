@@ -86,3 +86,84 @@ def test_parse_size():
     assert health.parse_size("4.6GB") == 4.6e9
     assert health.parse_size("86.02kB") == 86020
     assert health.parse_size("0B") == 0
+
+
+class FakeDocker:
+    """Records every subprocess argv; `docker system df` reports a 5 GB build cache."""
+
+    def __init__(self, fail=()):
+        self.calls, self.fail = [], set(fail)
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(argv)
+        from subprocess import CompletedProcess
+
+        if argv[:3] == ["docker", "system", "df"]:
+            out = '{"Type":"Build Cache","Size":"5GB","Reclaimable":"5GB"}\n{"Type":"Images","Size":"9GB","Reclaimable":"1GB"}\n'
+            return CompletedProcess(argv, 0, out, "")
+        if argv[1] in self.fail:
+            return CompletedProcess(argv, 1, "", "daemon down")
+        return CompletedProcess(argv, 0, "Total reclaimed space: 1.5GB\n", "")
+
+
+@pytest.fixture
+def fake_docker(monkeypatch):
+    fake = FakeDocker()
+    monkeypatch.setattr(health.subprocess, "run", fake)
+    monkeypatch.setattr(health, "all_rules", health.docker_rules)  # Docker rules only
+    return fake
+
+
+def metrics(disk_pct):
+    return health.Metrics(disk_pct, 10, 2000, 100, 0.2, 5.0)
+
+
+def docker_calls(fake):
+    return [c for c in fake.calls if c[:3] != ["docker", "system", "df"]]
+
+
+def test_docker_argv_exact(home, fake_docker):
+    health.clean(force_pressure=True, measure_fn=lambda: metrics(85))
+    assert docker_calls(fake_docker) == [
+        ["docker", "builder", "prune", "-f", "--keep-storage", "3GB"],
+        ["docker", "container", "prune", "-f", "--filter", "until=24h"],
+        ["docker", "builder", "prune", "-af"],
+        ["docker", "image", "prune", "-af", "--filter", "until=168h"],
+    ]
+    flat = [arg for call in fake_docker.calls for arg in call]
+    assert "volume" not in flat and "system" not in [c[1] for c in docker_calls(fake_docker)]
+
+
+def test_pressure_stops_once_under_threshold(home, fake_docker):
+    readings = iter([85, 79])  # over before the first pressure rule, under after it
+    results = health.clean(measure_fn=lambda: metrics(next(readings)))
+    assert [r["rule"] for r in results if r["tier"] == "pressure"] == ["docker build cache (all)"]
+    assert results[-1]["freed_bytes"] == 1_500_000_000
+
+
+def test_no_pressure_when_disk_is_fine(home, fake_docker):
+    results = health.clean(measure_fn=lambda: metrics(70))
+    assert {r["tier"] for r in results} == {"routine"}
+
+
+def test_routine_runs_once_per_23h(home, fake_docker):
+    assert len(health.clean(measure_fn=lambda: metrics(70))) == 2
+    assert health.clean(measure_fn=lambda: metrics(70)) == []
+    log = (home / "state/health.log").read_text().splitlines()
+    assert len(log) == 2 and '"rule": "docker build cache over 3GB"' in log[0]
+
+
+def test_dry_run_runs_nothing_and_estimates(home, fake_docker):
+    results = health.clean(dry_run=True, force_pressure=True, measure_fn=lambda: metrics(70))
+    assert docker_calls(fake_docker) == []
+    assert [r["freed_bytes"] for r in results][:1] == [2_000_000_000]  # 5 GB cache minus the 3 GB kept
+    assert not (home / "state/health.json").exists()
+
+
+def test_docker_error_is_logged_and_next_rule_runs(home, monkeypatch):
+    fake = FakeDocker(fail={"builder"})
+    monkeypatch.setattr(health.subprocess, "run", fake)
+    monkeypatch.setattr(health, "all_rules", health.docker_rules)
+    results = health.clean(measure_fn=lambda: metrics(70))
+    assert "daemon down" in results[0]["error"]
+    assert results[1]["freed_bytes"] == 1_500_000_000

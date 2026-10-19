@@ -19,7 +19,9 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Callable, Literal
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
@@ -129,6 +131,136 @@ def problems(m: Metrics, th: dict) -> list[Problem]:
     return found
 
 
+@dataclass
+class Rule:
+    name: str
+    tier: Literal["routine", "pressure"]
+    estimate: Callable[[], int]  # bytes it would free
+    apply: Callable[[], int]  # bytes freed
+
+
+ROUTINE_EVERY = timedelta(hours=23)
+
+
+def now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def state_file() -> Path:
+    return config.state_dir() / "health.json"
+
+
+def load_state() -> dict:
+    try:
+        return json.loads(state_file().read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def save_state(state: dict) -> None:
+    state_file().parent.mkdir(parents=True, exist_ok=True)
+    tmp = state_file().with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, indent=2))
+    tmp.replace(state_file())
+
+
+def log(entry: dict) -> None:
+    path = config.state_dir() / "health.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a") as f:
+        f.write(json.dumps({"time": now().strftime("%Y-%m-%dT%H:%M:%SZ"), **entry}) + "\n")
+
+
+# --- Docker rules. Never `volume`, never `system prune`: volumes hold the databases.
+
+def docker(*args: str) -> int:
+    """Run `docker <args>` and return the bytes it reports reclaimed. Raises on failure."""
+    out = subprocess.run(["docker", *args], capture_output=True, text=True, timeout=600)
+    if out.returncode != 0:
+        raise HealthError(f"docker {' '.join(args)}: {(out.stderr or out.stdout).strip()[-200:]}")
+    m = re.search(r"Total(?: reclaimed space)?:\s*(\S+)", out.stdout)
+    return int(parse_size(m.group(1))) if m else 0
+
+
+def docker_reclaimable(kind: str) -> int:
+    rows = docker_df() or []
+    return int(sum(parse_size(r.get("Reclaimable", "0B")) for r in rows if r.get("Type") == kind))
+
+
+def docker_rules() -> list[Rule]:
+    def cache_over(keep: float) -> int:
+        return int(max(0.0, (build_cache_bytes() or 0) - keep))
+
+    return [
+        Rule("docker build cache over 3GB", "routine", lambda: cache_over(3e9),
+             lambda: docker("builder", "prune", "-f", "--keep-storage", "3GB")),
+        Rule("docker containers exited over 24h", "routine", lambda: docker_reclaimable("Containers"),
+             lambda: docker("container", "prune", "-f", "--filter", "until=24h")),
+        Rule("docker build cache (all)", "pressure", lambda: cache_over(0),
+             lambda: docker("builder", "prune", "-af")),
+        Rule("docker images unused 7d", "pressure", lambda: docker_reclaimable("Images"),
+             lambda: docker("image", "prune", "-af", "--filter", "until=168h")),
+    ]
+
+
+def all_rules() -> list[Rule]:
+    return docker_rules()
+
+
+def run_rule(rule: Rule, dry_run: bool) -> dict:
+    result = {"rule": rule.name, "tier": rule.tier, "dry_run": dry_run}
+    try:
+        result["freed_bytes"] = rule.estimate() if dry_run else rule.apply()
+    except (HealthError, OSError, subprocess.SubprocessError) as exc:
+        result["freed_bytes"] = 0
+        result["error"] = str(exc)
+    log(result)
+    return result
+
+
+def clean(dry_run: bool = False, force_pressure: bool = False, rules: list[Rule] | None = None,
+          measure_fn: Callable[[], Metrics] = measure) -> list[dict]:
+    """Routine rules at most once per ROUTINE_EVERY; pressure rules in order while disk is over the cleanup threshold."""
+    rules = all_rules() if rules is None else rules
+    th = thresholds()
+    state = load_state()
+    results = []
+
+    last = state.get("routine_at")
+    due = last is None or now() - datetime.fromisoformat(last) > ROUTINE_EVERY
+    if due or dry_run:
+        results += [run_rule(r, dry_run) for r in rules if r.tier == "routine"]
+        if not dry_run:
+            state["routine_at"] = now().isoformat()
+            save_state(state)
+
+    for rule in (r for r in rules if r.tier == "pressure"):
+        if not force_pressure and measure_fn().disk_pct < th["disk_clean_pct"]:
+            break
+        results.append(run_rule(rule, dry_run))
+    return results
+
+
+def human(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if abs(n) < 1000 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+    return str(n)
+
+
+def cmd_clean(argv: list[str]) -> int:
+    dry_run, pressure = "--dry-run" in argv, "--pressure" in argv
+    results = clean(dry_run=dry_run, force_pressure=pressure)
+    if not results:
+        print("nothing due (routine ran in the last 23 h; disk under the cleanup threshold)")
+    for r in results:
+        verb = "would free" if dry_run else "freed"
+        line = f"{r['tier']:8}  {r['rule']}: {verb} {human(r['freed_bytes'])}"
+        print(line + (f"  (error: {r['error']})" if "error" in r else ""))
+    return 1 if any("error" in r for r in results) else 0
+
+
 def cmd_check() -> int:
     m = measure()
     found = problems(m, thresholds())
@@ -140,6 +272,8 @@ def main(argv: list[str]) -> int:
     try:
         if argv[:1] == ["check"]:
             return cmd_check()
+        if argv[:1] == ["clean"] and set(argv[1:]) <= {"--dry-run", "--pressure"}:
+            return cmd_clean(argv[1:])
     except HealthError as exc:
         print(exc, file=sys.stderr)
         return 2
