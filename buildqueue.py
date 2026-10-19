@@ -20,10 +20,13 @@ Usage:
   buildqueue.py set <slug> key=value [...]    used by inbox.py / preprod.sh / run.sh
   buildqueue.py unset <slug> key [...]        used by run.sh (clears `resume`)
   buildqueue.py answer <slug> TEXT   attach the user's answer and re-queue with fresh attempts, resuming the session
+  buildqueue.py requeue <slug> --note TEXT   re-queue with a note, resuming the session, keeping the attempts used
+                                     (the validator's `changes`); out of attempts → blocked
+  buildqueue.py oldest <status>      print the key of the least recently updated item with that status, or exit 1
   buildqueue.py pause <hours>        stop starting runs (e.g. after a usage-limit exit)
   buildqueue.py get <slug> <key>
 
-Item statuses: queued → running → done | pr-open | awaiting-preprod | on-preprod | waiting-answer | blocked | cancelled.
+Item statuses: queued → running → done | awaiting-review | awaiting-preprod | on-preprod | waiting-answer | blocked | cancelled.
 run.sh stores the agent's `session_id` after each run; `resume=1` (set by `answer`) or `resume=limit` (set by run.sh after a
 usage-limit stop) makes the next run resume that session.
 Standard library only.
@@ -54,6 +57,7 @@ MAX_RUNS_PER_DAY = int(os.environ.get("AGENT_MAX_RUNS_PER_DAY", "0") or 0)
 RESULT_TO_STATUS = {
     "merged": "done",
     "review": "awaiting-preprod",  # PR opened for a human; preprod.sh deploys it when the lock is free
+    "needs-review": "awaiting-review",  # gate tier `review`: the validator reviews it first (run.sh review stage)
     "question": "waiting-answer",
     "blocked": "blocked",
 }
@@ -277,6 +281,27 @@ def cmd_answer(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_requeue(args: argparse.Namespace) -> int:
+    data = load()
+    it = item(data, args.slug)
+    it["notes"].append(f"Validator ({iso(now())}): {args.note}")
+    # Like `answer`, but the attempts already used still count: a third failed try ends in `blocked`.
+    status = "queued" if it["attempts"] < MAX_ATTEMPTS else "blocked"
+    it.update(status=status, resume=1, not_before=iso(now()), updated=iso(now()))
+    save(data)
+    print(status)
+    return 0
+
+
+def cmd_oldest(args: argparse.Namespace) -> int:
+    items = load()["items"]
+    found = sorted((it["updated"], key) for key, it in items.items() if it["status"] == args.status)
+    if not found:
+        return 1
+    print(found[0][1])
+    return 0
+
+
 def cmd_cancel(args: argparse.Namespace) -> int:
     data = load()
     item(data, args.slug).update(status="cancelled", updated=iso(now()))
@@ -330,6 +355,13 @@ def main() -> int:
     p.add_argument("slug")
     p.add_argument("text")
     p.set_defaults(fn=cmd_answer)
+    p = sub.add_parser("requeue")
+    p.add_argument("slug")
+    p.add_argument("--note", required=True)
+    p.set_defaults(fn=cmd_requeue)
+    p = sub.add_parser("oldest")
+    p.add_argument("status")
+    p.set_defaults(fn=cmd_oldest)
     p = sub.add_parser("pause")
     p.add_argument("hours", type=float)
     p.set_defaults(fn=cmd_pause)

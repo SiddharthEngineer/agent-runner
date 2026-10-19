@@ -63,25 +63,6 @@ if ! python3 "$HERE/health.py" gate >/dev/null 2>&1; then
     exit 0
 fi
 
-# 3. Next item
-key=$("${Q[@]}" next) || { [ -n "$DRY" ] && say "dry run: nothing due"; exit 0; }
-repo=${key%%/*}
-slug=${key#*/}
-
-if [ -n "$DRY" ]; then
-    say "dry run: $key is due; would check session usage"
-else
-    gate=$(python3 "$HERE/usage.py" check 2>&1)
-    case $? in
-        0) ;;
-        10) "${Q[@]}" pause "$(echo "$gate" | tail -n1)" >> "$STATE/runs.log"
-            say "$key: not started, $(echo "$gate" | head -n1); queue paused until the window resets"
-            exit 0 ;;
-        *) say "$key: not started, $(echo "$gate" | head -n1)"
-           exit 0 ;;
-    esac
-fi
-
 notify() {  # notify <title> <body>: an agent-notice issue labelled with the repo
     [ -n "$DRY" ] && { say "dry run: would notify: $1"; return 0; }
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" notify --slug "$key" --project "$repo" --title "$1" --body "$2" >/dev/null
@@ -93,37 +74,134 @@ block() {  # block <log line> <notice title> <notice body>
     "${Q[@]}" set "$key" status=blocked
     exit 0
 }
+usage_gate() {  # exits unless a Claude run may start now
+    if [ -n "$DRY" ]; then
+        say "dry run: $key is due; would check session usage"
+        return 0
+    fi
+    local gate
+    gate=$(python3 "$HERE/usage.py" check 2>&1)
+    case $? in
+        0) ;;
+        10) "${Q[@]}" pause "$(echo "$gate" | tail -n1)" >> "$STATE/runs.log"
+            say "$key: not started, $(echo "$gate" | head -n1); queue paused until the window resets"
+            exit 0 ;;
+        *) say "$key: not started, $(echo "$gate" | head -n1)"
+           exit 0 ;;
+    esac
+}
 
-# 4. The repo, its config and the plan, all from origin/<base>
-unset AGENT_REPO
-repo_env=$("${CFG[@]}" repo-env "$repo") && eval "$repo_env"
-[ -z "${AGENT_REPO:-}" ] && [ "$repo" = strelitzia ] && AGENT_REPO=$LEGACY_AGENT_REPO
-if [ -z "${AGENT_REPO:-}" ] || [ ! -d "$AGENT_REPO" ]; then
-    block "no AGENT_REPO for $repo" "repo not registered" \
-        "Add AGENT_REPO=<dev clone> to ~/.config/agent-runner/repos/$repo.env, then re-queue $key."
-fi
-git -C "$AGENT_REPO" fetch -q origin
-base_ref=$(git -C "$AGENT_REPO" rev-parse --abbrev-ref origin/HEAD 2>/dev/null) || base_ref=origin/${AGENT_BASE:-main}
-toml=$STATE/configs/$repo.toml
-if ! git -C "$AGENT_REPO" show "$base_ref:agents/runner.toml" > "$toml" 2>/dev/null; then
-    block "no agents/runner.toml on $base_ref" "no runner.toml" "Commit agents/runner.toml to $base_ref, then re-queue $key."
-fi
-if ! problems=$("${CFG[@]}" check "$toml"); then
-    block "agents/runner.toml refused" "runner.toml refused" "config.py check on $base_ref:agents/runner.toml says:
+# load_item: the item's repo, its config and the plan, all from origin/<base>. Blocks the item if any is missing or refused.
+load_item() {
+    repo=${key%%/*}
+    slug=${key#*/}
+    unset AGENT_REPO
+    repo_env=$("${CFG[@]}" repo-env "$repo") && eval "$repo_env"
+    [ -z "${AGENT_REPO:-}" ] && [ "$repo" = strelitzia ] && AGENT_REPO=$LEGACY_AGENT_REPO
+    if [ -z "${AGENT_REPO:-}" ] || [ ! -d "$AGENT_REPO" ]; then
+        block "no AGENT_REPO for $repo" "repo not registered" \
+            "Add AGENT_REPO=<dev clone> to ~/.config/agent-runner/repos/$repo.env, then re-queue $key."
+    fi
+    git -C "$AGENT_REPO" fetch -q origin
+    base_ref=$(git -C "$AGENT_REPO" rev-parse --abbrev-ref origin/HEAD 2>/dev/null) || base_ref=origin/${AGENT_BASE:-main}
+    toml=$STATE/configs/$repo.toml
+    if ! git -C "$AGENT_REPO" show "$base_ref:agents/runner.toml" > "$toml" 2>/dev/null; then
+        block "no agents/runner.toml on $base_ref" "no runner.toml" "Commit agents/runner.toml to $base_ref, then re-queue $key."
+    fi
+    if ! problems=$("${CFG[@]}" check "$toml"); then
+        block "agents/runner.toml refused" "runner.toml refused" "config.py check on $base_ref:agents/runner.toml says:
 $problems"
-fi
+    fi
+    GH_REPO=$(cfg repo.github)
+    BASE=$(cfg repo.base)
+    MERGE=$(cfg repo.merge)
+    PLANS=$(cfg repo.plans)
+    VALIDATE_FULL=$(cfg validate.full)
+    export GH_REPO
+    plan=$PLANS/$slug.md
+    if ! git -C "$AGENT_REPO" cat-file -e "origin/$BASE:$plan" 2>/dev/null; then
+        block "$plan is not on origin/$BASE" "plan not on $BASE" \
+            "Commit and push $plan, then re-queue it with /schedule-build $slug."
+    fi
+}
 cfg() { "${CFG[@]}" get "$toml" "$1" 2>/dev/null; }
-GH_REPO=$(cfg repo.github)
-BASE=$(cfg repo.base)
-MERGE=$(cfg repo.merge)
-PLANS=$(cfg repo.plans)
-VALIDATE_FULL=$(cfg validate.full)
-export GH_REPO
-plan=$PLANS/$slug.md
-if ! git -C "$AGENT_REPO" cat-file -e "origin/$BASE:$plan" 2>/dev/null; then
-    block "$plan is not on origin/$BASE" "plan not on $BASE" \
-        "Commit and push $plan, then re-queue it with /schedule-build $slug."
+
+merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method
+    timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast >/dev/null 2>&1 \
+        && gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null
+}
+
+# 3. Review stage (design D3): a `review` PR the implementer called ready gets a fresh-context validator run first.
+review_stage() {
+    local pr rwt rresult rlog vsettings vprompt verdict summary tries
+    pr=$("${Q[@]}" get "$key" pr)
+    dry "run validator (review) for $key PR #$pr"
+    usage_gate
+    rwt=$STATE/worktrees/$repo/review-$pr
+    rresult=$STATE/results/$repo/$slug.review.json
+    rlog=$STATE/logs/$(date -u +%Y%m%dT%H%MZ)-$repo-$slug.review.log
+    mkdir -p "$(dirname "$rwt")" "$(dirname "$rresult")"
+    rm -f "$rresult"
+    git -C "$AGENT_REPO" fetch -q origin "pull/$pr/head" && git -C "$AGENT_REPO" worktree add -q --detach "$rwt" FETCH_HEAD \
+        || { say "$key: can't check out PR #$pr for review"; return 0; }
+    vsettings=$rwt/agents/settings/validate.json
+    [ -f "$vsettings" ] || vsettings=$HERE/settings/validate.json
+    vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
+result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.md" "$GH_REPO" "$pr" "$plan" "$rresult" "$VALIDATE_FULL")
+    say "$key: validator (review) start for PR #$pr (log $rlog)"
+    (
+        cd "$rwt" || exit 1
+        AGENT_SLUG=$key AGENT_RESULT_FILE=$rresult timeout --kill-after=2m 1h claude -p "$vprompt" --model claude-opus-5-5 --settings "$vsettings" \
+            --permission-mode dontAsk --output-format json
+    ) >> "$rlog" 2>&1
+    say "$key: validator exit $?"
+    git -C "$AGENT_REPO" worktree remove --force "$rwt"
+    verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$rresult" 2>/dev/null)
+    summary=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",""))' "$rresult" 2>/dev/null)
+    case $verdict in
+        changes)
+            say "$key: validator asks for changes on PR #$pr"
+            "${Q[@]}" requeue "$key" --note "Validator review of PR #$pr asks for changes: $summary
+Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("findings",[])))' "$rresult")" >/dev/null
+            [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: validator still asks for changes" \
+                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary" ;;
+        approve)
+            if [ -n "$(cfg preprod.deploy)" ]; then
+                "${Q[@]}" set "$key" status=awaiting-preprod
+                gh pr edit "$pr" --repo "$GH_REPO" --add-label awaiting-preprod >/dev/null 2>&1
+                say "$key: validator approved PR #$pr, awaiting preprod"
+            elif merge_pr "$pr"; then
+                "${Q[@]}" set "$key" status=done
+                say "$key: validator approved PR #$pr, merged"
+                notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
+            else
+                "${Q[@]}" set "$key" status=blocked
+                notify "PR #$pr approved but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr"
+            fi ;;
+        blocked)
+            "${Q[@]}" set "$key" status=blocked
+            notify "validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" ;;
+        *)  # no result: a failed validator attempt
+            tries=$(( $("${Q[@]}" get "$key" review_attempts 2>/dev/null || echo 0) + 1 ))
+            "${Q[@]}" set "$key" "review_attempts=$tries"
+            say "$key: validator wrote no verdict (attempt $tries)"
+            if [ "$tries" -ge "${AGENT_MAX_ATTEMPTS:-2}" ]; then
+                "${Q[@]}" set "$key" status=blocked
+                notify "validator failed $tries times on PR #$pr" "Log: $rlog (on the VPS)."
+            fi ;;
+    esac
+}
+
+if key=$("${Q[@]}" oldest awaiting-review); then
+    load_item
+    review_stage
+    exit 0
 fi
+
+# 4. Next item for the implementer
+key=$("${Q[@]}" next) || { [ -n "$DRY" ] && say "dry run: nothing due"; exit 0; }
+load_item
+usage_gate
 
 # 5. Implementer
 wt=$STATE/worktrees/$repo/$slug
@@ -239,8 +317,13 @@ if [ "$status" = ready ]; then
     pr=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pr"])' "$result")
     verdict=$(cd "$wt" && python3 "$HERE/gate.py" "$plan" --config "$toml" --base "origin/$BASE")
     tier=$(echo "$verdict" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
-    if [ "$tier" = low ] && timeout 30m gh pr checks "$pr" --repo "$GH_REPO" --watch --fail-fast >/dev/null 2>&1 \
-        && gh pr merge "$pr" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null; then
+    if [ "$tier" = review ]; then
+        final=needs-review  # the validator reviews it on a later tick (review stage above)
+        gh pr comment "$pr" --repo "$GH_REPO" --body "Risk gate: \`review\`, so a validator reviews it next.
+\`\`\`json
+$verdict
+\`\`\`" >/dev/null
+    elif merge_pr "$pr"; then
         final=merged
         notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low): https://github.com/$GH_REPO/pull/$pr"
         # Only if this PR itself held preprod: put preprod back on the base.
@@ -265,7 +348,7 @@ fi
 new=$("${Q[@]}" finish "$key" "$result")
 say "$key: -> $new"
 case "$new" in
-    done|awaiting-preprod)
+    done|awaiting-preprod|awaiting-review)
         git -C "$AGENT_REPO" worktree remove --force "$wt" ;;
     blocked)
         notify "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" ;;

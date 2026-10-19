@@ -104,7 +104,25 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
 5. **Implementer:** `/implement <plans>/<slug>.md --unattended` in `worktrees/<repo>/<slug>` on `agent/<slug>`, with the worktree's
    `agents/settings/implement.json` and `agents/mcp.json` (or `scripts/agent/settings.json`/`mcp.json` for a repo not yet on that layout).
 6. **Merge or review:** the repo's `validate.full` again, `gate.py --config`, then `low` + green CI → `gh pr merge --<merge>`
-   (`rebase`, `merge` or `squash`, from the config); anything else gets `awaiting-preprod` and waits on preprod for you.
+   (`rebase`, `merge` or `squash`, from the config). A `review` tier goes to `awaiting-review` for the validator; a `low` PR
+   whose CI isn't green gets `awaiting-preprod` and waits for you.
+
+**Item lifecycle:** `queued → running → done` for `low` plans; `running → awaiting-review → (validator) → awaiting-preprod →
+on-preprod → done` for `review` plans (a repo with no `[preprod]` merges straight after the validator approves). Also
+`waiting-answer` (a question in the inbox), `blocked` and `cancelled`.
+
+**Validator, review stage.** Each tick, before any new implementer run, the oldest `awaiting-review` item gets one
+fresh-context Opus run (1 h at most) in a detached checkout of the PR head (`worktrees/<repo>/review-<pr>`, removed after). It
+never sees the implementer's session: its prompt ([prompts/review-pr.md](prompts/review-pr.md)) is the plan, the PR diff and the
+repo's full validation. It runs `/code-review`, posts one `gh pr review --comment` (GitHub won't let the runner's account
+approve its own PR) and writes `results/<repo>/<slug>.review.json` (`approve | changes | blocked`, a summary, findings).
+- `approve` → `awaiting-preprod`, or merged after green CI when the repo has no preprod.
+- `changes` → re-queued for the implementer with the review as a note, resuming its session. It costs an attempt, so out of
+  attempts it is `blocked` and you get a notice.
+- `blocked`, or no verdict twice → `blocked`, with a notice.
+Its permissions ([settings/validate.json](settings/validate.json), or the repo's `agents/settings/validate.json`) allow reading,
+the validate commands, `gh pr diff/view/checks` and `gh pr review --comment`, and writing only its result file. They deny
+edits, commits, pushes, merges, `make`, `docker compose` and `sudo`. Its log is `logs/<time>-<repo>-<slug>.review.log`.
 
 **Dry run:** `AGENT_DRY_RUN=1 agent-runner run` logs each decision to `runs.log` ("dry run: would run claude for
 engineerfamily/x in …", "dry run: nothing due") and exits before the inbox poll, preprod, `claude`, merges and queue changes.
