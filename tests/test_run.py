@@ -59,6 +59,8 @@ def runner(tmp_path):
     write_stub(bin_dir / "claude", "claude",
                'if [[ "$*" == *"preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
+               '  echo "${PREPROD_NETRC:-}" >> "$STUB_LOG.netrc"\n'
+               '  cat "$(echo "$*" | grep -o -- "--settings [^ ]*" | cut -d" " -f2)" >> "$STUB_LOG.settings"\n'
                '  [ -n "${STUB_PREPROD:-}" ] && printf "%s" "$STUB_PREPROD" > "$AGENT_RESULT_FILE"\n'
                'elif [[ "$*" == *"You are the validator"* ]]; then\n'
                '  [ -n "${STUB_REVIEW:-}" ] && printf "%s" "$STUB_REVIEW" > "$AGENT_RESULT_FILE"\n'
@@ -314,6 +316,21 @@ def test_preprod_stage_runs_once_and_cleans_up(runner, tmp_path):
     assert runner.queue("get", key, "preprod_verdict").stdout.strip() == "approve"
     runner()  # already has a verdict: no second validator run
     assert len(claude_calls(runner)) == 1
+
+
+def test_preprod_stage_gets_a_readable_netrc_and_can_comment(runner, tmp_path):
+    key = on_preprod(runner)
+    netrc = tmp_path / "home/.config/agent-runner/preprod.netrc"  # under the dir the validator may not read
+    netrc.write_text("machine preprod.example login u password p\n")
+    with open(tmp_path / "home/.config/agent-runner/repos/engineerfamily.env", "a") as f:
+        f.write(f"PREPROD_NETRC={netrc}\n")
+    runner(STUB_PREPROD=preprod_verdict("approve"))
+    [seen] = (tmp_path / "stub.log.netrc").read_text().split()
+    assert seen.endswith("/preprod.netrc") and seen != str(netrc), seen  # a private copy, not the config file
+    assert not Path(seen).exists()  # removed with the temp dir
+    assert "preprod.netrc" in (tmp_path / "stub.log.mcpdir").read_text().split()
+    allow = json.loads((tmp_path / "stub.log.settings").read_text())["permissions"]["allow"]
+    assert {"Bash(curl:*)", "Bash(gh pr comment:*)", "mcp__playwright"} <= set(allow)
 
 
 def test_preprod_approve_merges_releases_notifies(runner):
