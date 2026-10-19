@@ -1,5 +1,5 @@
 # Plan: engineerfamily registers with the runner (runner.toml, agent settings, PIV commands)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (engineerfamily PR #42, merged)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19; nothing runs it until the cutover registers the repo)
 **Repo:** SiddharthEngineer/engineerfamily (`~/src/engineerfamily`, base `main`, merge commits)
 **Depends on:** ef-agents-layout, runner-7-preprod-check (the config schema and validator settings are final by then)
@@ -28,7 +28,7 @@ and the PIV commands. After the cutover registers it (`~/.config/agent-runner/re
 `/strelitzia/` (200) and `/strelitzia/dashboard/api/health` (`json_ok`). `high_risk` adds `agents/runner.toml`, `agents/settings/*`,
 `.claude/settings.json` to D5's list.
 **Validate:** `python3 ~/src/agent-runner/config.py check agents/runner.toml` → `ok` (run against agent-runner `origin/main`'s `config.py`).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: agent settings and MCP
 **Runs:** unattended
@@ -38,7 +38,7 @@ and the PIV commands. After the cutover registers it (`~/.config/agent-runner/re
 `Bash(git tag:*)`, `Read(**/.env)`, `Read(services/nginx/.htpasswd*)`, `Edit(agents/runner.toml)`, `Edit(agents/settings/**)`,
 `Edit(.github/**)`. `mcp.json` is the same Playwright server as Strelitzia's.
 **Validate:** a one-liner that loads each JSON and asserts `Bash(make:*)` is in `deny` and nothing in `allow` starts with `Bash(make`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: PIV commands
 **Runs:** unattended
@@ -47,7 +47,7 @@ and the PIV commands. After the cutover registers it (`~/.config/agent-runner/re
 the merge to merge commits, and validate to `scripts/validate.sh`. `/ship`'s review branch uses `agent-runner preprod deploy engineerfamily <n>`.
 **Validate:** `agent-runner check-commands agent-runner engineerfamily` (if the CLI is installed; else `python3 ~/src/agent-runner/commands_diff.py …`)
 → every command `same`, or differences only in lines that mention preprod.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
