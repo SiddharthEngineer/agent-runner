@@ -46,7 +46,7 @@ Implementer settings: the Strelitzia ones without the `.venv`/npm/dashboard line
 replaces the repo-specific tokens (repo name, base branch, validate command) with placeholders, and prints a unified diff per command
 name that differs, or `same` per command. CLI subcommand `check-commands`.
 **Validate:** test with two temp repos whose `plan.md` differ only in the repo name → `same`; and one with an extra line → a diff showing that line.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.

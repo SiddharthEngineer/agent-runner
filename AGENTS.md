@@ -20,6 +20,8 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
 | `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, review stage), `preprod-check.md` (validator, preprod stage) |
 | `mcp_config.py` | Per-run Playwright MCP config for the preprod stage (basic auth, storage state; 0600, deleted after) |
+| `commands_diff.py` | `agent-runner check-commands <repo>…`: how the repos' PIV commands differ |
+| `agents/runner.toml`, `agents/settings/`, `.claude/commands/` | This repo as a runner-built repo: its config, headless permissions per role, PIV commands |
 | `tests/` | Hermetic pytest (temp state dirs, temp git repos; never the real `~/.local/state`) |
 | `agents/ROADMAP.md`, `agents/plans/` | Tracker and plans for this repo, and the cross-repo design `shared-agent-runner.md` |
 

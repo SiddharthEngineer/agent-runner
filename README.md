@@ -32,6 +32,7 @@ Agents never push tags or run `install.sh`.
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
 | `preprod` | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
 | `run` | `run.sh` | The cron entry (manager) |
+| `check-commands` | `commands_diff.py` | How the repos' `.claude/commands` differ once repo names, base branches and validate commands are swapped for placeholders |
 | `version` | | The installed tag |
 
 ## Config and state

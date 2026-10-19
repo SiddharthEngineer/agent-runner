@@ -110,3 +110,63 @@ def test_install_keeps_three_plus_active(install):
     install("v0.0.1")  # rollback to an old tag: it is active, so it stays beside the newest 3
     assert sorted(p.name for p in (install.share / "releases").iterdir()) == ["v0.0.1", "v0.0.2", "v0.0.3", "v0.0.5"]
     assert install.current() == str(install.share / "releases/v0.0.1")
+
+
+RUNNER_TOML = """[repo]
+name = "{name}"
+github = "o/{name}"
+base = "{base}"
+merge = "merge"
+[validate]
+fast = "{validate}"
+full = "{validate} --full"
+[gate]
+high_risk = []
+doc_or_test = []
+"""
+
+PLAN_MD = """Plan for {repo}: run `{validate} --full`, then `gh pr create --repo {github} --base {base}`.
+Queue it with `agent-runner queue add <slug> --repo {name}`.
+"""
+
+
+@pytest.fixture
+def two_repos(tmp_path):
+    home = tmp_path / "home"
+    (home / ".config/agent-runner/repos").mkdir(parents=True)
+
+    def make(name, base, validate, extra=""):
+        work, bare, clone = tmp_path / f"{name}-w", tmp_path / f"{name}.git", tmp_path / f"{name}-c"
+        (work / "agents").mkdir(parents=True)
+        (work / ".claude/commands").mkdir(parents=True)
+        (work / "agents/runner.toml").write_text(RUNNER_TOML.format(name=name, base=base, validate=validate))
+        (work / ".claude/commands/plan.md").write_text(
+            PLAN_MD.format(repo=name.capitalize(), name=name, github=f"o/{name}", base=base, validate=validate) + extra)
+        git(work, "init", "-q", "-b", base)
+        git(work, "add", "-A")
+        git(work, "commit", "-qm", "x")
+        run("git", "clone", "-q", "--bare", work, bare)
+        run("git", "clone", "-q", bare, clone)
+        (home / f".config/agent-runner/repos/{name}.env").write_text(f"AGENT_REPO={clone}\n")
+
+    def check(*names):
+        return run(ROOT / "agent-runner", "check-commands", *names, env={**os.environ, "HOME": str(home)})
+
+    check.make = make
+    return check
+
+
+def test_check_commands_same_after_placeholders(two_repos):
+    two_repos.make("strelitzia", "trunk", "scripts/validate.sh")
+    two_repos.make("engineerfamily", "main", "scripts/check.sh")
+    out = two_repos("strelitzia", "engineerfamily")
+    assert (out.returncode, out.stdout) == (0, "same plan.md\n"), out.stderr
+
+
+def test_check_commands_shows_extra_line(two_repos):
+    two_repos.make("strelitzia", "trunk", "scripts/validate.sh")
+    two_repos.make("agent-runner", "main", "scripts/validate.sh", extra="Only here.\n")
+    out = two_repos("strelitzia", "agent-runner")
+    assert out.returncode == 1
+    assert "+Only here." in out.stdout and "--- strelitzia/plan.md" in out.stdout
+    assert out.stdout.count("\n+") == 1 + 1  # the +++ header and the one extra line

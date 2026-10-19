@@ -17,6 +17,7 @@ usage: agent-runner <command> [args...]
   health   health.py       VPS health check and cleanup
   preprod  preprod.sh      preprod lock: deploy, status, release
   run      run.sh          the cron entry (manager)
+  check-commands commands_diff.py   how the repos' PIV commands differ: check-commands <repo> <repo>...
   version                  the installed tag
 USAGE
     exit 2
@@ -28,6 +29,7 @@ case $cmd in
     queue) exec python3 "$HERE/buildqueue.py" "$@" ;;
     gate|inbox|usage|config|health) exec python3 "$HERE/$cmd.py" "$@" ;;
     preprod|run) exec "$HERE/$cmd.sh" "$@" ;;
+    check-commands) exec python3 "$HERE/commands_diff.py" "$@" ;;
     version)
         if [ -f "$HERE/VERSION" ]; then cat "$HERE/VERSION"; else git -C "$HERE" describe --tags --always; fi ;;
     -h|--help|help) usage ;;
