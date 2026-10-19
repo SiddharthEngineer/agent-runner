@@ -180,3 +180,15 @@ def test_cli_repo_env_quotes_values(tmp_path):
     assert out.stdout == "export AGENT_REPO='/src/ef dir'\nexport PREPROD_NETRC=/x/n\n"
     bad = subprocess.run([sys.executable, str(ROOT / "config.py"), "repo-env", "../x"], env=env, capture_output=True, text=True)
     assert bad.returncode == 2
+
+
+def test_own_runner_toml_and_agent_settings():
+    import json
+
+    cfg = config.load(ROOT / "agents/runner.toml")
+    assert (cfg.repo.name, cfg.repo.merge, cfg.preprod) == ("agent-runner", "squash", None)
+    files = sorted((ROOT / "agents/settings").glob("*.json"))
+    assert [f.name for f in files] == ["implement.json", "validate.json"]
+    for f in files:
+        deny = json.loads(f.read_text())["permissions"]["deny"]
+        assert {"Bash(crontab:*)", "Bash(git tag:*)"} <= set(deny), f.name

@@ -28,7 +28,7 @@ Implementer settings: the Strelitzia ones without the `.venv`/npm/dashboard line
 `Bash(agent-runner inbox ask:*)`, `Bash(agent-runner gate:*)`; deny `Edit(agents/settings/**)`, `Edit(agents/runner.toml)`,
 `Edit(.github/**)`, `Edit(install.sh)`, `Bash(git tag:*)`, `Bash(git push --tags:*)`, `Bash(crontab:*)`, `Read(//home/dev/.config/agent-runner/**)`.
 **Validate:** `python3 config.py check agents/runner.toml` → `ok`; `pytest -q tests` (add a test that every `agents/settings/*.json` parses and denies `Bash(crontab:*)` and `Bash(git tag:*)`).
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: PIV commands
 **Runs:** unattended
