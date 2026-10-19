@@ -43,7 +43,7 @@ Rollback is `install.sh <older tag>`.
 **Validate:** tests with `HOME=tmp_path` and `AGENT_RUNNER_REMOTE` set to a temp bare repo tagged `v0.0.1`, `v0.0.2`. Expect: install
 v0.0.1 → `current` resolves to `releases/v0.0.1`; install v0.0.2 switches it; `main` and an unknown tag are refused with `current`
 unchanged; after 5 installs, 3 remain. (Tests stub `scripts/validate.sh` in the temp repo with `exit 0`; one test uses `exit 1` to cover the abort.)
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: CI workflow and README
 **Runs:** unattended
