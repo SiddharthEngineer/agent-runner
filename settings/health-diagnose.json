@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(df:*)",
+      "Bash(du:*)",
+      "Bash(free:*)",
+      "Bash(ps:*)",
+      "Bash(ls:*)",
+      "Bash(uptime)",
+      "Bash(docker system df:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker images:*)",
+      "Bash(journalctl --disk-usage)",
+      "Read"
+    ],
+    "deny": [
+      "Edit",
+      "Write",
+      "NotebookEdit",
+      "Bash(rm:*)",
+      "Bash(docker rm:*)",
+      "Bash(docker rmi:*)",
+      "Bash(docker * prune:*)",
+      "Bash(kill:*)",
+      "Bash(sudo:*)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  }
+}

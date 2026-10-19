@@ -61,7 +61,7 @@ remove and the exact command; do not change anything; never print file contents 
 **Validate:** tests stub `subprocess.run`: each skip condition returns `None` with no `claude` call; the argv has `--settings`
 pointing at the file and `--model claude-sonnet-5-5`. A JSON test asserts that nothing in `allow` matches `rm`, `prune`, `kill`
 or `sudo`. On the VPS (one short Sonnet run, allowed unattended): `python3 health.py diagnose --force` → a few lines naming the build cache and `~/.cache/uv`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 4: docs
 **Runs:** unattended
