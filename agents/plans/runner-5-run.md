@@ -37,7 +37,7 @@ Drop `AGENT_MERGE_POLICY` and its merge loop (`:55-76`). Add `AGENT_DRY_RUN=1`: 
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_run.py` → with a temp state dir, a temp origin repo holding
 `agents/runner.toml` and a plan, and stub `claude`/`gh` scripts on `PATH`: a dry run logs `would run claude for engineerfamily/x`
 in `worktrees/engineerfamily/x`; a plan missing on `origin/main` → item `blocked`; a config with `deploy-prod` → `blocked`, no claude call.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: validate, gate and merge per repo
 **Runs:** unattended
@@ -48,7 +48,7 @@ held preprod. Anything else → label `awaiting-preprod`, risk-gate comment, as 
 full path runs in tests.
 **Validate:** tests: a `low` engineerfamily item with green stub checks → `gh pr merge 9 --merge --delete-branch`; a Strelitzia
 item → `--rebase`; `gate` returning review → `awaiting-preprod` label and no merge call.
-**Status:** ❌
+**Status:** ✅ 2026-10-19 (committed with Task 1: one rewrite of run.sh)
 
 ### Task 3: health gate and upkeep order
 **Runs:** unattended
