@@ -1,5 +1,5 @@
 # Plan: say the cutover happened (smoke test, agent-runner)
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19
 **Risk:** low (docs only; auto-merges on green CI, user 2026-10-19)
 **Depends on:** the cutover (ROADMAP AM5, cron swapped 2026-10-19)
 
