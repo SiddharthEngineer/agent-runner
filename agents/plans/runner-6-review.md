@@ -34,7 +34,7 @@ read and validate permissions (Strelitzia `scripts/agent/settings.json` is the m
 `make`, `docker compose`, `sudo`.
 **Validate:** `uv run --no-project --with pytest pytest -q tests/test_review.py` → the template formats with all placeholders filled;
 `settings/validate.json` parses, its `deny` has `Edit`, `Bash(git push:*)` and `Bash(gh pr merge:*)`, and nothing in `allow` matches `push`, `merge` or `commit`.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: the review stage in `run.sh`
 **Runs:** unattended
