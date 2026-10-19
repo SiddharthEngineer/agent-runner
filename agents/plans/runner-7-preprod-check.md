@@ -59,7 +59,7 @@ mode `0o600`; a missing storage-state file → `signed_in=false` and no `storage
 **What:** README: the preprod stage, what the validator can and can't test, and how to refresh the storage state. Confirm that ROADMAP
 manual step AM3 matches what was built (file path, the export command) and fix it if not.
 **Validate:** `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes.
