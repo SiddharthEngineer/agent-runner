@@ -1,5 +1,5 @@
 # Plan: `install.sh` skips the test suite when CI already passed on the tag
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** runner-11-autopilot (merged)
 
@@ -23,7 +23,7 @@ and still run the full suite when CI can't vouch for the commit.
 **Files:** scripts/validate.sh (modify), tests/test_install.py (modify)
 **What:** `scripts/validate.sh --quick` runs only `bash -n` and `py_compile`. No flag = today's behaviour (CI and agents unchanged).
 **Validate:** `scripts/validate.sh --quick` prints two PASS lines and no pytest line; `scripts/validate.sh` still runs all three.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 2: install trusts green CI on the tag's commit
 **Runs:** unattended
@@ -35,14 +35,14 @@ failed, or any `gh` error) run the full `validate.sh` as today and print why. A 
 runs the full suite. Usage text and README mention both. Keep the 3-release pruning and atomic relink as they are.
 **Validate:** `pytest -q tests/test_install.py` with a stub `gh` on PATH: green run → quick checks only; failed run / no run / `gh`
 exits non-zero → full suite; `--full` with a green run → full suite. `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ### Task 3: tracking
 **Runs:** unattended
 **Files:** agents/ROADMAP.md (modify)
 **What:** Row A17 ✅ with the PR number.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-19
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
@@ -54,3 +54,5 @@ seconds and says CI passed; `install.sh --full <tag>` runs the whole suite.
 ## Decisions
 1. CI's run on the exact commit is the evidence; a green run on a different commit doesn't count.
 2. Anything uncertain falls back to the full suite, so a slow install is the worst case, never an untested one.
+3. Every CI run on the commit must have succeeded (a failed run beside a green one means the full suite); stricter than Task 2 first said, per Decision 2 (self-review, 2026-10-19).
+4. The CI question is about the commit checked out in releases/<tag>; a reused release whose HEAD is not the tag's commit, or with tracked local changes, gets the full suite (validator, 2026-10-20).
