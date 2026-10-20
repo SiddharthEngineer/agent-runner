@@ -163,6 +163,23 @@ def test_install_full_flag_ignores_green_ci(install):
     assert install("--full", "--list").returncode == 2
 
 
+def test_install_full_suite_when_reused_release_is_not_the_tag(install, remote):
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "success"}]')
+    assert "validate [--quick]" in install("v0.0.1").stdout
+    git(remote, "tag", "-f", "v0.0.1", "v0.0.2")  # the tag moves; releases/v0.0.1 still holds the old commit
+    out = install("v0.0.1")
+    assert out.returncode == 0 and "not the tag's commit" in out.stdout and "validate []" in out.stdout, out.stdout
+
+
+def test_install_full_suite_when_release_has_local_changes(install):
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "success"}]')
+    install("v0.0.1")
+    with open(install.share / "releases/v0.0.1/agent-runner", "a") as f:
+        f.write("# edited\n")
+    out = install("v0.0.1")
+    assert out.returncode == 0 and "has local changes" in out.stdout and "validate []" in out.stdout, out.stdout
+
+
 def test_install_quick_still_aborts_on_failure(install):
     install("v0.0.3")
     install.gh_json.write_text('[{"status": "completed", "conclusion": "success"}]')

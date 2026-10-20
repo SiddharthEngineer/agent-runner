@@ -95,10 +95,14 @@ if [ ! -d "$dir" ]; then
 fi
 echo "$tag" > "$dir/VERSION"
 
-sha=$(mg rev-parse "refs/tags/$tag^{commit}")
+sha=$(git -C "$dir" rev-parse HEAD)  # what is checked out: a reused release may predate a moved tag
 quick=
 if [ -n "$full" ]; then
     echo "--full: running the full suite"
+elif [ "$sha" != "$(mg rev-parse "refs/tags/$tag^{commit}")" ]; then
+    echo "releases/$tag is at ${sha:0:7}, not the tag's commit; running the full suite"
+elif [ -n "$(git -C "$dir" status --porcelain --untracked-files=no)" ]; then
+    echo "releases/$tag has local changes; running the full suite"
 else
     verdict=$(ci_verdict "$sha")
     if [ "$verdict" = green ]; then quick=--quick; else echo "$verdict (${sha:0:7}); running the full suite"; fi
