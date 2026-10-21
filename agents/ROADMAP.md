@@ -34,7 +34,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | S1 | Strelitzia `runner.toml`, agent settings (add-only) | Strelitzia R44 [strelitzia-runner-config](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-config.md) | Strelitzia | ✅ (Strelitzia#81) | A10 |
 | — | **Cutover** (AM3-AM5) | design Rollout 2-6 | VPS | ✅ 2026-10-19 (AM3 still open: no signed-in preprod checks until it's done) | A13, S1, A2 installed |
 | S2 | Strelitzia commands on the CLI, delete `scripts/agent/` | Strelitzia R45 [strelitzia-runner-cleanup](https://github.com/SiddharthEngineer/Strelitzia/blob/trunk/agents/plans/strelitzia-runner-cleanup.md) | Strelitzia | ⏳ queued 2026-10-21 (moved up from 2026-10-26, user) | cutover |
-| A14 | Drop the Strelitzia-era fallbacks | [runner-9-cleanup](plans/runner-9-cleanup.md) | agent-runner | ⏳ queued after S2 | S2 |
+| A14 | Drop the Strelitzia-era fallbacks | [runner-9-cleanup](plans/done/runner-9-cleanup.md) | agent-runner | ✅ 2026-10-21 | S2 |
 | A15 | Sonnet triage of blocked items (optional) | [runner-10-triage](plans/done/runner-10-triage.md) | agent-runner | ✅ PR open 2026-10-19 | A11 |
 | A16 | CI fallback without check access, preprod follows each merge, hand-merged PRs | [runner-11-autopilot](plans/done/runner-11-autopilot.md) | agent-runner | ✅ #69 | cutover |
 | A17 | `install.sh` skips the test suite when CI passed on the tag | [runner-12-fast-install](plans/done/runner-12-fast-install.md) | agent-runner | ✅ #75 | A16 |
