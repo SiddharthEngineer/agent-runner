@@ -8,13 +8,21 @@ the agent inbox. Design: [agents/plans/shared-agent-runner.md](agents/plans/shar
 ## Install and rollback (you)
 One copy is installed on the VPS, and cron and every repo call it, so runner changes go live only when you install a tag:
 ```bash
-git -C ~/src/agent-runner pull && git -C ~/src/agent-runner tag v0.2.0 origin/main && git -C ~/src/agent-runner push origin v0.2.0
-~/src/agent-runner/install.sh v0.2.0    # mirror, check out releases/v0.2.0, run its validate.sh, then switch current
-~/src/agent-runner/install.sh --full v0.2.0  # same, but always run the full test suite
-agent-runner version                    # → v0.2.0
+agent-runner release --dry-run          # what the next release would tag, and what it ships
+agent-runner release --install          # tag origin/main as the next patch version, push it, install it
+agent-runner release v0.3.0             # a given version instead (must be newer than the newest tag); no install
+agent-runner install                    # install the newest tag (says so and stops if it's already installed)
+agent-runner install v0.2.2             # install any existing tag; an older one is a rollback and says so
+agent-runner install --full v0.2.3      # same, but always run the full test suite
+agent-runner version                    # the installed tag
 ~/src/agent-runner/install.sh --list    # installed releases; * is active
-~/src/agent-runner/install.sh v0.1.0    # rollback: switch back to an installed (or any) older tag
 ```
+`release` works in `~/src/agent-runner` (`AGENT_RUNNER_SRC` to change it): it fetches, then tags `origin/main` without
+touching the working tree. It refuses a version that isn't `vX.Y.Z` or isn't newer than the newest tag, a commit that
+already has a tag, and a commit whose CI isn't green yet (wait for the push run on `main` after a merge).
+`agent-runner install` runs the installed copy's `install.sh`. If the installed CLI itself is broken, or for the very
+first install, run the clone's copy instead: `~/src/agent-runner/install.sh [<tag>]` (same arguments).
+
 `install.sh` keeps a bare mirror at `~/.local/share/agent-runner/mirror.git`, one detached worktree per release under
 `releases/<tag>`, and `current -> releases/<tag>` (switched atomically, only after the release's own `scripts/validate.sh`
 passes). `~/.local/bin/agent-runner` points at `current/agent-runner`. The newest 3 releases and the active one are kept.

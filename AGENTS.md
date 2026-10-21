@@ -7,8 +7,10 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 ## Map
 | Path | What |
 |---|---|
-| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `usage`, `config`, `health`, `preprod`, `run`, `version` |
-| `install.sh` | `install.sh <tag>`: mirror, release worktree, validate, switch `current` atomically (the user runs it) |
+| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `usage`, `config`, `health`, `preprod`, `run`, `version`, `release`, `install` (the last two are the user's) |
+| `install.sh` | `install.sh [<tag>]` (`agent-runner install`): mirror, release worktree, validate, switch `current` atomically (the user runs it) |
+| `release.sh` | `agent-runner release [vX.Y.Z]`: tag `origin/main` as the next version and push it (the user runs it) |
+| `ci.sh` | Shared by both: CI verdict on a commit, newest `vX.Y.Z` tag, version compare |
 | `run.sh` | Cron entry (manager): upkeep, pick the next queued plan, run the implementer, gate, merge or send to preprod |
 | `buildqueue.py` | Queue state, attempts, pause |
 | `gate.py` | Risk gate (plan risk + diff checks); `--plan` checks a plan's size budget |
@@ -33,6 +35,6 @@ Seeded on 2026-10-19 from Strelitzia `scripts/agent/` at c4873de. Since the cuto
 
 ## Rules
 - Standard library only (Python 3.11+, `tomllib`). bash for the cron entry points.
-- Never deploy prod, push tags, edit the user's crontab or `~/.config/agent-runner/*`: those are the user's (Manual steps in the ROADMAP).
+- Never deploy prod, push tags, run `agent-runner release`/`install`, edit the user's crontab or `~/.config/agent-runner/*`: those are the user's (Manual steps in the ROADMAP).
 - Tests never touch the real config or state dirs: set `HOME`/`AGENT_RUNNER_STATE` to a temp dir.
 - Never put secrets, personal data or job data in an inbox issue, a plan or a log line.

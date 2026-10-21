@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Install a tagged release of the runner as the one copy cron and every repo call (design D2). The user's step (AM1).
 #
-#   ./install.sh <tag>          e.g. v0.2.0; rollback is ./install.sh <older tag>
-#   ./install.sh --full <tag>   same, but always run the full test suite
-#   ./install.sh --list         installed releases; * marks the active one
+#   ./install.sh [<tag>]          e.g. v0.2.0; no tag: the newest vX.Y.Z tag. Rollback is ./install.sh <older tag>
+#   ./install.sh --full [<tag>]   same, but always run the full test suite
+#   ./install.sh --list           installed releases; * marks the active one
+#   (agent-runner install [--full] [<tag>] runs the installed copy's install.sh)
 #
 # Layout under ~/.local/share/agent-runner: mirror.git (bare mirror of $AGENT_RUNNER_REMOTE), releases/<tag> (detached
 # worktrees of it), current -> releases/<tag>. ~/.local/bin/agent-runner -> current/agent-runner. The release's own
 # scripts/validate.sh must pass before current moves: only `validate.sh --quick` if CI's run on the tag's exact commit
 # succeeded (asked with gh), the full suite otherwise. The newest 3 releases and the active one are kept.
 set -euo pipefail
+. "$(dirname "$(readlink -f "$0")")/ci.sh"  # ci_verdict, latest_tag, version_gt
 
 SHARE=$HOME/.local/share/agent-runner
 MIRROR=$SHARE/mirror.git
@@ -45,31 +47,12 @@ prune() {  # keep the newest $KEEP releases and the active one
     mg worktree prune
 }
 
-ci_verdict() {  # ci_verdict <sha>: "green" if every CI run on exactly this commit succeeded, else why it can't vouch
-    local r owner json
-    command -v gh >/dev/null || { echo "gh is not installed"; return; }
-    r=${REMOTE%/}; r=${r%.git}
-    owner=${r%/*}; owner=${owner##*[/:]}
-    json=$(timeout 60 gh run list --repo "$owner/${r##*/}" --commit "$1" --workflow CI --json conclusion,status 2>/dev/null) \
-        || { echo "gh run list failed"; return; }
-    printf '%s' "$json" | python3 -c '
-import json, sys
-runs = json.load(sys.stdin)
-if not runs:
-    print("no CI run on this commit")
-elif all(r.get("status") == "completed" and r.get("conclusion") == "success" for r in runs):
-    print("green")
-elif any(r.get("status") != "completed" for r in runs):
-    print("CI is still running on this commit")
-else:
-    print("CI did not pass on this commit")
-' 2>/dev/null || echo "could not read the gh run list output"
-}
-
 full=
 if [ "${1:-}" = --full ]; then full=1; shift; fi
-[ $# -eq 1 ] || usage
-case $1 in
+[ $# -le 1 ] || usage
+tag=
+case ${1:-} in
+    "") ;;
     --list) [ -z "$full" ] || usage; list; exit 0 ;;
     -h|--help) usage ;;
     v*) tag=$1 ;;
@@ -82,10 +65,20 @@ if [ -d "$MIRROR" ]; then
 else
     git clone -q --mirror "$REMOTE" "$MIRROR"
 fi
+was=$(active)
+if [ -z "$tag" ]; then
+    tag=$(latest_tag --git-dir="$MIRROR")
+    [ -n "$tag" ] || { echo "install.sh: no vX.Y.Z tag in $REMOTE" >&2; exit 2; }
+    if [ "$tag" = "$was" ] && [ -z "$full" ]; then
+        echo "$tag is the newest tag and already installed"
+        exit 0
+    fi
+fi
 if ! mg rev-parse -q --verify "refs/tags/$tag^{commit}" >/dev/null; then
     echo "install.sh: no tag $tag in $REMOTE" >&2
     exit 2
 fi
+if [ -n "$was" ] && version_gt "$was" "$tag"; then echo "rolling back $was -> $tag"; fi
 
 dir=$RELEASES/$tag
 created=
@@ -104,7 +97,7 @@ elif [ "$sha" != "$(mg rev-parse "refs/tags/$tag^{commit}")" ]; then
 elif [ -n "$(git -C "$dir" status --porcelain --untracked-files=no)" ]; then
     echo "releases/$tag has local changes; running the full suite"
 else
-    verdict=$(ci_verdict "$sha")
+    verdict=$(ci_verdict "$REMOTE" "$sha")
     if [ "$verdict" = green ]; then quick=--quick; else echo "$verdict (${sha:0:7}); running the full suite"; fi
 fi
 

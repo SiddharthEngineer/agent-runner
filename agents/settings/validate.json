@@ -51,7 +51,13 @@
       "Read(//home/dev/.config/agent-runner/**)",
       "Read(//home/dev/.config/strelitzia-agent/**)",
       "Read(**/.env)",
-      "Bash(crontab:*)"
+      "Bash(crontab:*)",
+      "Bash(agent-runner release:*)",
+      "Bash(agent-runner install:*)",
+      "Bash(release.sh:*)",
+      "Bash(./release.sh:*)",
+      "Bash(install.sh:*)",
+      "Bash(./install.sh:*)"
     ]
   }
 }

@@ -24,7 +24,13 @@
       "Bash(kill:*)",
       "Bash(sudo:*)",
       "WebFetch",
-      "WebSearch"
+      "WebSearch",
+      "Bash(agent-runner release:*)",
+      "Bash(agent-runner install:*)",
+      "Bash(release.sh:*)",
+      "Bash(./release.sh:*)",
+      "Bash(install.sh:*)",
+      "Bash(./install.sh:*)"
     ]
   }
 }

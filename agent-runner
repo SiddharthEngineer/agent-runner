@@ -3,6 +3,7 @@
 #
 #   agent-runner <command> [args...]    args pass straight through to the script
 #   agent-runner version                the installed tag
+#   agent-runner release / install      the user's release steps (agents are denied both)
 set -euo pipefail
 HERE=$(dirname "$(readlink -f "$0")")  # through the ~/.local/bin symlink to the real checkout
 
@@ -19,6 +20,8 @@ usage: agent-runner <command> [args...]
   run      run.sh          the cron entry (manager)
   check-commands commands_diff.py   how the repos' PIV commands differ: check-commands <repo> <repo>...
   version                  the installed tag
+  release  release.sh      tag origin/main as the next version and push it: release [--dry-run] [--install] [vX.Y.Z]
+  install  install.sh      install a tag (newest if none given; an older one rolls back): install [--full] [vX.Y.Z]
 USAGE
     exit 2
 }
@@ -28,7 +31,7 @@ cmd=$1; shift
 case $cmd in
     queue) exec python3 "$HERE/buildqueue.py" "$@" ;;
     gate|inbox|usage|config|health) exec python3 "$HERE/$cmd.py" "$@" ;;
-    preprod|run) exec "$HERE/$cmd.sh" "$@" ;;
+    preprod|run|release|install) exec "$HERE/$cmd.sh" "$@" ;;
     check-commands) exec python3 "$HERE/commands_diff.py" "$@" ;;
     version)
         if [ -f "$HERE/VERSION" ]; then cat "$HERE/VERSION"; else git -C "$HERE" describe --tags --always; fi ;;
