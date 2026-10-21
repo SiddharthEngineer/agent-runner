@@ -50,8 +50,7 @@ Agents never push tags or run `install.sh`.
 ## Config and state
 - `~/.config/agent-runner/` (yours; agents and the runner only read it): `env` for shared secrets and settings (Claude token,
   `AGENT_INBOX_REPO`, `NTFY_TOPIC`), `repos/<name>.env` for machine-local per-repo values (`AGENT_REPO=<dev clone>`,
-  `PREPROD_NETRC=…`), and `health.toml` for health threshold overrides. For one release the runner falls back to
-  `~/.config/strelitzia-agent/env`.
+  `PREPROD_NETRC=…`), and `health.toml` for health threshold overrides. The old `~/.config/strelitzia-agent/env` is not read.
 - Each repo describes itself in its own `agents/runner.toml` (base branch, merge method, validate commands, risk patterns,
   preprod commands), read from `origin/<base>`. Check one with `agent-runner config check agents/runner.toml`.
 - `~/.local/state/agent-runner/` (or `$AGENT_RUNNER_STATE`): `queue.json`, locks, `runs.log`, `logs/`, `results/`,
@@ -198,19 +197,18 @@ edits, commits, pushes, merges, `make`, `docker compose` and `sudo`. Its log is 
 
 **Dry run:** `AGENT_DRY_RUN=1 agent-runner run` logs each decision to `runs.log` ("dry run: would run claude for
 engineerfamily/x in …", "dry run: nothing due") and exits before the inbox poll, preprod, `claude`, merges and queue changes.
-Rehearse the cutover against a copy of the old queue: `T=$(mktemp -d); cp ~/.local/state/strelitzia-agent/queue.json $T/;
+Rehearse against a copy of the queue: `T=$(mktemp -d); cp ~/.local/state/agent-runner/queue.json $T/;
 AGENT_RUNNER_STATE=$T AGENT_DRY_RUN=1 agent-runner run; tail $T/runs.log`.
 
 ## Day to day
 - Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).
 - **Queue keys.** One queue serves every repo. Items are keyed `<repo>/<slug>` (`strelitzia/site-sso-3-proxy-mode`,
-  `engineerfamily/ef-agents-layout`): `agent-runner queue add <slug> --repo engineerfamily` (default `$AGENT_DEFAULT_REPO`,
-  `strelitzia`). `--after` takes `repo/slug`, so a plan can wait for a merge in another repo; a bare slug means the same repo.
+  `engineerfamily/ef-agents-layout`): `agent-runner queue add <slug> --repo engineerfamily` (`--repo` is required
+  unless the slug is a full `<repo>/<slug>` key). `--after` takes `repo/slug`, so a plan can wait for a merge in another repo; a bare slug means the same repo.
   Every other command takes the full key, or a bare slug when only one repo has an item with it (several → it exits and names them).
   Inbox issues are labelled with the item's repo.
-- **Migration.** A `queue.json` from the old runner (bare keys) is rewritten once on first load: `<slug>` becomes
-  `$AGENT_DEFAULT_REPO/<slug>`, and so does a bare `after`. State is in `$AGENT_RUNNER_STATE` (default
-  `~/.local/state/agent-runner`); `$STRELITZIA_AGENT_STATE` still works as an alias until the cutover.
+- **State.** State is in `$AGENT_RUNNER_STATE` (default `~/.local/state/agent-runner`). A `queue.json` with bare keys
+  or a bare `after` (the old runner's format) is an error: migrate it to `<repo>/<slug>` keys first.
 - Logs: `runs.log` (one line per event) and `logs/<time>-<slug>.log` (full JSON output) in the state dir.
 - When an agent asks a question, reply on the inbox issue. The next tick re-queues the item with your answer and resumes the
   agent's own session.
@@ -243,8 +241,7 @@ load_per_cpu = 2.0       # 15-minute load per CPU over this is a problem (alert 
 ```
 
 **Routine rules** (at most once every 23 h): Docker build cache down to 3 GB (`builder prune --keep-storage 3GB`), exited
-containers older than 24 h, runner logs older than 14 days and results older than 30 days (both the `agent-runner` and the old
-`strelitzia-agent` state dirs), runner worktrees older than 7 days whose branch is gone from origin, your own top-level `/tmp`
+containers older than 24 h, runner logs older than 14 days and results older than 30 days (in the `agent-runner` state dir), runner worktrees older than 7 days whose branch is gone from origin, your own top-level `/tmp`
 entries untouched for 3 days (never `/tmp/claude-*`), and backups in `~/backups` and `/srv/backups` older than 7 days.
 
 **Pressure rules** (only while disk is over `disk_clean_pct`, or with `--pressure`; in this order, re-measuring after each and

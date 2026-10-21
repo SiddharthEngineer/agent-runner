@@ -1,5 +1,5 @@
 # Plan: drop the Strelitzia-era fallbacks from the runner
-**Status:** ❌ Not started
+**Status:** ✅ 2026-10-21
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** strelitzia-runner-cleanup (Strelitzia repo). The old dirs (AM6) may still exist: nothing reads them after this plan
 
@@ -25,7 +25,7 @@ After a week on the new runner with no trouble (design Rollout step 7), the runn
 lock-checks only the new state dir. Keep reading the legacy inbox markers (old issues keep them).
 **Validate:** `pytest -q tests` → passes; the fallback tests are replaced by tests that the old paths are **not** read (with
 `HOME` holding only an old env file, `env_file()` → `None`).
-**Status:** ❌
+**Status:** ✅ 2026-10-21 d49cb29
 
 ### Task 2: `gate.py` requires `--config`
 **Runs:** unattended
@@ -33,7 +33,7 @@ lock-checks only the new state dir. Keep reading the legacy inbox markers (old i
 **What:** Delete the built-in Strelitzia `HIGH_RISK`/`DOC_OR_TEST`; `--config` becomes required (except `--plan`, which uses only
 the global budgets when there's no config). Gate tests use the fixtures.
 **Validate:** `python3 gate.py x.md` without `--config` → exit 2 with a usage message; `scripts/validate.sh` → all PASS.
-**Status:** ❌
+**Status:** ✅ 2026-10-21 32e0194
 
 ## Validation
 - `scripts/validate.sh` passes.

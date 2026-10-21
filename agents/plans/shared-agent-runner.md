@@ -217,7 +217,7 @@ Parts to plans.
 | S1 | Strelitzia `agents/plans/strelitzia-runner-config.md` | Strelitzia | `runner.toml`, agent settings, add-only before the cutover |
 | cutover | - | VPS | Rollout steps 2-6 (user) |
 | S2 | Strelitzia `agents/plans/strelitzia-runner-cleanup.md` | Strelitzia | Commands on the CLI, delete `scripts/agent/` (Rollout step 7) |
-| A14 | [runner-9-cleanup](runner-9-cleanup.md) | agent-runner | Drop the `strelitzia-agent` fallbacks |
+| A14 | [runner-9-cleanup](done/runner-9-cleanup.md) | agent-runner | Drop the `strelitzia-agent` fallbacks |
 | A15 | [runner-10-triage](done/runner-10-triage.md) (optional) | agent-runner | Sonnet triage of `blocked` items |
 
 ## Rollout (the Strelitzia runner keeps working at every step)

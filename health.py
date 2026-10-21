@@ -275,9 +275,8 @@ def older_than(root: Path, days: float, pattern: str = "*") -> list[Path]:
 
 
 def state_dirs() -> list[Path]:
-    """The runner's state dir and the old Strelitzia runner's, until the cutover."""
-    old = Path(os.environ.get("STRELITZIA_AGENT_STATE") or Path.home() / ".local/state/strelitzia-agent")
-    return list(dict.fromkeys([config.state_dir(), old]))
+    """The runner's state dir (a list, so rules can iterate it)."""
+    return [config.state_dir()]
 
 
 def backup_dirs() -> list[Path]:
@@ -532,7 +531,7 @@ DIAGNOSIS_MAX_CHARS = 4000
 
 
 def run_lock_held() -> bool:
-    """True if a build runner (old or new state dir) holds its run lock. Never blocks, never creates the lock."""
+    """True if the build runner holds its run lock. Never blocks, never creates the lock."""
     for state in state_dirs():
         path = state / "run.lock"
         if not path.exists():

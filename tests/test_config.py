@@ -127,10 +127,9 @@ def put(path: Path, text: str) -> Path:
     return path
 
 
-def test_env_file_prefers_new_dir(home):
+def test_env_file_ignores_old_dir(home):
+    put(home / ".config/strelitzia-agent/env", "A=old\n")
     assert config.env_file() is None
-    old = put(home / ".config/strelitzia-agent/env", "A=old\n")
-    assert config.env_file() == old
     new = put(home / ".config/agent-runner/env", "A=new\n")
     assert config.env_file() == new
 

@@ -227,11 +227,9 @@ def state_dir() -> Path:
 
 
 def env_file() -> Path | None:
-    """`config_dir()/env`, else the old runner's env for one release (design D1), else None."""
-    for path in (config_dir() / "env", Path.home() / ".config" / "strelitzia-agent" / "env"):
-        if path.is_file():
-            return path
-    return None
+    """`config_dir()/env`, or None."""
+    path = config_dir() / "env"
+    return path if path.is_file() else None
 
 
 def parse_env(path: Path) -> dict[str, str]:

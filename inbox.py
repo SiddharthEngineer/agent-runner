@@ -11,7 +11,7 @@ Usage:
 
 <key> is a queue key (`<repo>/<slug>`, or a bare slug only one repo has). Issues are labelled with the item's repo.
 
-Config (~/.config/agent-runner/env, falling back to ~/.config/strelitzia-agent/env; or the environment):
+Config (~/.config/agent-runner/env, or the environment):
   AGENT_INBOX_REPO  owner/name of the private inbox repo (required)
   NTFY_TOPIC        optional ntfy.sh topic. GitHub doesn't push-notify you about issues your own account
                     opens, so without this you only see them in the app's inbox.

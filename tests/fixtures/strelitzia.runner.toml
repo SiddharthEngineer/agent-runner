@@ -1,4 +1,4 @@
-# Strelitzia's values as the runner hard-codes them today (gate.py, run.sh, the strelitzia-agent env).
+# Strelitzia's values as the runner hard-coded them before the cutover (gate.py, run.sh, the old env file).
 [repo]
 name = "strelitzia"
 github = "SiddharthEngineer/Strelitzia"
