@@ -1,5 +1,5 @@
 # Plan: finished plans move to `agents/plans/done/`
-**Status:** ⏳ Queued 2026-10-21
+**Status:** ✅ 2026-10-21
 **Risk:** low (docs, one path lookup in `run.sh`; no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** -
 
