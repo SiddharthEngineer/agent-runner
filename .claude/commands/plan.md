@@ -80,6 +80,7 @@ testable unit. Never put personal data (resume text, contact details, DB rows) i
 
 ## 5. Register and hand off
 1. Add a row to the **Active** table in `agents/ROADMAP.md` (ID, initiative, plan link, risk, status ⏳, depends on), one per part.
+   When a plan is finished, `/implement` moves it to `agents/plans/done/` and repoints the row (open plans stay in `agents/plans/`).
 2. Show the user the plan summary, then commit both files on `main` and push (`git push origin main`), because the unattended
    runner only builds plans that are on `origin/main`.
 3. Ask the user: implement now in this session (`/implement agents/plans/<slug>.md`), or schedule it

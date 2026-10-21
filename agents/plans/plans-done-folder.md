@@ -39,7 +39,7 @@ fix relative links in the moved file (one more `../`) and every link to it (`gre
 and point the ROADMAP row at `plans/done/<slug>.md`. A plan with "Left for you" steps stays put until the user finishes them.
 plan.md §5: say the same in one line next to the ROADMAP row step.
 **Validate:** `grep -n "plans/done" .claude/commands/implement.md` → the new step; `scripts/validate.sh` → all PASS (incl. `check-commands`).
-**Status:** ⏳
+**Status:** ✅ 2026-10-21 (this commit)
 
 ### Task 3: move today's finished plans
 **Runs:** unattended
