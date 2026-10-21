@@ -46,6 +46,13 @@ dry() {  # dry <what>: in a dry run, log "would <what>" and stop here
 exec 9>"$STATE/run.lock"
 flock -n 9 || exit 0
 
+# An unreadable queue (e.g. the old runner's bare keys) would otherwise read as "nothing due".
+if ! qerr=$("${Q[@]}" list 2>&1 >/dev/null); then
+    say "queue unreadable, no runs: $qerr"
+    echo "$qerr" >&2
+    exit 1
+fi
+
 # 1. Upkeep
 if [ -n "$DRY" ]; then
     say "dry run: would poll the inbox and tick preprod"

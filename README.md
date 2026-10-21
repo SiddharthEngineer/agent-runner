@@ -197,7 +197,7 @@ edits, commits, pushes, merges, `make`, `docker compose` and `sudo`. Its log is 
 
 **Dry run:** `AGENT_DRY_RUN=1 agent-runner run` logs each decision to `runs.log` ("dry run: would run claude for
 engineerfamily/x in …", "dry run: nothing due") and exits before the inbox poll, preprod, `claude`, merges and queue changes.
-Rehearse the cutover against a copy of the old queue: `T=$(mktemp -d); cp ~/.local/state/strelitzia-agent/queue.json $T/;
+Rehearse against a copy of the queue: `T=$(mktemp -d); cp ~/.local/state/agent-runner/queue.json $T/;
 AGENT_RUNNER_STATE=$T AGENT_DRY_RUN=1 agent-runner run; tail $T/runs.log`.
 
 ## Day to day
@@ -241,8 +241,7 @@ load_per_cpu = 2.0       # 15-minute load per CPU over this is a problem (alert 
 ```
 
 **Routine rules** (at most once every 23 h): Docker build cache down to 3 GB (`builder prune --keep-storage 3GB`), exited
-containers older than 24 h, runner logs older than 14 days and results older than 30 days (both the `agent-runner` and the old
-`strelitzia-agent` state dirs), runner worktrees older than 7 days whose branch is gone from origin, your own top-level `/tmp`
+containers older than 24 h, runner logs older than 14 days and results older than 30 days (in the `agent-runner` state dir), runner worktrees older than 7 days whose branch is gone from origin, your own top-level `/tmp`
 entries untouched for 3 days (never `/tmp/claude-*`), and backups in `~/backups` and `/srv/backups` older than 7 days.
 
 **Pressure rules** (only while disk is over `disk_clean_pct`, or with `--pressure`; in this order, re-measuring after each and

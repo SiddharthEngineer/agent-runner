@@ -632,6 +632,9 @@ def test_queue_bare_after_is_an_error(tmp_path, q):
     (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": {"strelitzia/b": item}}))
     out = q("list")
     assert out.returncode != 0 and "migrate first" in out.stderr
+    item["after"] = None  # a null `after` is fine
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": {"strelitzia/b": item}}))
+    assert q("list").returncode == 0
 
 
 def test_queue_add_requires_repo(q):

@@ -75,9 +75,10 @@ def load() -> dict:
     if not QUEUE.exists():
         return {"paused_until": None, "items": {}}
     data = json.loads(QUEUE.read_text())
-    bare = sorted(k for k, it in data["items"].items() if "/" not in k or "/" not in it.get("after", "/"))
+    bare = sorted(k for k, it in data["items"].items() if "/" not in k or "/" not in (it.get("after") or "/"))
     if bare:
-        sys.exit(f"{QUEUE}: bare keys from the old runner ({', '.join(bare)}): migrate first (key them `<repo>/<slug>`)")
+        sys.exit(f"{QUEUE}: items with a bare key or `after` from the old runner ({', '.join(bare)}): "
+                 "migrate first (both must be `<repo>/<slug>`)")
     return data
 
 

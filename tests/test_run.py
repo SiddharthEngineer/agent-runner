@@ -163,6 +163,16 @@ def test_dry_run_nothing_due(runner):
     assert "dry run: nothing due" in runner.runs_log()
 
 
+def test_unreadable_queue_is_logged_not_nothing_due(runner):
+    runner.state.mkdir(parents=True, exist_ok=True)
+    item = {"plan": "agents/plans/x.md", "status": "queued", "not_before": "2026-10-01T00:00:00+00:00", "attempts": 0, "notes": []}
+    (runner.state / "queue.json").write_text(json.dumps({"paused_until": None, "items": {"x": item}}))
+    out = runner(AGENT_DRY_RUN="1")
+    assert out.returncode == 1 and "migrate first" in out.stderr
+    log = runner.runs_log()
+    assert "queue unreadable, no runs" in log and "nothing due" not in log
+
+
 def test_plan_missing_on_base_blocks(runner):
     runner.register("engineerfamily", plan=None)
     runner.queue("add", "x", "--repo", "engineerfamily")
