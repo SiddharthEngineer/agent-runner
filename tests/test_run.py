@@ -343,6 +343,39 @@ def test_review_approve_with_preprod_waits_for_preprod(runner):
     assert not (runner.state / "worktrees/engineerfamily/review-9").exists()
 
 
+def move_plan_on_pr_head(tmp_path, name="engineerfamily"):
+    """PR #9's head moves the plan to agents/plans/done/, as /implement does when a plan is finished."""
+    work, origin = tmp_path / f"{name}-work", tmp_path / f"{name}.git"
+    git = ["git", "-C", str(work), "-c", "user.email=t@e", "-c", "user.name=t"]
+    (work / "agents/plans/done").mkdir()
+    subprocess.run([*git, "mv", "agents/plans/x.md", "agents/plans/done/x.md"], check=True)
+    subprocess.run([*git, "commit", "-qm", "done"], check=True)
+    subprocess.run([*git, "push", "-q", str(origin), "HEAD:refs/pull/9/head"], check=True)
+
+
+def test_review_prompt_points_at_the_plan_in_place(runner):
+    awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("approve"))
+    [claude] = claude_calls(runner)
+    assert "The plan the PR implements: agents/plans/x.md " in claude
+
+
+def test_review_prompt_finds_a_plan_moved_to_done(runner, tmp_path):
+    awaiting_review(runner)
+    move_plan_on_pr_head(tmp_path)
+    runner(STUB_REVIEW=verdict("approve"))
+    [claude] = claude_calls(runner)
+    assert "The plan the PR implements: agents/plans/done/x.md " in claude
+
+
+def test_preprod_prompt_finds_a_plan_moved_to_done(runner, tmp_path):
+    on_preprod(runner)
+    move_plan_on_pr_head(tmp_path)
+    runner(STUB_PREPROD=preprod_verdict("approve"))
+    [claude] = claude_calls(runner)
+    assert "The plan: agents/plans/done/x.md " in claude
+
+
 def test_review_approve_without_preprod_merges(runner):
     key = awaiting_review(runner, name="agent-runner", merge="squash", deploy=None)
     runner(STUB_REVIEW=verdict("approve"))

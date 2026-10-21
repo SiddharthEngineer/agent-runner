@@ -30,6 +30,9 @@ argument-hint: <agents/plans/<slug>.md> [--unattended]
 1. `scripts/validate.sh`, plus every command in the plan's **Validation** section. All must pass.
 2. Self-review: run the `/code-review` skill on the branch diff and fix anything real it finds, then re-validate.
 3. Set the plan's **Status** (✅ if every task is done) and the ROADMAP row. Commit.
+   If every task is ✅ (nothing left for the user), move the plan: `git mv agents/plans/<slug>.md agents/plans/done/<slug>.md`,
+   add one `../` to the relative links in the moved file, fix every link to it (`grep -rn "<slug>.md" agents README.md AGENTS.md`),
+   and point the ROADMAP row at `plans/done/<slug>.md`. A plan with "Left for you" steps stays put until the user finishes them.
 4. Ship:
    - **Interactive:** run `/ship`.
    - **Unattended** (`--unattended`): `git push -u origin HEAD`, then `gh pr create --repo SiddharthEngineer/agent-runner --base main`

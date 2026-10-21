@@ -1,7 +1,7 @@
 # Plan: runner.toml loader, prod guard, and shared config/state dirs
 **Status:** ✅ Done 2026-10-19 (all 3 tasks)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: the runner's config and risk gate; every later Part reads it)
-**Depends on:** - (first Part of [shared-agent-runner](shared-agent-runner.md))
+**Depends on:** - (first Part of [shared-agent-runner](../shared-agent-runner.md))
 
 ## Goal
 The runner stops hard-coding Strelitzia. A repo describes itself in `agents/runner.toml` (base branch, merge method, validate
@@ -19,7 +19,7 @@ without `--config` it behaves exactly as today.
 - `buildqueue.py:40-43`: `CONFIG_DIR`/`STATE` with `$STRELITZIA_AGENT_STATE`. Unchanged here.
 - Values for the Strelitzia fixture: `gate.py:24-46` (patterns), `run.sh:28` (`GH_REPO`), `run.sh:61` (`--rebase`),
   `~/.config/strelitzia-agent/env` `PREPROD_*` lines (read them; copy the commands, never the netrc path's contents).
-- Design: [shared-agent-runner](shared-agent-runner.md) D1 (naming), D4 (`runner.toml`), D5 (engineerfamily values, prod guard).
+- Design: [shared-agent-runner](../shared-agent-runner.md) D1 (naming), D4 (`runner.toml`), D5 (engineerfamily values, prod guard).
 - Gotcha: `tomllib` needs Python 3.11+ (the VPS has 3.14). Stdlib only, no `tomli` fallback.
 
 ## Tasks

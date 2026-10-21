@@ -1,5 +1,5 @@
 # Plan: finished plans move to `agents/plans/done/`
-**Status:** ⏳ Queued 2026-10-21
+**Status:** ✅ 2026-10-21
 **Risk:** low (docs, one path lookup in `run.sh`; no prod impact; auto-merges on green CI, user 2026-10-19)
 **Depends on:** -
 
@@ -29,7 +29,7 @@ validators find a plan that the PR under review has moved.
 exists, else `$plan`. Use it for `plan_path` in the review and preprod-check prompts. The base-branch check stays on `$PLANS/$slug.md`.
 **Validate:** `pytest -q tests/test_run.py 2>&1 | tail -n 20` → new tests pass: a review whose PR head has only
 `agents/plans/done/<slug>.md` gets that path in the validator prompt; one with the plan in place gets `agents/plans/<slug>.md`.
-**Status:** ⏳
+**Status:** ✅ 2026-10-21 (this commit)
 
 ### Task 2: `/implement` moves the finished plan
 **Runs:** unattended
@@ -39,7 +39,7 @@ fix relative links in the moved file (one more `../`) and every link to it (`gre
 and point the ROADMAP row at `plans/done/<slug>.md`. A plan with "Left for you" steps stays put until the user finishes them.
 plan.md §5: say the same in one line next to the ROADMAP row step.
 **Validate:** `grep -n "plans/done" .claude/commands/implement.md` → the new step; `scripts/validate.sh` → all PASS (incl. `check-commands`).
-**Status:** ⏳
+**Status:** ✅ 2026-10-21 (this commit)
 
 ### Task 3: move today's finished plans
 **Runs:** unattended
@@ -48,7 +48,7 @@ plan.md §5: say the same in one line next to the ROADMAP row step.
 pointed at them or out of them, in this repo only. Don't edit their contents otherwise.
 **Validate:** `ls agents/plans/*.md` → only `shared-agent-runner.md`, `runner-9-cleanup.md`, `plans-done-folder.md`. A link check prints nothing:
 `python3 -c 'import re,pathlib,sys; [print(f,l) for f in pathlib.Path(".").glob("**/*.md") if ".git" not in f.parts for l in re.findall(r"\]\(([^)#:]+\.md)", f.read_text()) if not (f.parent/l).exists()]'`
-**Status:** ⏳
+**Status:** ✅ 2026-10-21 (this commit; no `done/.gitkeep` existed)
 
 ## Validation
 - `scripts/validate.sh` passes.
