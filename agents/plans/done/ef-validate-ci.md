@@ -2,7 +2,7 @@
 **Status:** ✅ Done 2026-10-19 (engineerfamily PR #40, merged)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and a Makefile target to the deploy repo)
 **Repo:** SiddharthEngineer/engineerfamily (`~/src/engineerfamily`, base `main`, merge commits). This plan lives in agent-runner until engineerfamily has its own `agents/` (Part ef-agents-layout).
-**Depends on:** - (useful before the runner exists; design [shared-agent-runner](shared-agent-runner.md) D5)
+**Depends on:** - (useful before the runner exists; design [shared-agent-runner](../shared-agent-runner.md) D5)
 
 ## Goal
 engineerfamily PRs get a green or red check: the same `scripts/validate.sh` runs locally, in agent worktrees and in CI, and checks

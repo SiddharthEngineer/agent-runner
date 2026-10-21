@@ -1,5 +1,5 @@
 # Plan: `agent-runner` CLI, `install.sh <tag>`, CI and README
-**Status:** 🟡 Code done 2026-10-19; `ci.yml` left for the user (AM1a: the token has no `workflow` scope)
+**Status:** ✅ 2026-10-21 (code 2026-10-19; `ci.yml` by the user in AM1a, 2026-10-19)
 **Risk:** low (no prod impact; auto-merges on green CI, user 2026-10-19. Was review: adds `.github/` and decides what code cron runs)
 **Depends on:** runner-1-config
 
@@ -54,7 +54,7 @@ what the runner is, install and rollback (`install.sh`), the CLI map, config (`~
 and state (`~/.local/state/agent-runner/`) locations, and the cron lines from design D1/D6 marked "added at the cutover". Keep its
 Limits section, but drop the Strelitzia paths. Add `agent-runner`, `install.sh` and `config.py` to the AGENTS.md map.
 **Validate:** `scripts/validate.sh` → all PASS; after pushing the branch, `gh pr checks <pr> --repo SiddharthEngineer/agent-runner` → the CI check passes.
-**Status:** 🟡 2026-10-19: README and AGENTS.md done. `ci.yml` is left for the user: the runner's GitHub token has no `workflow` scope, so the push was refused (see Left for you).
+**Status:** ✅ 2026-10-19: README and AGENTS.md done; `ci.yml` added by the user (AM1a, 2026-10-19), since the runner's token has no `workflow` scope.
 
 ## Validation
 - `scripts/validate.sh` passes locally and in CI.

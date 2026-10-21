@@ -48,7 +48,7 @@ plan.md §5: say the same in one line next to the ROADMAP row step.
 pointed at them or out of them, in this repo only. Don't edit their contents otherwise.
 **Validate:** `ls agents/plans/*.md` → only `shared-agent-runner.md`, `runner-9-cleanup.md`, `plans-done-folder.md`. A link check prints nothing:
 `python3 -c 'import re,pathlib,sys; [print(f,l) for f in pathlib.Path(".").glob("**/*.md") if ".git" not in f.parts for l in re.findall(r"\]\(([^)#:]+\.md)", f.read_text()) if not (f.parent/l).exists()]'`
-**Status:** ⏳
+**Status:** ✅ 2026-10-21 (this commit; no `done/.gitkeep` existed)
 
 ## Validation
 - `scripts/validate.sh` passes.

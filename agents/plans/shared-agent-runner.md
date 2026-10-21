@@ -201,24 +201,24 @@ Parts to plans.
 | Part | Plan | Repo | What |
 |---|---|---|---|
 | 0 | - | GitHub | `agent-inbox` renamed to `agent-runner` (user), seeded from Strelitzia `scripts/agent/` at c4873de (done) |
-| A1 | [runner-1-config](runner-1-config.md) | agent-runner | `config.py`, `runner.toml` schema, prod guard, config/state dirs, `gate.py --config` |
-| A2 | [runner-2-install](runner-2-install.md) | agent-runner | `agent-runner` CLI, `install.sh <tag>`, CI, README |
-| A3 | [health-1-clean](health-1-clean.md) | agent-runner | D6 check and cleanup rules |
-| A4 | [health-2-alert](health-2-alert.md) | agent-runner | D6 tick, notices, read-only diagnosis, `health gate` |
-| A5 | [ef-validate-ci](ef-validate-ci.md) | engineerfamily | `scripts/validate.sh`, PR CI, `make prod-changes` |
-| A6 | [runner-3-state](runner-3-state.md) | agent-runner | `<repo>/<slug>` queue, inbox projects, shared state dir |
-| A7 | [runner-4-preprod](runner-4-preprod.md) | agent-runner | Global preprod lock, commands and health from `runner.toml` |
-| A8 | [runner-5-run](runner-5-run.md) | agent-runner | Multi-repo `run.sh`, `AGENT_DRY_RUN`, health gate, one merge rule |
-| A9 | [runner-6-review](runner-6-review.md) | agent-runner | Validator review stage |
-| A10 | [runner-7-preprod-check](runner-7-preprod-check.md) | agent-runner | Validator preprod stage (Playwright storage state, manual AM3) |
-| A11 | [runner-8-self-host](runner-8-self-host.md) | agent-runner | agent-runner's own `runner.toml`, settings, commands; `check-commands` |
-| A12 | [ef-agents-layout](ef-agents-layout.md) | engineerfamily | `AGENTS.md`, `agents/`, `.claude/settings.json` |
-| A13 | [ef-runner-config](ef-runner-config.md) | engineerfamily | `runner.toml`, agent settings, commands |
+| A1 | [runner-1-config](done/runner-1-config.md) | agent-runner | `config.py`, `runner.toml` schema, prod guard, config/state dirs, `gate.py --config` |
+| A2 | [runner-2-install](done/runner-2-install.md) | agent-runner | `agent-runner` CLI, `install.sh <tag>`, CI, README |
+| A3 | [health-1-clean](done/health-1-clean.md) | agent-runner | D6 check and cleanup rules |
+| A4 | [health-2-alert](done/health-2-alert.md) | agent-runner | D6 tick, notices, read-only diagnosis, `health gate` |
+| A5 | [ef-validate-ci](done/ef-validate-ci.md) | engineerfamily | `scripts/validate.sh`, PR CI, `make prod-changes` |
+| A6 | [runner-3-state](done/runner-3-state.md) | agent-runner | `<repo>/<slug>` queue, inbox projects, shared state dir |
+| A7 | [runner-4-preprod](done/runner-4-preprod.md) | agent-runner | Global preprod lock, commands and health from `runner.toml` |
+| A8 | [runner-5-run](done/runner-5-run.md) | agent-runner | Multi-repo `run.sh`, `AGENT_DRY_RUN`, health gate, one merge rule |
+| A9 | [runner-6-review](done/runner-6-review.md) | agent-runner | Validator review stage |
+| A10 | [runner-7-preprod-check](done/runner-7-preprod-check.md) | agent-runner | Validator preprod stage (Playwright storage state, manual AM3) |
+| A11 | [runner-8-self-host](done/runner-8-self-host.md) | agent-runner | agent-runner's own `runner.toml`, settings, commands; `check-commands` |
+| A12 | [ef-agents-layout](done/ef-agents-layout.md) | engineerfamily | `AGENTS.md`, `agents/`, `.claude/settings.json` |
+| A13 | [ef-runner-config](done/ef-runner-config.md) | engineerfamily | `runner.toml`, agent settings, commands |
 | S1 | Strelitzia `agents/plans/strelitzia-runner-config.md` | Strelitzia | `runner.toml`, agent settings, add-only before the cutover |
 | cutover | - | VPS | Rollout steps 2-6 (user) |
 | S2 | Strelitzia `agents/plans/strelitzia-runner-cleanup.md` | Strelitzia | Commands on the CLI, delete `scripts/agent/` (Rollout step 7) |
 | A14 | [runner-9-cleanup](runner-9-cleanup.md) | agent-runner | Drop the `strelitzia-agent` fallbacks |
-| A15 | [runner-10-triage](runner-10-triage.md) (optional) | agent-runner | Sonnet triage of `blocked` items |
+| A15 | [runner-10-triage](done/runner-10-triage.md) (optional) | agent-runner | Sonnet triage of `blocked` items |
 
 ## Rollout (the Strelitzia runner keeps working at every step)
 1. **Parts A1-A13 and S1 build next to the old runner.** The health Parts go live early, on their own cron line (D6), since they don't touch the queue. Nothing the old runner reads changes: `~/src/Strelitzia/scripts/agent/`,
