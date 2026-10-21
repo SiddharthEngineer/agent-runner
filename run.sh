@@ -126,6 +126,12 @@ $problems"
     fi
 }
 cfg() { "${CFG[@]}" get "$toml" "$1" 2>/dev/null; }
+# pr_plan <worktree>: the plan's path in a PR checkout. A finished plan moves to $PLANS/done/ in its own PR.
+pr_plan() {
+    if [ -f "$1/$plan" ]; then echo "$plan"
+    elif [ -f "$1/$PLANS/done/$slug.md" ]; then echo "$PLANS/done/$slug.md"
+    else echo "$plan"; fi
+}
 
 # notify_blocked <title> <body> [<result file>] [review]: the item is blocked. Once per item (no `triaged` flag yet,
 # AGENT_TRIAGE not 0, usage below the gate), a read-only Sonnet run triages it first: a transient or fixed-elsewhere cause
@@ -313,7 +319,7 @@ s = json.load(open(sys.argv[1])); s["permissions"]["allow"] += ["mcp__playwright
 json.dump(s, open(sys.argv[2], "w"))' "$vsettings" "$tmpd/settings.json"
     vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
 base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
-        "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$plan" "$base_url" "$presult" "$signed")
+        "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$(pr_plan "$pwt")" "$base_url" "$presult" "$signed")
     say "$key: validator (preprod) start for PR #$pr, signed_in=$signed (log $plog)"
     (
         cd "$pwt" || exit 1
@@ -388,7 +394,7 @@ review_stage() {
     vsettings=$rwt/agents/settings/validate.json
     [ -f "$vsettings" ] || vsettings=$HERE/settings/validate.json
     vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
-result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.md" "$GH_REPO" "$pr" "$plan" "$rresult" "$VALIDATE_FULL")
+result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL")
     say "$key: validator (review) start for PR #$pr (log $rlog)"
     (
         cd "$rwt" || exit 1

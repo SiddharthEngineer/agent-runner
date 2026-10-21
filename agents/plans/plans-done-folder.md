@@ -29,7 +29,7 @@ validators find a plan that the PR under review has moved.
 exists, else `$plan`. Use it for `plan_path` in the review and preprod-check prompts. The base-branch check stays on `$PLANS/$slug.md`.
 **Validate:** `pytest -q tests/test_run.py 2>&1 | tail -n 20` → new tests pass: a review whose PR head has only
 `agents/plans/done/<slug>.md` gets that path in the validator prompt; one with the plan in place gets `agents/plans/<slug>.md`.
-**Status:** ⏳
+**Status:** ✅ 2026-10-21 (this commit)
 
 ### Task 2: `/implement` moves the finished plan
 **Runs:** unattended
