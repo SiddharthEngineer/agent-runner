@@ -230,6 +230,7 @@ python3 health.py clean                        # routine rules (once a day), plu
 python3 health.py tick                         # cron: clean, re-measure, notify (below)
 python3 health.py gate                         # exit 1 while disk is at or over disk_alert_pct (run.sh starts no Claude run then)
 python3 health.py diagnose [--force]           # the read-only diagnosis on its own; --force ignores the 6 h spacing
+python3 health.py sessions                     # open Claude desktop sessions, most idle first, with memory use
 ```
 
 **Thresholds** (override any of them in `~/.config/agent-runner/health.toml`; an unknown key is an error):
@@ -265,6 +266,13 @@ with the open ones in `health.json`. A new problem opens one `agent-notice` issu
 and the diagnosis. While it lasts, the issue gets at most one comment a day. When it clears, it gets a "Recovered" comment and is
 closed. Load counts only when it was also high on a tick at least 15 minutes earlier. A failed `gh` call is logged and retried on
 the next tick.
+
+**Claude sessions.** Each Claude desktop session open on the VPS keeps a `ccd-cli` process of about 200–300 MB until you archive
+it in the desktop app. Each tick finds those processes (argv[0] under `~/.claude/remote/ccd-cli/`) and records their CPU time in
+`health.json`. A session counts as idle once it has used under 0.02 CPU-seconds per second since the last tick, and a session seen
+for the first time counts as active. Memory and swap notices (new, and the daily "still open" comment) list every session with its
+memory and idle time, most idle first, so you know which ones to archive. Only the app can archive, so this only reports: it never
+signals or stops a process.
 
 **Diagnosis.** Before the first notice of a problem, a short Sonnet run (`claude-sonnet-5-5`, 10 minutes, 15 turns,
 `--permission-mode dontAsk` with [settings/health-diagnose.json](settings/health-diagnose.json)) looks around with `df`, `du`, `free`,
