@@ -170,11 +170,21 @@ def repo(tmp_path):
     return commit
 
 
+STRELITZIA_CONFIG = AGENT / "tests" / "fixtures" / "strelitzia.runner.toml"
+
+
 def gate(repo) -> dict:
     out = subprocess.run(
-        [sys.executable, str(AGENT / "gate.py"), "plan.md", "--base", "base"], cwd=repo.path, capture_output=True, text=True
+        [sys.executable, str(AGENT / "gate.py"), "plan.md", "--base", "base", "--config", str(STRELITZIA_CONFIG)],
+        cwd=repo.path, capture_output=True, text=True,
     )
     return json.loads(out.stdout)
+
+
+def test_gate_requires_config(repo):
+    out = subprocess.run([sys.executable, str(AGENT / "gate.py"), "plan.md"], cwd=repo.path, capture_output=True, text=True)
+    assert out.returncode == 2
+    assert "usage: gate.py" in out.stderr and "--config is required" in out.stderr
 
 
 def test_gate_low_for_docs(repo):
@@ -203,17 +213,23 @@ def test_gate_respects_declared_review(repo):
     assert gate(repo)["tier"] == "review"
 
 
-def plan_gate(tmp_path, files: str) -> tuple[int, dict]:
+def plan_gate(tmp_path, files: str, *config: str) -> tuple[int, dict]:
     plan = tmp_path / "p.md"
     plan.write_text(f"# Plan\n**Risk:** low (small)\n\n### Task 1: x\n**Files:** {files}\n")
-    out = subprocess.run([sys.executable, str(AGENT / "gate.py"), str(plan), "--plan"], capture_output=True, text=True)
+    out = subprocess.run([sys.executable, str(AGENT / "gate.py"), str(plan), "--plan", *config], capture_output=True, text=True)
     return out.returncode, json.loads(out.stdout)
 
 
 def test_gate_plan_low_listing_high_risk_file_needs_review(tmp_path):
-    code, verdict = plan_gate(tmp_path, "src/strelitzia/web/tasks.py (modify), tests/test_web.py (modify)")
+    files = "src/strelitzia/web/tasks.py (modify), tests/test_web.py (modify)"
+    code, verdict = plan_gate(tmp_path, files, "--config", str(STRELITZIA_CONFIG))
     assert (code, verdict["tier"]) == (1, "review")
     assert verdict["reasons"] == ["touches high-risk path src/strelitzia/web/tasks.py"]
+
+
+def test_gate_plan_without_config_has_no_high_risk_paths(tmp_path):
+    code, verdict = plan_gate(tmp_path, "src/strelitzia/web/tasks.py (modify), Dockerfile (modify)")
+    assert (code, verdict) == (0, {"tier": "low", "reasons": [], "split": []})
 
 
 def test_gate_plan_low_listing_tests_and_docs_stays_low(tmp_path):

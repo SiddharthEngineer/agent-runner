@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Risk gate: may this branch merge to trunk without human review?
 
-Usage: python3 gate.py <plan.md> [--base origin/trunk] [--config agents/runner.toml]
+Usage: python3 gate.py <plan.md> --config agents/runner.toml [--base origin/<repo.base>]
        python3 gate.py <plan.md> --plan [--config agents/runner.toml]   (no git: checks the plan's **Files:** lines and size, for /plan)
 
 The plan declares `**Risk:** low` or `**Risk:** review` (set with the user in /plan). A `low` plan still goes to
@@ -9,7 +9,7 @@ review if the diff touches a high-risk path, is larger than the budget, or weake
 {"tier": "low"|"review", "reasons": [...]} and exits 0 for low, 1 for review, 2 on usage errors.
 `--plan` also prints "split": reasons the plan is over the size budget (empty when it fits). It doesn't change the tier.
 `--config` takes the high-risk and doc/test patterns, the code-line budget, the tests dir and the base branch from a repo's
-runner.toml; without it the Strelitzia defaults below apply.
+runner.toml. It is required, except with `--plan`, which without it checks only the plan's risk line and the size budgets.
 Standard library only.
 """
 
@@ -23,30 +23,6 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
-
-# Any change here needs a human, whatever the plan says.
-HIGH_RISK = [
-    "Dockerfile",
-    ".dockerignore",
-    "pyproject.toml",
-    ".github/*",
-    ".claude/settings.json",
-    "scripts/agent/*",
-    "scripts/validate.sh",
-    "scripts/migrate_to_strelitzia.sh",  # moves the data dirs, rewrites crontab and ~/.ssh/config
-    "src/strelitzia/database.py",
-    "src/strelitzia/db_pg.py",
-    "src/strelitzia/migrate.py",
-    "src/strelitzia/config.py",
-    "src/strelitzia/web/*",
-    "dashboard/*",
-    "*password*",
-    "*credential*",
-    "*secret*",
-]
-# Changed lines outside docs and tests that a low-risk change may have.
-CODE_LINE_BUDGET = 250
-DOC_OR_TEST = ["*.md", "agents/*", ".claude/commands/*", ".claude/agents/*", "tests/*"]
 
 # One plan = one unattended run. Past runs: plans touching <=14 files took 19-73 turns; 22-49 files took 100-180 turns
 # and most of a 5-hour usage window. Over any of these, /plan splits the plan into smaller ones.
@@ -75,9 +51,6 @@ class Rules(NamedTuple):
     doc_or_test: list[str]
     code_line_budget: int
     tests_dir: str
-
-
-DEFAULT_RULES = Rules(HIGH_RISK, DOC_OR_TEST, CODE_LINE_BUDGET, "tests/")
 
 
 def _config_module():
@@ -148,14 +121,15 @@ def split_reasons(plan: Path, files: list[str]) -> list[str]:
     return reasons
 
 
-def evaluate_plan(plan: Path, rules: Rules = DEFAULT_RULES) -> dict:
+def evaluate_plan(plan: Path, rules: Rules | None = None) -> dict:
     files = planned_files(plan)
     reasons = risk_reasons(plan)
-    reasons += [f"touches high-risk path {path}" for path in files if matches(path, rules.high_risk)]
+    high_risk = rules.high_risk if rules else []
+    reasons += [f"touches high-risk path {path}" for path in files if matches(path, high_risk)]
     return {"tier": "review" if reasons else "low", "reasons": reasons, "split": split_reasons(plan, files)}
 
 
-def evaluate(plan: Path, base: str, rules: Rules = DEFAULT_RULES) -> dict:
+def evaluate(plan: Path, base: str, rules: Rules) -> dict:
     reasons = risk_reasons(plan)
 
     merge_base = git("merge-base", base, "HEAD").strip()
@@ -180,14 +154,16 @@ def evaluate(plan: Path, base: str, rules: Rules = DEFAULT_RULES) -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("plan", type=Path)
-    parser.add_argument("--base", help="base ref (default origin/trunk, or origin/<repo.base> with --config)")
+    parser.add_argument("--base", help="base ref (default origin/<repo.base> from --config)")
     parser.add_argument("--plan", dest="plan_only", action="store_true", help="check the plan's declared files instead of the diff")
-    parser.add_argument("--config", type=Path, help="the repo's runner.toml")
+    parser.add_argument("--config", type=Path, help="the repo's runner.toml (required unless --plan)")
     args = parser.parse_args()
+    if not args.config and not args.plan_only:
+        parser.error("--config is required (except with --plan)")
     if not args.plan.is_file():
         print(f"no such plan: {args.plan}", file=sys.stderr)
         return 2
-    rules, base = DEFAULT_RULES, "origin/trunk"
+    rules, base = None, None
     if args.config:
         try:
             rules, base = rules_from_config(args.config)
