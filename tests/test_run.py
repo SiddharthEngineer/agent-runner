@@ -263,7 +263,7 @@ def test_ci_falls_back_to_actions_runs(runner, env, why):
 
 def test_strelitzia_rebases(runner):
     runner.register("strelitzia", base="trunk", merge="rebase")
-    runner.queue("add", "x")
+    runner.queue("add", "strelitzia/x")
     runner()
     assert "gh pr merge 9 --repo o/strelitzia --rebase --delete-branch" in runner.calls(), runner.runs_log() + runner.out.stderr
 

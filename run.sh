@@ -23,19 +23,16 @@ export PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 HERE=$(dirname "$(readlink -f "$0")")
 CFG=(python3 "$HERE/config.py")
-# CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`), AGENT_INBOX_REPO, NTFY_TOPIC: ~/.config/agent-runner/env
-# (or, for one release, the old ~/.config/strelitzia-agent/env).
+# CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`), AGENT_INBOX_REPO, NTFY_TOPIC: ~/.config/agent-runner/env.
 env_file=$("${CFG[@]}" env-file) && . "$env_file"
-LEGACY_AGENT_REPO=${AGENT_REPO:-}  # the old env named Strelitzia's clone; repos/strelitzia.env replaces it
 
-STATE=${AGENT_RUNNER_STATE:-${STRELITZIA_AGENT_STATE:-$HOME/.local/state/agent-runner}}
+STATE=${AGENT_RUNNER_STATE:-$HOME/.local/state/agent-runner}
 MAX_RUNTIME=${AGENT_MAX_RUNTIME:-3h}
 DRY=${AGENT_DRY_RUN:-}
 # Opus has a 1M-token window, so long runs never auto-compacted and re-sent 250-380k tokens of context every turn.
 # Compact at 200k instead (AGENT_COMPACT_WINDOW in the env file overrides it).
 export CLAUDE_CODE_AUTO_COMPACT_WINDOW=${AGENT_COMPACT_WINDOW:-200000}
 export AGENT_RUNNER_STATE=$STATE
-unset STRELITZIA_AGENT_STATE
 mkdir -p "$STATE/logs" "$STATE/results" "$STATE/worktrees" "$STATE/configs"
 Q=(python3 "$HERE/buildqueue.py")
 stamp() { date -u +%FT%TZ; }
@@ -98,7 +95,6 @@ load_item() {
     slug=${key#*/}
     unset AGENT_REPO
     repo_env=$("${CFG[@]}" repo-env "$repo") && eval "$repo_env"
-    [ -z "${AGENT_REPO:-}" ] && [ "$repo" = strelitzia ] && AGENT_REPO=$LEGACY_AGENT_REPO
     if [ -z "${AGENT_REPO:-}" ] || [ ! -d "$AGENT_REPO" ]; then
         block "no AGENT_REPO for $repo" "repo not registered" \
             "Add AGENT_REPO=<dev clone> to ~/.config/agent-runner/repos/$repo.env, then re-queue $key."

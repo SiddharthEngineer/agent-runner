@@ -30,17 +30,19 @@ def q(tmp_path, monkeypatch):
 
 
 def test_queue_uses_agent_runner_state_dir(tmp_path):
-    """Without $AGENT_RUNNER_STATE (or the old $STRELITZIA_AGENT_STATE) the queue lives in ~/.local/state/agent-runner."""
+    """Without $AGENT_RUNNER_STATE the queue lives in ~/.local/state/agent-runner, even with the old $STRELITZIA_AGENT_STATE set."""
     env = {k: v for k, v in os.environ.items() if not k.endswith("_AGENT_STATE") and k != "AGENT_RUNNER_STATE"}
     env["HOME"] = str(tmp_path)
+    env["STRELITZIA_AGENT_STATE"] = str(tmp_path / "old-state")
 
     def run(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, str(AGENT / "buildqueue.py"), *args], env=env, capture_output=True, text=True)
 
-    assert run("add", "an-item").returncode == 0
+    assert run("add", "an-item", "--repo", "strelitzia").returncode == 0
     listed = run("list")
     assert listed.returncode == 0 and "an-item" in listed.stdout
     assert (tmp_path / ".local/state/agent-runner/queue.json").exists()
+    assert not (tmp_path / "old-state").exists()
 
 
 def test_empty_queue_has_nothing_next(q):
@@ -48,12 +50,12 @@ def test_empty_queue_has_nothing_next(q):
 
 
 def test_future_item_is_not_due(q):
-    q("add", "later", "--in", "2h")
+    q("add", "later", "--in", "2h", "--repo", "strelitzia")
     assert q("next").returncode == 1
 
 
 def test_failed_attempts_end_in_blocked(q):
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     for expected in ("queued", "blocked"):
         assert q("next").stdout.strip() == "strelitzia/plan-a"
         q("start", "plan-a")
@@ -62,7 +64,7 @@ def test_failed_attempts_end_in_blocked(q):
 
 
 def test_question_then_answer_requeues_with_fresh_attempts(q):
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     q("start", "plan-a")
     assert q("finish", "plan-a", q.result({"status": "question"})).stdout.strip() == "waiting-answer"
     q("answer", "plan-a", "use option B")
@@ -72,7 +74,7 @@ def test_question_then_answer_requeues_with_fresh_attempts(q):
 
 
 def test_answer_sets_resume_and_failed_attempt_clears_it(q):
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     q("start", "plan-a")
     q("set", "plan-a", "session_id=abc-123")
     q("finish", "plan-a", q.result({"status": "question"}))
@@ -86,17 +88,17 @@ def test_answer_sets_resume_and_failed_attempt_clears_it(q):
 
 
 def test_add_starts_without_resume(q):
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     q("start", "plan-a")
     q("set", "plan-a", "session_id=abc-123", "resume=1")
     q("finish", "plan-a", q.result({"status": "blocked"}))
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     assert q("get", "plan-a", "resume").returncode == 1
     assert q("get", "plan-a", "session_id").returncode == 1
 
 
 def test_unset_removes_the_key(q):
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     q("set", "plan-a", "resume=1")
     q("unset", "plan-a", "resume")
     assert q("get", "plan-a", "resume").returncode == 1
@@ -106,7 +108,7 @@ def test_unset_removes_the_key(q):
 def test_no_daily_cap_by_default(q, monkeypatch):
     monkeypatch.delenv("AGENT_MAX_RUNS_PER_DAY", raising=False)
     for slug in ("plan-a", "plan-b", "plan-c", "plan-d", "plan-e", "plan-f"):
-        q("add", slug)
+        q("add", slug, "--repo", "strelitzia")
     for slug in ("plan-a", "plan-b", "plan-c", "plan-d", "plan-e"):
         q("start", slug)
     assert q("next").stdout.strip() == "strelitzia/plan-f"
@@ -115,8 +117,8 @@ def test_no_daily_cap_by_default(q, monkeypatch):
 
 def test_daily_cap_and_pause_stop_runs(q, monkeypatch):
     monkeypatch.setenv("AGENT_MAX_RUNS_PER_DAY", "1")
-    q("add", "plan-a")
-    q("add", "plan-b")
+    q("add", "plan-a", "--repo", "strelitzia")
+    q("add", "plan-b", "--repo", "strelitzia")
     q("start", "plan-a")
     assert q("next").returncode == 1  # cap reached
     monkeypatch.setenv("AGENT_MAX_RUNS_PER_DAY", "5")
@@ -125,7 +127,7 @@ def test_daily_cap_and_pause_stop_runs(q, monkeypatch):
 
 
 def test_review_result_waits_for_preprod(q):
-    q("add", "plan-a")
+    q("add", "plan-a", "--repo", "strelitzia")
     q("start", "plan-a")
     assert q("finish", "plan-a", q.result({"status": "review", "pr": 12})).stdout.strip() == "awaiting-preprod"
     assert q("get", "plan-a", "pr").stdout.strip() == "12"
@@ -133,8 +135,8 @@ def test_review_result_waits_for_preprod(q):
 
 
 def test_after_waits_until_the_dependency_merged(q):
-    q("add", "first")
-    q("add", "second", "--after", "first")
+    q("add", "first", "--repo", "strelitzia")
+    q("add", "second", "--after", "first", "--repo", "strelitzia")
     assert q("next").stdout.strip() == "strelitzia/first"
     q("start", "first")
     q("finish", "first", q.result({"status": "review", "pr": 1}))
@@ -594,27 +596,37 @@ def test_inbox_comment_close(fake_gh):
     assert calls[1] == ["issue", "close", "42", "--repo", "o/r"]
 
 
-def test_queue_migrates_bare_keys_once(tmp_path, q):
+def test_queue_bare_keys_are_an_error(tmp_path, q):
     state = tmp_path / "state"
     state.mkdir()
     old = {"paused_until": None, "items": {
         "a": {"plan": "agents/plans/a.md", "status": "done", "not_before": "2026-10-01T00:00:00+00:00", "attempts": 1, "notes": []},
-        "b": {"plan": "agents/plans/b.md", "status": "queued", "not_before": "2026-10-01T00:00:00+00:00", "attempts": 0,
-              "notes": [], "after": "a"},
     }}
     (state / "queue.json").write_text(json.dumps(old))
-    assert q("next").stdout.strip() == "strelitzia/b"
-    data = json.loads((state / "queue.json").read_text())
-    assert sorted(data["items"]) == ["strelitzia/a", "strelitzia/b"]
-    assert data["items"]["strelitzia/b"]["after"] == "strelitzia/a"
-    assert data["items"]["strelitzia/a"]["repo"] == "strelitzia"
-    mtime = (state / "queue.json").stat().st_mtime_ns
-    q("list")
-    assert (state / "queue.json").stat().st_mtime_ns == mtime  # nothing left to migrate: not rewritten
+    out = q("next")
+    assert out.returncode != 0 and "migrate first" in out.stderr
+    assert json.loads((state / "queue.json").read_text()) == old  # not rewritten
+
+
+def test_queue_bare_after_is_an_error(tmp_path, q):
+    state = tmp_path / "state"
+    state.mkdir()
+    item = {"repo": "strelitzia", "slug": "b", "plan": "agents/plans/b.md", "status": "queued",
+            "not_before": "2026-10-01T00:00:00+00:00", "attempts": 0, "notes": [], "after": "a"}
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": {"strelitzia/b": item}}))
+    out = q("list")
+    assert out.returncode != 0 and "migrate first" in out.stderr
+
+
+def test_queue_add_requires_repo(q):
+    out = q("add", "x")
+    assert out.returncode != 0 and "--repo is required" in out.stderr
+    assert q("add", "strelitzia/x").returncode == 0
+    assert q("next").stdout.strip() == "strelitzia/x"
 
 
 def test_queue_after_across_repos(q):
-    q("add", "y")
+    q("add", "y", "--repo", "strelitzia")
     q("add", "x", "--repo", "engineerfamily", "--after", "strelitzia/y")
     q("set", "y", "status=running")
     assert q("next").returncode == 1
@@ -624,7 +636,7 @@ def test_queue_after_across_repos(q):
 
 
 def test_queue_ambiguous_bare_slug(q):
-    q("add", "x")
+    q("add", "x", "--repo", "strelitzia")
     q("add", "x", "--repo", "engineerfamily")
     out = q("set", "x", "status=done")
     assert out.returncode != 0

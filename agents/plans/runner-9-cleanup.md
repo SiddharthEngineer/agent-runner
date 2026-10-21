@@ -25,7 +25,7 @@ After a week on the new runner with no trouble (design Rollout step 7), the runn
 lock-checks only the new state dir. Keep reading the legacy inbox markers (old issues keep them).
 **Validate:** `pytest -q tests` → passes; the fallback tests are replaced by tests that the old paths are **not** read (with
 `HOME` holding only an old env file, `env_file()` → `None`).
-**Status:** ❌
+**Status:** ✅ 2026-10-21 (this commit)
 
 ### Task 2: `gate.py` requires `--config`
 **Runs:** unattended

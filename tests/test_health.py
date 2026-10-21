@@ -1,5 +1,6 @@
 """Tests for health.py: metrics, thresholds and the fixed cleanup rules. Never touches the real VPS state."""
 
+import fcntl
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -71,6 +72,16 @@ def test_memory_swap_load_not_cleanable(home, meminfo, fake_machine):
     fake_machine(load15=4.4)
     m = health.measure(meminfo=meminfo(available_mb=350, swap_free_mb=1000))
     assert keys(health.problems(m, health.thresholds())) == {("memory", False), ("swap", False), ("load", False)}
+
+
+def test_old_state_dir_is_ignored(home):
+    """$STRELITZIA_AGENT_STATE (set by the fixture) is neither cleaned nor lock-checked."""
+    assert health.state_dirs() == [home / "state"]
+    lock = home / "old-state/run.lock"
+    lock.parent.mkdir()
+    with lock.open("a") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        assert not health.run_lock_held()
 
 
 def test_thresholds_override_and_unknown_key(home):

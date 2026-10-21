@@ -15,7 +15,7 @@
 set -uo pipefail
 
 HERE=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
-STATE=${AGENT_RUNNER_STATE:-${STRELITZIA_AGENT_STATE:-$HOME/.local/state/agent-runner}}
+STATE=${AGENT_RUNNER_STATE:-$HOME/.local/state/agent-runner}
 LOCK=$STATE/preprod.lock
 Q=(python3 "$HERE/buildqueue.py")
 CFG=(python3 "$HERE/config.py")

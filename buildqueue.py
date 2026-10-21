@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Build queue for unattended agent runs (machine-local, never committed).
 
-State lives in $AGENT_RUNNER_STATE (default ~/.local/state/agent-runner; $STRELITZIA_AGENT_STATE is an alias
-until the cutover):
-  queue.json   items keyed `<repo>/<slug>` (a bare `<slug>` key from the old runner migrates to `$AGENT_DEFAULT_REPO/<slug>`)
+State lives in $AGENT_RUNNER_STATE (default ~/.local/state/agent-runner):
+  queue.json   items keyed `<repo>/<slug>` (a bare `<slug>` key from the old runner is an error)
   runs.jsonl   one line per started run (drives the optional daily cap)
 
 Every <slug> below may be a full `<repo>/<slug>` key, or a bare slug when exactly one repo has an item with it.
 
 Usage:
   buildqueue.py add <slug> [--repo NAME] [--at 2026-10-12T02:00 | --in 3h] [--after <repo/slug>] [--note TEXT]
-                                     --repo: default $AGENT_DEFAULT_REPO (strelitzia)
+                                     --repo: required unless <slug> is a `<repo>/<slug>` key
                                      --after: not runnable until that item is `done` (merged); any repo
   buildqueue.py list
   buildqueue.py cancel <slug>
@@ -47,8 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config  # noqa: E402
 
-STATE = Path(os.environ.get("AGENT_RUNNER_STATE") or os.environ.get("STRELITZIA_AGENT_STATE") or config.state_dir())
-DEFAULT_REPO = os.environ.get("AGENT_DEFAULT_REPO", "strelitzia")
+STATE = config.state_dir()
 QUEUE = STATE / "queue.json"
 RUNS = STATE / "runs.jsonl"
 MAX_ATTEMPTS = int(os.environ.get("AGENT_MAX_ATTEMPTS", "2"))
@@ -77,29 +75,10 @@ def load() -> dict:
     if not QUEUE.exists():
         return {"paused_until": None, "items": {}}
     data = json.loads(QUEUE.read_text())
-    if migrate(data):
-        save(data)
+    bare = sorted(k for k, it in data["items"].items() if "/" not in k or "/" not in it.get("after", "/"))
+    if bare:
+        sys.exit(f"{QUEUE}: bare keys from the old runner ({', '.join(bare)}): migrate first (key them `<repo>/<slug>`)")
     return data
-
-
-def migrate(data: dict) -> bool:
-    """Bare `<slug>` keys and `after` values (old runner) become `<DEFAULT_REPO>/<slug>`. True if anything changed."""
-    changed = False
-    items = {}
-    for key, it in data["items"].items():
-        if "/" not in key:
-            key = f"{it.get('repo') or DEFAULT_REPO}/{key}"
-            changed = True
-        repo, _, slug = key.partition("/")
-        if it.get("repo") != repo or it.get("slug") != slug:
-            it.update(repo=repo, slug=slug)
-            changed = True
-        if it.get("after") and "/" not in it["after"]:
-            it["after"] = f"{repo}/{it['after']}"
-            changed = True
-        items[key] = it
-    data["items"] = items
-    return changed
 
 
 def resolve(data: dict, ref: str) -> str:
@@ -150,6 +129,8 @@ def runs_last_day() -> int:
 def cmd_add(args: argparse.Namespace) -> int:
     data = load()
     repo, slug = args.slug.split("/", 1) if "/" in args.slug else (args.repo, args.slug)
+    if not repo:
+        sys.exit(f"add {args.slug}: --repo is required (or give a <repo>/<slug> key)")
     key = f"{repo}/{slug}"
     after = None
     if args.after:
@@ -337,7 +318,7 @@ def main() -> int:
     when = p.add_mutually_exclusive_group()
     when.add_argument("--at")
     when.add_argument("--in", dest="delay")
-    p.add_argument("--repo", default=DEFAULT_REPO, help="the plan's repo (default %(default)s)")
+    p.add_argument("--repo", help="the plan's repo (required unless <slug> is a <repo>/<slug> key)")
     p.add_argument("--after", help="repo/slug (or a slug in the same repo) that must be done (merged) first")
     p.add_argument("--note")
     p.set_defaults(fn=cmd_add)
