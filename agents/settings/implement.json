@@ -69,7 +69,11 @@
       "Edit(agents/runner.toml)",
       "Edit(.github/**)",
       "Edit(install.sh)",
-      "Edit(.claude/settings.json)"
+      "Edit(.claude/settings.json)",
+      "Bash(agent-runner release:*)",
+      "Bash(agent-runner install:*)",
+      "Bash(release.sh:*)",
+      "Bash(./release.sh:*)"
     ]
   }
 }

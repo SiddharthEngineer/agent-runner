@@ -85,6 +85,7 @@ def install(tmp_path, remote):
     go.current = lambda: os.path.realpath(go.share / "current")
     go.gh_json = bin_ / "gh.json"
     go.gh_log = bin_ / "gh.log"
+    go.remote = str(remote)
     return go
 
 
@@ -252,3 +253,113 @@ def test_validate_quick_skips_pytest():
     out = run(ROOT / "scripts/validate.sh", "--quick")
     assert (out.returncode, out.stdout) == (0, "PASS  bash -n\nPASS  py_compile\n"), out.stdout + out.stderr
     assert run(ROOT / "scripts/validate.sh", "--nope").returncode == 2
+
+
+def test_install_no_tag_takes_the_newest(install):
+    out = install()
+    assert out.returncode == 0 and "installed v0.0.5" in out.stdout, out.stdout + out.stderr
+    assert install.current() == str(install.share / "releases/v0.0.5")
+    out = install()
+    assert out.returncode == 0 and "v0.0.5 is the newest tag and already installed" in out.stdout
+    assert "validate" not in out.stdout
+
+
+def test_install_older_tag_says_it_rolls_back(install):
+    install("v0.0.3")
+    assert "rolling back" not in install("v0.0.5").stdout
+    out = install("v0.0.2")
+    assert out.returncode == 0 and "rolling back v0.0.5 -> v0.0.2" in out.stdout
+    assert install.current() == str(install.share / "releases/v0.0.2")
+
+
+def test_cli_install_runs_install_sh(install, tmp_path):
+    env = {"HOME": str(install.home), "AGENT_RUNNER_REMOTE": install.remote,
+           "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    out = run(ROOT / "agent-runner", "install", "v0.0.2", env={**os.environ, **env})
+    assert out.returncode == 0 and install.current() == str(install.share / "releases/v0.0.2"), out.stderr
+
+
+@pytest.fixture
+def release(tmp_path, remote, install):
+    """release.sh with a src clone of `remote`, one untagged commit on main, the same stub gh, and a stub installer."""
+    src, work = tmp_path / "src", tmp_path / "work"
+    run("git", "clone", "-q", remote, src)
+    (work / "new.txt").write_text("new\n")
+    git(work, "add", "-A")
+    git(work, "commit", "-qm", "an untagged change")
+    git(work, "push", "-q", remote, "main")
+    stub = tmp_path / "install-stub"
+    stub.write_text('#!/bin/sh\necho "install-stub $*"\n')
+    stub.chmod(0o755)
+    env = {**os.environ, "HOME": str(install.home), "AGENT_RUNNER_SRC": str(src), "AGENT_RUNNER_INSTALL": str(stub),
+           "PATH": f"{tmp_path / 'bin'}{os.pathsep}{os.environ['PATH']}"}
+    install.gh_json.write_text('[{"status": "completed", "conclusion": "success"}]')
+
+    def go(*args):
+        return run(ROOT / "agent-runner", "release", *args, env=env)
+
+    go.remote_tags = lambda: run("git", "--git-dir", remote, "tag", "-l").stdout.split()
+    go.gh_json = install.gh_json
+    go.work = work
+    return go
+
+
+def test_release_bumps_patch_and_pushes(release):
+    out = release()
+    assert out.returncode == 0, out.stderr
+    assert "v0.0.6 at origin/main" in out.stdout and "an untagged change" in out.stdout and "release 5" not in out.stdout
+    assert "pushed v0.0.6" in out.stdout and "agent-runner install v0.0.6" in out.stdout
+    assert "v0.0.6" in release.remote_tags()
+
+
+def test_release_given_version_must_be_newer(release):
+    for bad in ("v0.0.5", "v0.0.4", "v0.0.10.1", "v1.0", "1.0.0"):
+        out = release(bad)
+        assert out.returncode != 0 and "pushed" not in out.stdout, bad
+    assert "not newer than the newest tag, v0.0.5" in release("v0.0.5").stderr
+    out = release("v0.1.0")
+    assert out.returncode == 0 and "v0.1.0" in release.remote_tags(), out.stderr
+    assert "not newer than the newest tag, v0.1.0" in release("v0.0.9").stderr
+
+
+def test_release_version_order_is_numeric(release, remote):
+    git(release.work, "tag", "v0.0.9")
+    git(release.work, "push", "-q", remote, "v0.0.9")
+    git(release.work, "commit", "-qm", "another", "--allow-empty")
+    git(release.work, "push", "-q", remote, "main")
+    out = release()
+    assert out.returncode == 0 and "pushed v0.0.10" in out.stdout, out.stdout + out.stderr
+
+
+def test_release_refuses_unless_ci_green(release):
+    for runs, why in (([], "no CI run"), ([{"status": "in_progress", "conclusion": ""}], "still running"),
+                      ([{"status": "completed", "conclusion": "failure"}], "did not pass")):
+        release.gh_json.write_text(json.dumps(runs))
+        out = release()
+        assert out.returncode == 1 and why in out.stderr and "not tagging" in out.stderr
+    assert release.remote_tags() == [f"v0.0.{n}" for n in range(1, 6)]
+
+
+def test_release_refuses_when_main_already_tagged(release):
+    assert release().returncode == 0
+    out = release()
+    assert out.returncode == 1 and "already tagged v0.0.6" in out.stderr
+
+
+def test_release_dry_run_pushes_nothing(release):
+    out = release("--dry-run")
+    assert out.returncode == 0 and "v0.0.6 at origin/main" in out.stdout and "dry run" in out.stdout
+    assert "v0.0.6" not in release.remote_tags()
+
+
+def test_release_install_hands_the_tag_to_install(release):
+    out = release("--install", "v0.2.0")
+    assert out.returncode == 0 and "install-stub v0.2.0" in out.stdout, out.stderr
+
+
+def test_release_and_install_denied_to_agents():
+    for f in ("agents/settings/implement.json", "agents/settings/validate.json", "settings/validate.json",
+              "settings/triage.json", "settings/health-diagnose.json"):
+        deny = json.loads((ROOT / f).read_text())["permissions"]["deny"]
+        for cmd in ("agent-runner release", "agent-runner install", "release.sh"):
+            assert f"Bash({cmd}:*)" in deny, (f, cmd)
