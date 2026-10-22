@@ -40,6 +40,8 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A17 | `install.sh` skips the test suite when CI passed on the tag | [runner-12-fast-install](plans/done/runner-12-fast-install.md) | agent-runner | ✅ #75 | A16 |
 | A18 | Finished plans move to `agents/plans/done/` (`/implement` does it; validators find moved plans; move today's 18) | [plans-done-folder](plans/done/plans-done-folder.md) | agent-runner | ✅ PR open 2026-10-21 | - |
 | A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/done/runner-13-preprod-holds.md) | agent-runner | ✅ PR open 2026-10-22 | - |
+| A20 | Stage checklist at the top of every runner PR's description, refreshed each tick (all repos) | [runner-14-pr-checklist](plans/runner-14-pr-checklist.md) | agent-runner | ⏳ queued 2026-10-22 (front of the queue, user) | - |
+| A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/runner-15-versions.md) | agent-runner | ⏳ queued 2026-10-22 | A20 |
 
 ## Manual steps (you)
 
@@ -54,8 +56,11 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM5 | Cutover (design Rollout steps 2, 3, 5, 6): the dry run, draining the old queue, installing the latest tag, swapping the crontab line to `*/5 * * * * $HOME/.local/bin/agent-runner run`, and the smoke tests in each repo. Rollback: restore the old crontab line. Done 2026-10-19: smoke tests passed in all three repos (engineerfamily #45 and Strelitzia #84 merged by the runner; agent-runner by [smoke-roadmap-cutover](plans/done/smoke-roadmap-cutover.md)), and the review path ran to preprod on engineerfamily #49 and the second review smoke. | ☑ |
 | AM6 | A week after AM5 with no trouble: queue S2, then delete `~/.config/strelitzia-agent` and `~/.local/state/strelitzia-agent`. Done 2026-10-21, two days early (user: no live users): S2 queued now, both dirs deleted after a backup to `~/backups/strelitzia-agent-am6-20261021.tgz`. | ☑ |
 | AM7 | After A19 merges: `agent-runner release --install`, so the runner uses it (engineerfamily E3's validation benefits; E3 doesn't need it to pass). | ☐ |
+| AM8 | After A20 and A21 merge: `agent-runner release --install`. Until then PRs show no status block and nothing is tagged. | ☐ |
+| AM9 | Once, after AM8 and engineerfamily E11 merge: `agent-runner versions promote engineerfamily v1.3.3` (what prod runs). The next tick tags main `v1.4.0` and opens the `v1.4` pre-release. | ☐ |
 
 ## Decisions (current)
+- 2026-10-22 (user): status visible without Claude or the VPS: a stage checklist on every runner PR (A20), and per-merge patch tags with a `vX.Y` pre-release promoted to a full release on each prod deploy (A21, engineerfamily E11). The runner tags; prod stays manual (`make prod-release`).
 - 2026-10-21 (user): close AM6 now instead of waiting the full week; there are no live users, so a break is acceptable.
 - 2026-10-19 (user): Everything left in the queue builds with no manual approval: the implementer and validator merge to the base
   and put preprod on it. S2 and A14 are queued (S2 not before 2026-10-26), A14 no longer waits for AM6. Prod deploys and installs stay manual.
