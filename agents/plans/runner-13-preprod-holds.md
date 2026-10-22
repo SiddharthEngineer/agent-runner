@@ -52,7 +52,7 @@ re-queues (and still notifies when out of attempts); add to every notice from th
 **What:** README: the review-stage rule for preprod-only tasks, a line that plans put preprod checks in Human test
 steps, and the new `changes`/`blocked` preprod outcomes. ROADMAP: A19 row ✅ with the PR; AM7 stays for the user.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (4c7448a)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
