@@ -48,7 +48,7 @@ then `gh pr edit --body-file` only when the body changes. A `gh` failure logs on
 Tests: a render per stage (low tier, review path, changes re-run, approve, on-preprod, preprod changes, merged with N left,
 blocked, no-preprod repo), `apply` idempotent and body-preserving.
 **Validate:** `uv run --with pytest pytest -q tests/test_prstatus.py` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 2: the runner records what the block needs and refreshes it
 **Runs:** unattended
