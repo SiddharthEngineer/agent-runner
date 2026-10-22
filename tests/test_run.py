@@ -57,7 +57,7 @@ def runner(tmp_path):
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id; triage prints $STUB_TRIAGE.
     write_stub(bin_dir / "claude", "claude",
-               'if [[ "$*" == *"preprod stage"* ]]; then\n'
+               'if [[ "$*" == *", preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
                '  echo "${PREPROD_NETRC:-}" >> "$STUB_LOG.netrc"\n'
                '  cat "$(echo "$*" | grep -o -- "--settings [^ ]*" | cut -d" " -f2)" >> "$STUB_LOG.settings"\n'

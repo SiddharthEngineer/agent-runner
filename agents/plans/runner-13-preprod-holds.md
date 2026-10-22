@@ -33,7 +33,7 @@ Two runner problems from engineerfamily PR #63 (2026-10-21), which ended `blocke
 or What line says so) and is `⏭️ skipped` for that reason: note it in the review as "left for the preprod stage", not as a
 defect. Keep the prompt's placeholders (`{repo}`, `{pr}`, `{{…}}`) intact.
 **Validate:** `.venv/bin/pytest -q tests/test_review.py` (or `uv run pytest -q tests/test_review.py`) passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22
 
 ### Task 2: keep a failed PR on preprod
 **Runs:** unattended
