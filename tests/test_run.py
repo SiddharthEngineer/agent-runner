@@ -55,7 +55,13 @@ def runner(tmp_path):
     (code / "inbox.py").write_text(stub.replace("sys.exit(", 'sys.argv[1] == "notify" and print("https://github.com/o/inbox/issues/5")\nsys.exit('))
     write_stub(code / "preprod.sh", "preprod", '[ "$1" = release ] && exit "${STUB_RELEASE_EXIT:-0}"\nexit 0\n')
     write_py_stub(code / "health.py", "health", "STUB_HEALTH_EXIT")
-    write_py_stub(code / "versions.py", "versions", "STUB_VERSIONS_EXIT")
+    # versions.py: the real functions (prstatus.py imports them), but running it only logs and exits $STUB_VERSIONS_EXIT.
+    real = (code / "versions.py").read_text()
+    main = 'if __name__ == "__main__":\n    sys.exit(main(sys.argv[1:]))\n'
+    assert real.endswith(main)
+    (code / "versions.py").write_text(real.removesuffix(main) + 'if __name__ == "__main__":\n'
+                                      + "".join("    " + line + "\n" for line in
+                                                PY_STUB.format(name="versions", exit_env="STUB_VERSIONS_EXIT").splitlines()))
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id; triage prints $STUB_TRIAGE.
@@ -275,7 +281,7 @@ def test_versions_sync_failure_notifies_once_per_cause(runner):
     runner(STUB_VERSIONS_EXIT="3")
     assert len(notices()) == 1 and "versions sync for engineerfamily waits for a promote" in notices()[0]
     runner(STUB_VERSIONS_EXIT="4")  # not set up for releases: quiet, and the cause is cleared
-    assert len(notices()) == 1 and "versions engineerfamily" not in runner.runs_log()
+    assert len(notices()) == 1 and runner.runs_log().count("versions engineerfamily: exit 3") == 1  # logged once too
     runner(STUB_VERSIONS_EXIT="1")
     assert len(notices()) == 2 and "versions sync for engineerfamily failed" in notices()[1]
     assert runner.out.returncode == 0

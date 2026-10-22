@@ -291,3 +291,10 @@ def test_config_release_section(tmp_path):
     path.write_text(TOML + '[release]\ntags = "yes"\n')
     with pytest.raises(config.ConfigError, match="release.tags must be true or false"):
         config.load(path)
+
+
+def test_local_only_tag_is_ignored(world):
+    world.git("tag", "v9.9.9", where=world.clone)  # in the dev clone, never pushed
+    world.merge_pr(71, "One")
+    assert world.run("sync", "demo").returncode == 0
+    assert sorted(world.remote_tags()) == ["v1.4.3", "v1.5.0"]

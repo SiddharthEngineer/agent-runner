@@ -43,6 +43,7 @@ Agents never push tags or run `install.sh`.
 | `config` | `config.py` | `check`/`get` a repo's `agents/runner.toml` (refuses prod commands) |
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
 | `preprod` | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
+| `versions` | `versions.py` | Tags and GitHub releases for repos with `[release]`: `sync`, `promote`, `status` (see Versions and releases) |
 | `run` | `run.sh` | The cron entry (manager) |
 | `check-commands` | `commands_diff.py` | How the repos' `.claude/commands` differ once repo names, base branches and validate commands are swapped for placeholders |
 | `version` | | The installed tag |
@@ -233,6 +234,32 @@ Every PR the runner builds, in every registered repo, starts with a status block
   to 14 days). It is derived from queue state, so PRs opened before this and stale blocks catch up within one tick. The
   body is edited only when the block changes (the time aside); a `gh` failure logs one line in `runs.log`.
 - **Editing:** anything inside the markers is overwritten; the rest of the description is never touched.
+- **Release:** in a repo with `[release]`, a merged PR's stage 5 adds "released in v1.4.4 (pre-release v1.4)": the
+  oldest tag containing its merge commit. The block isn't final until that tag exists.
+
+## Versions and releases (`versions.py`)
+GitHub Releases show what is on prod and preprod, for a repo whose `agents/runner.toml` has a `[release]` table
+(`tags = true` is the default; `tags = false` turns it off again):
+
+- **Every PR merged to the base gets the next patch tag.** Newest tag `v1.4.3` → `v1.4.4`, an annotated tag on the PR's
+  merge commit, listing the PR. `run.sh` runs `agent-runner versions sync <repo>` right after each runner merge (before the
+  preprod redeploy, so preprod shows the tag) and every tick after the inbox poll (to catch PRs merged by hand). One sync
+  makes one tag, on the newest merge commit, listing every PR since the last tag. Commits pushed straight to the base
+  without a PR aren't tagged.
+- **One pre-release per minor version**, titled `v1.4`, always on the minor's newest tag. Its notes list every patch,
+  newest first: `- v1.4.4 · #71 Wordle: nginx /wordle/ (2026-10-23)`.
+- **Prod deploy promotes it:** `agent-runner versions promote <repo> [<tag>]` (default: the newest tag; your
+  `make prod-release` runs it) makes `vX.Y` a full, Latest release on that tag, with "Deployed to prod <date> at <tag>"
+  added. The next merge then starts `vX.(Y+1).0` and a `vX.(Y+1)` pre-release. `--next-major` makes it `v(X+1).0.0`
+  instead. Major bumps happen only that way.
+- **Bootstrap (exit 3):** sync never guesses where to start. With no `vX.Y.Z` tag yet, or a newest tag that the runner
+  didn't make and whose minor has no release, it pushes nothing and says
+  "no release for vX.Y yet: run `agent-runner versions promote <repo> <tag>` for what prod runs". Tag what prod runs,
+  promote it, and the next merge is tagged.
+- **Failures:** a failed sync or an exit 3 sends one inbox notice per cause, and never blocks the tick or the redeploy.
+  A release step that failed after its tag was pushed is repaired by the next sync. `agent-runner versions status <repo>`
+  shows the newest tag, the open pre-release and the newest full release. `--dry-run` works on `sync` and `promote`.
+- Only this runner code pushes tags or edits releases. Claude sessions never do.
 
 ## Day to day
 - Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).

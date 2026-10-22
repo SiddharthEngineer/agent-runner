@@ -60,11 +60,15 @@ versions_sync() {
     local out rc cause seen=$STATE/versions/$1.notice what
     out=$(python3 "$HERE/versions.py" sync "$1" 2>&1)
     rc=$?
-    [ -n "$out" ] && [ "$rc" != 4 ] && say "versions $1: ${out//$'\n'/ · }"
-    case $rc in 0|4) rm -f "$seen"; return 0 ;; esac
+    case $rc in
+        0|4) [ -n "$out" ] && [ "$rc" = 0 ] && say "versions $1: ${out//$'\n'/ · }"
+             rm -f "$seen"
+             return 0 ;;
+    esac
     cause=$(printf '%s\n' "$out" | tail -n1)
     [ -n "$cause" ] || cause="exit $rc"
-    [ -f "$seen" ] && [ "$(cat "$seen")" = "$cause" ] && return 0
+    [ -f "$seen" ] && [ "$(cat "$seen")" = "$cause" ] && return 0  # logged and notified when it first happened
+    say "versions $1: exit $rc${out:+: ${out//$'\n'/ · }}"
     [ -n "${AGENT_INBOX_REPO:-}" ] || return 0
     what="failed"
     [ "$rc" = 3 ] && what="waits for a promote"

@@ -7,7 +7,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 ## Map
 | Path | What |
 |---|---|
-| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `usage`, `config`, `health`, `preprod`, `run`, `version`, `release`, `install` (the last two are the user's) |
+| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `usage`, `config`, `health`, `preprod`, `versions`, `run`, `version`, `release`, `install` (the last two are the user's) |
 | `install.sh` | `install.sh [<tag>]` (`agent-runner install`): mirror, release worktree, validate, switch `current` atomically (the user runs it) |
 | `release.sh` | `agent-runner release [vX.Y.Z]`: tag `origin/main` as the next version and push it (the user runs it) |
 | `ci.sh` | Shared by both: CI verdict on a commit, newest `vX.Y.Z` tag, version compare |
@@ -21,6 +21,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis, idle Claude sessions on memory notices), `gate`, `sessions` |
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
 | `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, review stage), `preprod-check.md` (validator, preprod stage) |
+| `versions.py` | Repos with `[release]`: `sync` gives each merged PR the next patch tag and keeps a `vX.Y` pre-release; `promote` (the user's, on prod deploy) makes it full; `status` |
 | `prstatus.py` | The status block at the top of every runner PR: `update <key>` after a transition, `sync` each tick |
 | `mcp_config.py` | Per-run Playwright MCP config for the preprod stage (basic auth, storage state; 0600, deleted after) |
 | `commands_diff.py` | `agent-runner check-commands <repo>…`: how the repos' PIV commands differ |
@@ -36,6 +37,7 @@ Seeded on 2026-10-19 from Strelitzia `scripts/agent/` at c4873de. Since the cuto
 
 ## Rules
 - Standard library only (Python 3.11+, `tomllib`). bash for the cron entry points.
-- Never deploy prod, push tags, run `agent-runner release`/`install`, edit the user's crontab or `~/.config/agent-runner/*`: those are the user's (Manual steps in the ROADMAP).
+- Never deploy prod, run `agent-runner release`/`install`/`versions promote`, edit the user's crontab or `~/.config/agent-runner/*`: those are the user's (Manual steps in the ROADMAP).
+- Agents never push tags or edit releases. Only the runner's `versions sync` does, for repos with `[release]`.
 - Tests never touch the real config or state dirs: set `HOME`/`AGENT_RUNNER_STATE` to a temp dir.
 - Never put secrets, personal data or job data in an inbox issue, a plan or a log line.

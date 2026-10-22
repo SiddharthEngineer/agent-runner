@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import buildqueue  # noqa: E402
 import config  # noqa: E402
+import versions  # noqa: E402
 
 START = "<!-- agent-runner:status -->"
 END = "<!-- /agent-runner:status -->"
@@ -236,11 +237,13 @@ def release_tag(repo: str, sha: str) -> str:
     path = config.repo_env(repo).get("AGENT_REPO")
     if not sha or not path:
         return ""
-    out = subprocess.run(["git", "-C", path, "tag", "--contains", sha, "-l", "v*"], capture_output=True, text=True,
-                         timeout=30)
-    found = sorted((t for t in out.stdout.split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)),
-                   key=lambda t: tuple(int(n) for n in t[1:].split(".")))
-    return f"{found[0]} (pre-release {found[0].rsplit('.', 1)[0]})" if found else ""
+    try:
+        out = subprocess.run(["git", "-C", path, "tag", "--contains", sha, "-l", "v*"], capture_output=True, text=True,
+                             timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    found = versions.tag_sort(out.split())
+    return f"{found[0]} (pre-release {versions.minor(found[0])})" if found else ""
 
 
 def gh(*args: str) -> str:

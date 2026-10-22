@@ -55,6 +55,7 @@ class Repo:
     github: str
     base: str
     release: config.Release | None
+    remote: set[str] | None = None  # the tags on origin; a tag only in the local clone doesn't count
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -96,8 +97,9 @@ def open_repo(name: str) -> Repo:
     if not path or not Path(path).is_dir():
         raise Fail(f"{name}: no AGENT_REPO clone in ~/.config/agent-runner/repos/{name}.env", OFF)
     probe = Repo(name, Path(path), "", "", None)
-    git(probe, "fetch", "-q", "--tags", "origin")
-    head = git(probe, "rev-parse", "--abbrev-ref", "origin/HEAD", check=False).stdout.strip() or "origin/main"
+    fetched = git(probe, "fetch", "-q", "--tags", "origin", check=False)
+    head = git(probe, "rev-parse", "--abbrev-ref", "origin/HEAD", check=False).stdout.strip() \
+        or f"origin/{config.repo_env(name).get('AGENT_BASE') or 'main'}"  # as run.sh's load_item
     text = git(probe, "show", f"{head}:agents/runner.toml", check=False)
     if text.returncode != 0:
         raise Fail(f"{name}: no agents/runner.toml on {head}", OFF)
@@ -108,12 +110,24 @@ def open_repo(name: str) -> Repo:
             cfg = config.load(Path(f.name))
         except config.ConfigError as exc:
             raise Fail(f"{name}: runner.toml refused: {exc}", OFF) from exc
-    return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, cfg.release)
+    if cfg.release is None:  # not opted in: a failed fetch is none of our business
+        return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, None)
+    if fetched.returncode != 0:
+        err = fetched.stderr.strip().splitlines()
+        raise Fail(f"{name}: git fetch failed: {err[-1] if err else f'exit {fetched.returncode}'}")
+    remote = {line.rpartition("refs/tags/")[2] for line in
+              git(probe, "ls-remote", "--tags", "--refs", "origin", "v*").stdout.splitlines()}
+    return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, cfg.release, remote)
 
 
 def tags(repo: Repo) -> list[str]:
-    """Every vX.Y.Z tag, oldest version first."""
+    """Every vX.Y.Z tag (on origin, once known), oldest version first."""
     names = git(repo, "tag", "-l", "v*").stdout.split()
+    return sorted((t for t in names if TAG_RE.match(t) and (repo.remote is None or t in repo.remote)), key=version)
+
+
+def tag_sort(names: list[str]) -> list[str]:
+    """The vX.Y.Z names among <names>, oldest version first."""
     return sorted((t for t in names if TAG_RE.match(t)), key=version)
 
 
@@ -157,16 +171,15 @@ def pending(repo: Repo, newest: str) -> list[dict]:
     """PRs merged to the base whose merge commit is on origin/<base> but not in <newest>, oldest merge first."""
     prs = json.loads(gh("pr", "list", "--repo", repo.github, "--state", "merged", "--base", repo.base, "--limit", "100",
                         "--json", "number,title,mergeCommit,mergedAt") or "[]")
-    out = []
-    for pr in prs:
-        sha = (pr.get("mergeCommit") or {}).get("oid")
-        if not sha:
-            continue
-        on_base = git(repo, "merge-base", "--is-ancestor", sha, f"origin/{repo.base}", check=False).returncode == 0
-        tagged = git(repo, "merge-base", "--is-ancestor", sha, newest, check=False).returncode == 0
-        if on_base and not tagged:
-            out.append({**pr, "sha": sha})
+    untagged = commits(repo, newest, f"origin/{repo.base}")
+    out = [{**pr, "sha": pr["mergeCommit"]["oid"]} for pr in prs
+           if (pr.get("mergeCommit") or {}).get("oid") in untagged]
     return sorted(out, key=lambda pr: pr.get("mergedAt") or "")
+
+
+def commits(repo: Repo, since: str, until: str) -> set[str]:
+    """The commits in <until> but not in <since>."""
+    return set(git(repo, "rev-list", f"{since}..{until}").stdout.split())
 
 
 def next_tag(newest: str, rel: dict, rel_body: str) -> str:
@@ -204,7 +217,8 @@ def sync(repo: Repo, dry_run: bool) -> int:
         if rel is None:  # the runner's own tag whose release failed last time: patch on, the release is made below
             rel = {"isPrerelease": True}
         target = prs[-1]["sha"]
-        prs = [pr for pr in prs if git(repo, "merge-base", "--is-ancestor", pr["sha"], target, check=False).returncode == 0]
+        in_target = commits(repo, newest, target)
+        prs = [pr for pr in prs if pr["sha"] in in_target]
         new = next_tag(newest, rel, "" if rel["isPrerelease"] else body(repo, rel))
         listed = [f"#{pr['number']} {pr['title']}" for pr in reversed(prs)]
         say(dry_run, f"tag {new} on {target[:7]} ({', '.join(listed)}) and push it")
@@ -217,6 +231,8 @@ def sync(repo: Repo, dry_run: bool) -> int:
         except Fail:
             git(repo, "tag", "-d", new, check=False)  # the next sync tries again from the same state
             raise
+        if repo.remote is not None:
+            repo.remote.add(new)
         newest = new
         rel = find(rels, minor(newest))
 

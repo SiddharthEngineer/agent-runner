@@ -1,7 +1,7 @@
 # Plan: the runner tags every merge and keeps a GitHub pre-release per minor version
-**Status:** 🔁 In progress
+**Status:** ✅ Done 2026-10-22
 **Risk:** low (no prod impact; runner programme PRs auto-merge on green CI, user 2026-10-19)
-**Depends on:** A20 [runner-14-pr-checklist](done/runner-14-pr-checklist.md) (`prstatus.py`); goes live only with AM8
+**Depends on:** A20 [runner-14-pr-checklist](runner-14-pr-checklist.md) (`prstatus.py`); goes live only with AM8
 
 ## Goal
 GitHub Releases show what is on prod and preprod (user, 2026-10-22). For a repo whose `runner.toml` has `[release]`
@@ -67,7 +67,7 @@ or the redeploy. `prstatus.py` stage 5 adds "released in v1.4.4 (pre-release v1.
 map row for `versions.py`; the rule "never push tags" becomes "agents never push tags or edit releases; only the
 runner's `versions sync` does, for repos with `[release]`". ROADMAP: A21 ✅ with the PR.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
