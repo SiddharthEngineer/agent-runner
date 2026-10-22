@@ -51,7 +51,7 @@ def test_low_tier_merged():
 
 
 def test_low_tier_not_merged_holds_at_merge():
-    out = lines(block(status="blocked", tier="low", issue="https://github.com/o/inbox/issues/5",
+    out = lines(block(status="blocked", tier="low", notice="https://github.com/o/inbox/issues/5",
                       last_result={"summary": "PR #9 not merged: CI is red or timed out"}))
     assert out[1].startswith("**Runner status:** ⏸ Merge: blocked: PR #9 not merged: CI is red or timed out "
                              "(https://github.com/o/inbox/issues/5)")
@@ -116,6 +116,11 @@ def test_merged_nothing_left():
     assert "✅ Merged; nothing left for you" in out[1]
 
 
+def test_summary_mentioning_by_hand_is_not_merged_by_hand():
+    out = lines(block(status="done", tier="low", last_result={"summary": "Steps 3-4 must be done by hand."}))
+    assert out[1].startswith("**Runner status:** ✅ Merged ·")
+
+
 def test_merged_by_hand():
     out = lines(block(status="done", tier="review", last_result={"summary": "PR #9 merged by hand"}))
     assert "✅ Merged by hand" in out[1]
@@ -124,11 +129,13 @@ def test_merged_by_hand():
 
 @pytest.mark.parametrize("fields, at, why", [
     (dict(review_verdict="blocked", review_summary="Can't run the tests."), 3, "Validator review: blocked: Can't run the tests"),
-    (dict(review_verdict="approve", preprod_verdict="blocked"), 5, "Preprod checks: blocked"),
+    (dict(review_verdict="approve", preprod_verdict="blocked", preprod_summary="Login 500s."), 5,
+     "Preprod checks: blocked: Login 500s"),
+    (dict(review_verdict="approve", rerun="preprod", review_attempts=2), 3, "Validator review: blocked"),
     (dict(last_result={"summary": "Missing access."}), 2, "Implementer: blocked: Missing access"),
 ])
 def test_blocked_shows_where_and_the_issue(fields, at, why):
-    out = lines(block(status="blocked", tier="review", issue="https://github.com/o/inbox/issues/3", **fields))
+    out = lines(block(status="blocked", tier="review", notice="https://github.com/o/inbox/issues/3", issue=1, **fields))
     assert out[1].startswith(f"**Runner status:** ⏸ {why}"), out[1]
     assert "(https://github.com/o/inbox/issues/3)" in out[1]
     assert out[at].startswith(f"{at - 1}. ⏸")
@@ -255,12 +262,14 @@ def test_sync_picks_items_and_finalises_done(cli):
         "engineerfamily/d": item(status="done", tier="low"),
         "engineerfamily/e": item(status="done", tier="low", updated=old),
         "engineerfamily/f": item(status="done", tier="low", pr_status_final=1),
+        "engineerfamily/h": item(status="blocked", updated=old),
+        "engineerfamily/i": item(updated="not a date"),  # one bad item doesn't stop the rest
         "other/g": item(),  # no runner.toml for this repo yet
     })
     out = cli("sync")
     assert out.returncode == 0, out.stderr
     assert len([c for c in cli.calls() if c.startswith("gh pr view")]) == 2  # a and d
-    assert "other/g: no runner.toml" in out.stdout
+    assert "other/g: no runner.toml" in out.stdout and "engineerfamily/i: skipped (ValueError" in out.stdout
     items = cli.items()
     assert items["engineerfamily/d"].get("pr_status_final") == 1 and items["engineerfamily/d"]["updated"] != old
     assert "pr_status_final" not in items["engineerfamily/a"]

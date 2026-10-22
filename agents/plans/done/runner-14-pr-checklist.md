@@ -82,3 +82,6 @@ tick, starts with the block, and its first line matches `agent-runner queue list
 2. The block is derived from queue state every tick (not only at transitions), so PRs opened before this ships, and
    anything a missed update left stale, catch up within 5 minutes.
 3. Stage 5's release line ("Released in v1.4.2") comes in A21 (runner-15-versions).
+4. 2026-10-22 (implementer, from self-review): a block's notice URL goes in a new `notice` field, not `issue`: `issue` is
+   the agent-question issue `inbox.py poll` reads, so a stale notice there could be taken as the question. Also added
+   `rerun` (review/preprod, which check asked for changes) and `preprod_summary`, so the block knows where an item stopped.

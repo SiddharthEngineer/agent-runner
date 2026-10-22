@@ -671,7 +671,8 @@ def test_blocked_notice_url_is_recorded(runner):
     key = awaiting_review(runner, attempts=2)
     runner(STUB_REVIEW=verdict("changes"))
     assert runner.status(key) == "blocked"
-    assert runner.queue("get", key, "issue").stdout.strip() == "https://github.com/o/inbox/issues/5"
+    assert runner.queue("get", key, "notice").stdout.strip() == "https://github.com/o/inbox/issues/5"
+    assert runner.queue("get", key, "issue").returncode == 1  # the agent-question field is left alone
 
 
 def test_dry_run_syncs_without_editing(runner):

@@ -71,13 +71,13 @@ if ! python3 "$HERE/health.py" gate >/dev/null 2>&1; then
 fi
 
 # notify <title> <body>: an agent-notice issue labelled with the repo. Its URL lands in $notice_url and in the item's
-# `issue` field, which the PR status block links while the item is blocked.
+# `notice` field, which the PR status block links while the item is blocked (`issue` stays the agent-question issue).
 notify() {
     notice_url=
     [ -n "$DRY" ] && { say "dry run: would notify: $1"; return 0; }
     [ -n "${AGENT_INBOX_REPO:-}" ] || return 0
     notice_url=$(python3 "$HERE/inbox.py" notify --slug "$key" --project "$repo" --title "$1" --body "$2" | tail -n1)
-    [ -n "$notice_url" ] && "${Q[@]}" set "$key" "issue=$notice_url"
+    [ -n "$notice_url" ] && "${Q[@]}" set "$key" "notice=$notice_url"
     return 0
 }
 # pr_status: refresh the item's PR status block (prstatus.py), right after a transition. Never fails the tick.
@@ -301,7 +301,7 @@ closed_by_hand() {
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
     local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held
-    local comment left_count
+    local comment left_count since
     pr=$("${Q[@]}" get "$key" pr)
     url=$(cfg preprod.health | head -n1 | cut -f1)
     host=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url")
@@ -339,6 +339,7 @@ json.dump(s, open(sys.argv[2], "w"))' "$vsettings" "$tmpd/settings.json"
 base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
         "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$(pr_plan "$pwt")" "$base_url" "$presult" "$signed")
     say "$key: validator (preprod) start for PR #$pr, signed_in=$signed (log $plog)"
+    since=$(stamp)
     (
         cd "$pwt" || exit 1
         PREPROD_NETRC=$netrc AGENT_SLUG=$key AGENT_RESULT_FILE=$presult timeout --kill-after=2m 45m claude -p "$vprompt" \
@@ -360,9 +361,12 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
         summary="The preprod validator wrote no verdict $tries times. Log: $plog (on the VPS)."
     fi
     "${Q[@]}" set "$key" "preprod_verdict=$verdict"
-    # The validator's checklist comment: the newest comment by the runner's account.
-    comment=$(gh pr view "$pr" --repo "$GH_REPO" --json comments -q '[.comments[] | select(.viewerDidAuthor)] | last | .url // empty' 2>/dev/null)
+    # The validator's checklist comment: the newest comment by the runner's account since the validator started.
+    comment=$(gh pr view "$pr" --repo "$GH_REPO" --json comments \
+        -q "[.comments[] | select(.viewerDidAuthor and .createdAt >= \"$since\")] | last | .url // empty" 2>/dev/null)
+    "${Q[@]}" unset "$key" preprod_comment
     [ -n "$comment" ] && "${Q[@]}" set "$key" "preprod_comment=$comment"
+    "${Q[@]}" set "$key" "preprod_summary=$summary"
     # After changes or blocked the PR keeps preprod, so the user can look at it. The lock frees itself when the PR is merged
     # or closed (preprod.sh status), or when the fixed PR is deployed again over its own hold.
     held="It stays on preprod ($base_url) so you can look. Close the PR, or run \`agent-runner preprod release $repo\`, to free preprod."
@@ -434,6 +438,7 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
     case $verdict in
         changes|approve|blocked) "${Q[@]}" set "$key" "review_verdict=$verdict" "review_summary=$summary" ;;
     esac
+    [ "$verdict" = approve ] && "${Q[@]}" unset "$key" rerun
     case $verdict in
         changes)
             "${Q[@]}" set "$key" rerun=review
@@ -640,6 +645,8 @@ case "$new" in
     done|awaiting-preprod|awaiting-review)
         git -C "$AGENT_REPO" worktree remove --force "$wt" ;;
     blocked)
+        # Blocked at the implementer: an earlier stage's verdict no longer says where it is (the PR status block).
+        [ -z "${not_merged:-}" ] && "${Q[@]}" unset "$key" rerun review_verdict review_summary
         if [ -n "${not_merged:-}" ]; then
             notify "PR #$pr not merged: $not_merged" "https://github.com/$GH_REPO/pull/$pr stays open, labelled ci-failed. Fix it and merge by hand, or re-queue $key. Log: $log (on the VPS)."
         else

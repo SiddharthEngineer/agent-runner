@@ -3,8 +3,8 @@
 
 Usage:
   prstatus.py update <key> [--dry-run]   refresh one item's PR (run.sh, right after a transition)
-  prstatus.py sync [--dry-run]           refresh every item with a PR that isn't cancelled, plus `done` items whose block
-                                         isn't final yet (up to 14 days old); run.sh, once per tick
+  prstatus.py sync [--dry-run]           refresh every item with a PR that isn't cancelled and changed in the last 14 days
+                                         (a `done` item until its final block is written); run.sh, once per tick
 
 The block is derived from queue fields only (`render`), between two HTML-comment markers (`apply`); the rest of the body
 is never touched. The PR's repo, base and `[preprod]` come from the copy of its runner.toml that run.sh keeps in
@@ -66,7 +66,7 @@ def issue_link(issue) -> str:
 
 def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, base: str = "main") -> str:
     """The status block for one queue item (no network)."""
-    max_attempts = int(os.environ.get("AGENT_MAX_ATTEMPTS", "2"))
+    max_attempts = buildqueue.MAX_ATTEMPTS
     status = item.get("status", "")
     rv, pv, rerun = item.get("review_verdict"), item.get("preprod_verdict"), item.get("rerun")
     summary = (item.get("last_result") or {}).get("summary", "")
@@ -76,7 +76,8 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         else "low" if status == "done" else None)
     attempt = item.get("attempts", 0) + (status == "queued")
     attempt_txt = f"attempt {attempt}/{max_attempts}"
-    issue = issue_link(item.get("issue"))
+    # A question links its agent-question issue (`issue`, inbox.py ask); a block links the newest notice (`notice`, run.sh).
+    issue = issue_link(item.get("issue") if status in ("waiting-answer", "question") else item.get("notice"))
 
     steps = f"{human_steps} Human test steps"
     if human_steps == 0 and has_preprod:
@@ -112,18 +113,22 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
 
     def failed_stage() -> int:
         """Where a blocked or waiting item stopped (0-based)."""
-        if pv == "approve" or (rv == "approve" and not has_preprod) or tier == "low":
+        if pv == "approve":
             return 4
-        if pv in ("blocked", "changes") or rerun == "preprod":
+        if pv == "blocked" or item.get("preprod_attempts"):
             return 3
-        if rv in ("blocked", "changes") or rerun == "review" or item.get("review_attempts"):
+        if rv == "blocked" or item.get("review_attempts"):
             return 1
+        if rerun:  # `changes` out of attempts (run.sh clears `rerun` when the implementer itself is blocked)
+            return 3 if rerun == "preprod" else 1
+        if (rv == "approve" and not has_preprod) or (tier == "low" and "not merged" in summary):
+            return 4
         return 0
 
     rerun_note = first_sentence(item.get("review_summary") if rerun == "review" and item.get("review_summary") else
                                 notes[-1] if notes else "")
     if status == "done":
-        hand = "by hand" in summary
+        hand = bool(re.fullmatch(r"PR #\d+ merged by hand", summary))  # closed_by_hand's summary
         if tier == "review" and not hand:
             if has_preprod:
                 checked()
@@ -186,8 +191,8 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         if status in ("waiting-answer", "question"):
             why = "waiting for your answer"
         else:
-            why = {0: summary, 1: item.get("review_summary"), 3: notes[-1] if rerun == "preprod" and notes else "",
-                   4: summary}[at]
+            why = {0: summary, 1: item.get("review_summary"),
+                   3: item.get("preprod_summary") or (notes[-1] if rerun == "preprod" and notes else ""), 4: summary}[at]
             why = f"blocked: {first_sentence(why)}" if why else "blocked"
         detail = why + (f" ({issue})" if issue else "")
         stages[at] = [HOLD, detail]
@@ -224,7 +229,7 @@ def repo_config(repo: str) -> config.RunnerConfig | None:
 
 
 def gh(*args: str) -> str:
-    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=60).stdout
+    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=30).stdout
 
 
 def refresh(key: str, it: dict, *, dry_run: bool) -> bool:
@@ -251,15 +256,16 @@ def refresh(key: str, it: dict, *, dry_run: bool) -> bool:
     if dry_run:
         log(f"{key}: would edit {gh_repo}#{pr}: {block.splitlines()[1]}")
         return False
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-        f.write(apply(body, block))
+    fd, path = tempfile.mkstemp(suffix=".md")
     try:
-        gh("pr", "edit", pr, "--repo", gh_repo, "--body-file", f.name)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(apply(body, block))
+        gh("pr", "edit", pr, "--repo", gh_repo, "--body-file", path)
     except (subprocess.SubprocessError, OSError) as exc:
         log(f"{key}: gh pr edit {gh_repo}#{pr} failed: {type(exc).__name__}")
         return False
     finally:
-        os.unlink(f.name)
+        os.unlink(path)
     log(f"{key}: {gh_repo}#{pr}: {block.splitlines()[1]}")
     return True
 
@@ -273,11 +279,7 @@ def mark_final(key: str) -> None:
 
 
 def due(it: dict) -> bool:
-    if not it.get("pr") or it.get("status") == "cancelled":
-        return False
-    if it.get("status") != "done":
-        return True
-    if it.get("pr_status_final"):
+    if not it.get("pr") or it.get("status") == "cancelled" or it.get("pr_status_final"):
         return False
     updated = it.get("updated")
     return not updated or datetime.fromisoformat(updated) > buildqueue.now() - timedelta(days=FINAL_DAYS)
@@ -296,8 +298,11 @@ def cmd_update(args: argparse.Namespace) -> int:
 
 def cmd_sync(args: argparse.Namespace) -> int:
     for key, it in sorted(buildqueue.load()["items"].items()):
-        if due(it) and refresh(key, it, dry_run=args.dry_run) and it.get("status") == "done":
-            mark_final(key)
+        try:
+            if due(it) and refresh(key, it, dry_run=args.dry_run) and it.get("status") == "done":
+                mark_final(key)
+        except Exception as exc:  # one bad item never stops the others, or the tick
+            log(f"{key}: skipped ({type(exc).__name__}: {exc})")
     return 0
 
 
