@@ -1,5 +1,5 @@
 # Plan: every runner PR shows its stage checklist at the top of its description
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-22 (goes live with AM8)
 **Risk:** low (no prod impact; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** - (goes live only when the user installs a release: AM8)
 
@@ -48,7 +48,7 @@ then `gh pr edit --body-file` only when the body changes. A `gh` failure logs on
 Tests: a render per stage (low tier, review path, changes re-run, approve, on-preprod, preprod changes, merged with N left,
 blocked, no-preprod repo), `apply` idempotent and body-preserving.
 **Validate:** `uv run --with pytest pytest -q tests/test_prstatus.py` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 2: the runner records what the block needs and refreshes it
 **Runs:** unattended
@@ -60,7 +60,7 @@ Make `notify` echo the URL it gets. Call `prstatus.py update "$key"` right after
 once per tick after the inbox poll (also on a dry run: it only prints what it would edit). Tests with the stubbed `gh`:
 the review `changes` path and the preprod `approve` path both record the fields and edit the PR body once.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -68,7 +68,7 @@ the review `changes` path and the preprod `approve` path both record the fields 
 **What:** README: a "PR status block" section (the five stages, the marks, that it refreshes every tick, that editing
 inside the markers is overwritten). AGENTS.md map row for `prstatus.py`. ROADMAP: A20 row ✅ with the PR; AM8 stays the user's.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
@@ -82,3 +82,6 @@ tick, starts with the block, and its first line matches `agent-runner queue list
 2. The block is derived from queue state every tick (not only at transitions), so PRs opened before this ships, and
    anything a missed update left stale, catch up within 5 minutes.
 3. Stage 5's release line ("Released in v1.4.2") comes in A21 (runner-15-versions).
+4. 2026-10-22 (implementer, from self-review): a block's notice URL goes in a new `notice` field, not `issue`: `issue` is
+   the agent-question issue `inbox.py poll` reads, so a stale notice there could be taken as the question. Also added
+   `rerun` (review/preprod, which check asked for changes) and `preprod_summary`, so the block knows where an item stopped.

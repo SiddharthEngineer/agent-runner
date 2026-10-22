@@ -204,8 +204,35 @@ edits, commits, pushes, merges, `make`, `docker compose` and `sudo`. Its log is 
 
 **Dry run:** `AGENT_DRY_RUN=1 agent-runner run` logs each decision to `runs.log` ("dry run: would run claude for
 engineerfamily/x in …", "dry run: nothing due") and exits before the inbox poll, preprod, `claude`, merges and queue changes.
+The PR status sync still reads each PR, and only logs the edits it would make.
 Rehearse against a copy of the queue: `T=$(mktemp -d); cp ~/.local/state/agent-runner/queue.json $T/;
 AGENT_RUNNER_STATE=$T AGENT_DRY_RUN=1 agent-runner run; tail $T/runs.log`.
+
+## PR status block (`prstatus.py`)
+Every PR the runner builds, in every registered repo, starts with a status block, so the GitHub app shows where it is:
+
+```
+<!-- agent-runner:status -->
+**Runner status:** 🔁 Validator review: asked for changes (…); implementer re-run queued, attempt 2/2 · updated 2026-10-22 16:40 UTC
+1. ✅ Implementer opened the PR, 7 Human test steps
+2. 🔁 Validator reviews the code: asked for changes: …
+3. ⏳ Runner deploys the branch to preprod
+4. ⏳ Second validator runs the Human test steps on preprod and posts a checklist
+5. ⏳ Merge, preprod back on main; steps it couldn't do come to you as a "merged; N steps left for you" issue
+<!-- /agent-runner:status -->
+```
+
+- **Stages:** the implementer's PR, the validator's review, the preprod deploy, the preprod check (linking the validator's
+  checklist comment), the merge (linking the "steps left for you" issue).
+- **Marks:** ✅ done · 🔁 in progress or re-running · ⏳ not reached · ❌ failed (with why) · ⏸ blocked or waiting for you
+  (with the inbox issue) · ➖ skipped (`low` tier merges on green CI, so 2-4; a repo without `[preprod]`, 3-4).
+  Stage 1 warns "⚠️ no Human test steps" in a repo with preprod when the PR body has none.
+- **First line** says where it is now, so the PR list preview tells the story.
+- **Refresh:** `run.sh` updates it right after each transition (`prstatus.py update <key>`) and every tick
+  (`prstatus.py sync`: every item with a PR that isn't cancelled, and a `done` item until its final block is written, up
+  to 14 days). It is derived from queue state, so PRs opened before this and stale blocks catch up within one tick. The
+  body is edited only when the block changes (the time aside); a `gh` failure logs one line in `runs.log`.
+- **Editing:** anything inside the markers is overwritten; the rest of the description is never touched.
 
 ## Day to day
 - Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).

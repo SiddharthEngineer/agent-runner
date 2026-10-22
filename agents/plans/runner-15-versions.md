@@ -1,7 +1,7 @@
 # Plan: the runner tags every merge and keeps a GitHub pre-release per minor version
 **Status:** ❌ Not started
 **Risk:** low (no prod impact; runner programme PRs auto-merge on green CI, user 2026-10-19)
-**Depends on:** A20 [runner-14-pr-checklist](runner-14-pr-checklist.md) (`prstatus.py`); goes live only with AM8
+**Depends on:** A20 [runner-14-pr-checklist](done/runner-14-pr-checklist.md) (`prstatus.py`); goes live only with AM8
 
 ## Goal
 GitHub Releases show what is on prod and preprod (user, 2026-10-22). For a repo whose `runner.toml` has `[release]`
