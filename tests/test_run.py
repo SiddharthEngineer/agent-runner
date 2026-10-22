@@ -55,6 +55,13 @@ def runner(tmp_path):
     (code / "inbox.py").write_text(stub.replace("sys.exit(", 'sys.argv[1] == "notify" and print("https://github.com/o/inbox/issues/5")\nsys.exit('))
     write_stub(code / "preprod.sh", "preprod", '[ "$1" = release ] && exit "${STUB_RELEASE_EXIT:-0}"\nexit 0\n')
     write_py_stub(code / "health.py", "health", "STUB_HEALTH_EXIT")
+    # versions.py: the real functions (prstatus.py imports them), but running it only logs and exits $STUB_VERSIONS_EXIT.
+    real = (code / "versions.py").read_text()
+    main = 'if __name__ == "__main__":\n    sys.exit(main(sys.argv[1:]))\n'
+    assert real.endswith(main)
+    (code / "versions.py").write_text(real.removesuffix(main) + 'if __name__ == "__main__":\n'
+                                      + "".join("    " + line + "\n" for line in
+                                                PY_STUB.format(name="versions", exit_env="STUB_VERSIONS_EXIT").splitlines()))
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id; triage prints $STUB_TRIAGE.
@@ -108,14 +115,15 @@ def runner(tmp_path):
         return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
 
     def register(name: str, base: str = "main", merge: str = "merge", deploy: str | None = "true",
-                 plan: str | None = "low", mcp: bool = False) -> None:
+                 plan: str | None = "low", mcp: bool = False, release: bool = False) -> None:
         origin, clone = tmp_path / f"{name}.git", tmp_path / f"{name}-clone"
         work = tmp_path / f"{name}-work"
         git("init", "-q", "-b", base, work)
         (work / "agents/plans").mkdir(parents=True)
         health = 'health = [{ url = "https://preprod.example/", status = 200 }]\n'
         preprod = f'[preprod]\ndeploy = "{deploy}"\n{health}' if deploy else ""
-        (work / "agents/runner.toml").write_text(TOML.format(name=name, base=base, merge=merge, preprod=preprod))
+        (work / "agents/runner.toml").write_text(TOML.format(name=name, base=base, merge=merge, preprod=preprod)
+                                                 + ("[release]\n" if release else ""))
         if plan:
             (work / "agents/plans/x.md").write_text(f"# Plan: x\n**Risk:** {plan}\n")
         (work / "README.md").write_text("x\n")
@@ -163,7 +171,8 @@ def test_dry_run_logs_and_stops(runner):
     runner(AGENT_DRY_RUN="1")
     log = runner.runs_log()
     assert f"would run claude for engineerfamily/x in {runner.state}/worktrees/engineerfamily/x" in log
-    assert claude_calls(runner) == [] and not any(c.startswith(("gh ", "inbox poll", "preprod")) for c in runner.calls())
+    assert claude_calls(runner) == [] and not any(c.startswith(("gh ", "inbox poll", "preprod", "versions"))
+                                                  for c in runner.calls())
     assert runner.status("engineerfamily/x") == "queued"
     assert not (runner.state / "worktrees/engineerfamily/x").exists()
 
@@ -250,6 +259,32 @@ def test_low_merge_puts_preprod_on_the_base(runner, lock, deploy, released):
     assert ("preprod release engineerfamily" in runner.calls()) is released
     if deploy:
         assert ("preprod redeployed on engineerfamily's main" if released else "preprod is held by strelitzia#5") in runner.runs_log()
+
+
+@pytest.mark.parametrize("release", [True, False])
+def test_release_repo_is_tagged_before_the_preprod_redeploy(runner, release):
+    runner.register("engineerfamily", release=release)
+    runner.queue("add", "x", "--repo", "engineerfamily")
+    runner()
+    calls = runner.calls()
+    syncs = [i for i, c in enumerate(calls) if c == "versions sync engineerfamily"]
+    assert len(syncs) == (2 if release else 1)  # every tick, after the inbox poll; and after the merge with [release]
+    assert calls.index("inbox poll") < syncs[0] < calls.index("preprod tick")
+    if release:
+        assert syncs[1] == calls.index("preprod release engineerfamily") - 1
+
+
+def test_versions_sync_failure_notifies_once_per_cause(runner):
+    runner.register("engineerfamily")
+    notices = lambda: [c for c in runner.calls() if c.startswith("inbox notify") and "versions sync for" in c]
+    runner(STUB_VERSIONS_EXIT="3")
+    runner(STUB_VERSIONS_EXIT="3")
+    assert len(notices()) == 1 and "versions sync for engineerfamily waits for a promote" in notices()[0]
+    runner(STUB_VERSIONS_EXIT="4")  # not set up for releases: quiet, and the cause is cleared
+    assert len(notices()) == 1 and runner.runs_log().count("versions engineerfamily: exit 3") == 1  # logged once too
+    runner(STUB_VERSIONS_EXIT="1")
+    assert len(notices()) == 2 and "versions sync for engineerfamily failed" in notices()[1]
+    assert runner.out.returncode == 0
 
 
 def test_failed_preprod_redeploy_notifies(runner):

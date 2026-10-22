@@ -41,7 +41,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A18 | Finished plans move to `agents/plans/done/` (`/implement` does it; validators find moved plans; move today's 18) | [plans-done-folder](plans/done/plans-done-folder.md) | agent-runner | ✅ PR open 2026-10-21 | - |
 | A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/done/runner-13-preprod-holds.md) | agent-runner | ✅ PR open 2026-10-22 | - |
 | A20 | Stage checklist at the top of every runner PR's description, refreshed each tick (all repos) | [runner-14-pr-checklist](plans/done/runner-14-pr-checklist.md) | agent-runner | ✅ PR open 2026-10-22 | - |
-| A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/runner-15-versions.md) | agent-runner | ⏳ queued 2026-10-22 | A20 |
+| A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/done/runner-15-versions.md) | agent-runner | ✅ PR open 2026-10-22 | A20 |
 
 ## Manual steps (you)
 

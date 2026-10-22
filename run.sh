@@ -3,7 +3,7 @@
 #   */5 * * * * $HOME/.local/bin/agent-runner run
 # Everything before `claude -p` is plain bash/Python, so an empty queue costs no Claude usage.
 #
-# 1. Upkeep: pick up your inbox replies, close notices of finished items, release/advance the global preprod lock (preprod.sh tick).
+# 1. Upkeep: pick up your inbox replies, close notices of finished items, tag merged PRs (versions.py), release/advance the global preprod lock (preprod.sh tick).
 # 2. Health gate: while disk is critical (health.py gate), no Claude run starts; upkeep above still ran.
 # 3. `buildqueue.py next` picks a due `<repo>/<slug>` (honours pause, optional daily cap, attempt limit) or we exit.
 #    Then usage.py checks the Claude "Current session" usage (one tiny Haiku probe): at or above
@@ -53,12 +53,45 @@ if ! qerr=$("${Q[@]}" list 2>&1 >/dev/null); then
     exit 1
 fi
 
+# versions_sync <repo>: tag the PRs merged since the newest tag and move the minor's pre-release (versions.py; it exits 4,
+# quietly, for a repo without [release]). A failure or exit 3 (waiting for the user's promote) sends one notice per cause
+# ($STATE/versions/<repo>.notice holds the last one); it never stops the tick or a preprod redeploy.
+versions_sync() {
+    local out rc cause seen=$STATE/versions/$1.notice what
+    out=$(python3 "$HERE/versions.py" sync "$1" 2>&1)
+    rc=$?
+    case $rc in
+        0|4) [ -n "$out" ] && [ "$rc" = 0 ] && say "versions $1: ${out//$'\n'/ · }"
+             rm -f "$seen"
+             return 0 ;;
+    esac
+    cause=$(printf '%s\n' "$out" | tail -n1)
+    [ -n "$cause" ] || cause="exit $rc"
+    [ -f "$seen" ] && [ "$(cat "$seen")" = "$cause" ] && return 0  # logged and notified when it first happened
+    say "versions $1: exit $rc${out:+: ${out//$'\n'/ · }}"
+    [ -n "${AGENT_INBOX_REPO:-}" ] || return 0
+    what="failed"
+    [ "$rc" = 3 ] && what="waits for a promote"
+    mkdir -p "$STATE/versions"
+    python3 "$HERE/inbox.py" notify --project "$1" --title "versions sync for $1 $what" --body "\`agent-runner versions sync $1\` exited $rc:
+
+$cause
+
+Merged PRs are tagged on the next tick after this is fixed. \`agent-runner versions status $1\` shows the tags and releases." \
+        >> "$STATE/runs.log" 2>&1 && printf '%s\n' "$cause" > "$seen"
+    return 0
+}
+
 # 1. Upkeep
 if [ -n "$DRY" ]; then
-    say "dry run: would poll the inbox and tick preprod"
+    say "dry run: would poll the inbox, sync versions and tick preprod"
 else
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" poll >> "$STATE/runs.log" 2>&1
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" sweep >> "$STATE/runs.log" 2>&1
+    # Tags for PRs merged outside the runner too (by hand in the GitHub app), before prstatus.py shows them.
+    for repo_file in "$HOME"/.config/agent-runner/repos/*.env; do
+        [ -e "$repo_file" ] && versions_sync "$(basename "$repo_file" .env)"
+    done
     "$HERE/preprod.sh" tick >> "$STATE/runs.log" 2>&1
 fi
 # Every runner PR's status block, from queue state (catches up PRs a missed update left stale). A dry run only logs.
@@ -250,6 +283,7 @@ ci_runs() {
 }
 # preprod_follow <pr>: after merging <pr>, put preprod on the new base, unless another PR holds the lock (its release does it).
 preprod_follow() {
+    [ "$(cfg release.tags)" = True ] && versions_sync "$repo"  # the tag first: preprod shows it after the redeploy
     [ -n "$(cfg preprod.deploy)" ] || return 0
     local holder
     holder=$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)

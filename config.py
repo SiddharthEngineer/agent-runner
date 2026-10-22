@@ -7,8 +7,8 @@ Usage: python3 config.py check <runner.toml>             (prints `ok`, or one pr
        python3 config.py repo-env <name>                 (`export K='v'` lines from repos/<name>.env, for bash to eval)
        python3 config.py env-file                        (the shared env file's path, for bash to source; exit 1 if none)
 
-A repo describes itself in `agents/runner.toml`: base branch, merge method, validate commands, risk-gate patterns and
-preprod commands. `load` checks every field and refuses any preprod command that could touch prod, so no caller can
+A repo describes itself in `agents/runner.toml`: base branch, merge method, validate commands, risk-gate patterns,
+preprod commands and (optionally) `[release]`, which turns on versions.py's tags and releases. `load` checks every field and refuses any preprod command that could touch prod, so no caller can
 hold a `RunnerConfig` with a prod command in it. Standard library only (Python 3.11+ for `tomllib`).
 """
 
@@ -84,11 +84,17 @@ class Preprod:
 
 
 @dataclass(frozen=True)
+class Release:
+    tags: bool = True  # versions.py sync tags every merged PR and keeps a pre-release per minor version
+
+
+@dataclass(frozen=True)
 class RunnerConfig:
     repo: Repo
     validate: Validate
     gate: Gate
     preprod: Preprod | None = None
+    release: Release | None = None
 
 
 class _Reader:
@@ -182,6 +188,12 @@ def _parse(data: dict) -> tuple[RunnerConfig | None, list[str]]:
             preprod = Preprod(deploy=deploy, release=release, seed=seed, health=checks, app_dir=app_dir,
                               netrc_env=netrc_env)
 
+    release = None
+    rel_t = r.table(data, "release", required=False)
+    if rel_t is not None:
+        tags = r.get(rel_t, "release", "tags", bool, default=True)
+        release = Release(tags=bool(tags))
+
     if problems:
         return None, problems
     cfg = RunnerConfig(
@@ -189,6 +201,7 @@ def _parse(data: dict) -> tuple[RunnerConfig | None, list[str]]:
         validate=Validate(fast=fast, full=full),
         gate=Gate(high_risk=high_risk, doc_or_test=doc_or_test, code_line_budget=budget, tests_dir=tests_dir),
         preprod=preprod,
+        release=release,
     )
     return cfg, prod_problems(cfg)
 

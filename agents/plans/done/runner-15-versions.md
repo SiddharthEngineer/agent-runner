@@ -1,7 +1,7 @@
 # Plan: the runner tags every merge and keeps a GitHub pre-release per minor version
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-22
 **Risk:** low (no prod impact; runner programme PRs auto-merge on green CI, user 2026-10-19)
-**Depends on:** A20 [runner-14-pr-checklist](done/runner-14-pr-checklist.md) (`prstatus.py`); goes live only with AM8
+**Depends on:** A20 [runner-14-pr-checklist](runner-14-pr-checklist.md) (`prstatus.py`); goes live only with AM8
 
 ## Goal
 GitHub Releases show what is on prod and preprod (user, 2026-10-22). For a repo whose `runner.toml` has `[release]`
@@ -29,7 +29,7 @@ GitHub Releases show what is on prod and preprod (user, 2026-10-22). For a repo 
 **What:** A20 is merged (`git log origin/main -- prstatus.py`). `gh api repos/SiddharthEngineer/engineerfamily/rulesets`
 shows no rule blocking tag pushes or release creation by the runner's token. If one does, stop with `question`.
 **Validate:** both checks noted in the PR description.
-**Status:** ❌
+**Status:** ✅ 2026-10-22: A20 is a7e63ce on origin/main; `gh ruleset list -R SiddharthEngineer/engineerfamily` lists none
 
 ### Task 1: `versions.py` sync and promote
 **Runs:** unattended
@@ -48,7 +48,7 @@ status <repo>`: newest tag, open pre-release, newest full release. `--dry-run` e
 stub `gh` (record calls): first patch, second patch updates the same pre-release, after promote starts the next minor,
 two PRs in one sync → one tag listing both, untagged minor → exit 3, direct non-PR commits don't tag; `config.load` with and without `[release]` (in this file too).
 **Validate:** `uv run --with pytest pytest -q tests/test_versions.py tests/test_config.py` passes (existing config tests unchanged).
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 2: the runner calls it; the PR block shows the tag
 **Runs:** unattended
@@ -58,7 +58,7 @@ runs `versions.py sync "$repo"` before the preprod redeploy, and every tick runs
 poll. A failure (or exit 3) sends one notice per cause (dedupe like the other `[vps]` notices) and never blocks the tick
 or the redeploy. `prstatus.py` stage 5 adds "released in v1.4.4 (pre-release v1.4)" from the tag containing the merge commit (its render test goes in `tests/test_run.py`'s prstatus calls or a new case there).
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -67,7 +67,7 @@ or the redeploy. `prstatus.py` stage 5 adds "released in v1.4.4 (pre-release v1.
 map row for `versions.py`; the rule "never push tags" becomes "agents never push tags or edit releases; only the
 runner's `versions sync` does, for repos with `[release]`". ROADMAP: A21 ✅ with the PR.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
