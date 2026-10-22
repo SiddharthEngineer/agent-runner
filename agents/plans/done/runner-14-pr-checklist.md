@@ -1,5 +1,5 @@
 # Plan: every runner PR shows its stage checklist at the top of its description
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-22 (goes live with AM8)
 **Risk:** low (no prod impact; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** - (goes live only when the user installs a release: AM8)
 
@@ -68,7 +68,7 @@ the review `changes` path and the preprod `approve` path both record the fields 
 **What:** README: a "PR status block" section (the five stages, the marks, that it refreshes every tick, that editing
 inside the markers is overwritten). AGENTS.md map row for `prstatus.py`. ROADMAP: A20 row ✅ with the PR; AM8 stays the user's.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
