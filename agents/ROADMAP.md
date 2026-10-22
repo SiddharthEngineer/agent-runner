@@ -39,6 +39,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A16 | CI fallback without check access, preprod follows each merge, hand-merged PRs | [runner-11-autopilot](plans/done/runner-11-autopilot.md) | agent-runner | ✅ #69 | cutover |
 | A17 | `install.sh` skips the test suite when CI passed on the tag | [runner-12-fast-install](plans/done/runner-12-fast-install.md) | agent-runner | ✅ #75 | A16 |
 | A18 | Finished plans move to `agents/plans/done/` (`/implement` does it; validators find moved plans; move today's 18) | [plans-done-folder](plans/done/plans-done-folder.md) | agent-runner | ✅ PR open 2026-10-21 | - |
+| A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/runner-13-preprod-holds.md) | agent-runner | ⏳ queued 2026-10-22 (before engineerfamily E3) | - |
 
 ## Manual steps (you)
 
@@ -52,6 +53,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM4 | Cutover config (design Rollout step 4): copy `~/.config/strelitzia-agent/{env,preprod.netrc}` to `~/.config/agent-runner/`, write `repos/{strelitzia,engineerfamily,agent-runner}.env` (`AGENT_REPO=~/src/<repo>`, `PREPROD_NETRC=…`), add `machine preprod.engineerfamily.net` to the netrc, and copy `queue.json` and `runs.jsonl` to `~/.local/state/agent-runner/`. Done 2026-10-19. | ☑ |
 | AM5 | Cutover (design Rollout steps 2, 3, 5, 6): the dry run, draining the old queue, installing the latest tag, swapping the crontab line to `*/5 * * * * $HOME/.local/bin/agent-runner run`, and the smoke tests in each repo. Rollback: restore the old crontab line. Done 2026-10-19: smoke tests passed in all three repos (engineerfamily #45 and Strelitzia #84 merged by the runner; agent-runner by [smoke-roadmap-cutover](plans/done/smoke-roadmap-cutover.md)), and the review path ran to preprod on engineerfamily #49 and the second review smoke. | ☑ |
 | AM6 | A week after AM5 with no trouble: queue S2, then delete `~/.config/strelitzia-agent` and `~/.local/state/strelitzia-agent`. Done 2026-10-21, two days early (user: no live users): S2 queued now, both dirs deleted after a backup to `~/backups/strelitzia-agent-am6-20261021.tgz`. | ☑ |
+| AM7 | After A19 merges: `agent-runner release --install`, so the runner uses it (engineerfamily E3's validation benefits; E3 doesn't need it to pass). | ☐ |
 
 ## Decisions (current)
 - 2026-10-21 (user): close AM6 now instead of waiting the full week; there are no live users, so a break is acceptable.
