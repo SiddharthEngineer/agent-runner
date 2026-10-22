@@ -51,6 +51,8 @@ def runner(tmp_path):
     code = tmp_path / "runner"
     shutil.copytree(ROOT, code, ignore=shutil.ignore_patterns(".git", "tests", "agents", "__pycache__", ".pytest_cache"))
     write_py_stub(code / "inbox.py", "inbox")
+    stub = (code / "inbox.py").read_text()  # `notify` prints the new issue's URL, as inbox.py does
+    (code / "inbox.py").write_text(stub.replace("sys.exit(", 'sys.argv[1] == "notify" and print("https://github.com/o/inbox/issues/5")\nsys.exit('))
     write_stub(code / "preprod.sh", "preprod", '[ "$1" = release ] && exit "${STUB_RELEASE_EXIT:-0}"\nexit 0\n')
     write_py_stub(code / "health.py", "health", "STUB_HEALTH_EXIT")
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
@@ -73,7 +75,9 @@ def runner(tmp_path):
                'echo \'{"session_id": "s1"}\'\n')
     # gh: `pr checks` fails with $STUB_CHECKS (red; none: "no checks reported"; denied: no access to the check rollup);
     # `pr merge` exits $STUB_MERGE_EXIT; `run list` prints the run ids in $STUB_RUNS, and `run watch` fails for those in
-    # $STUB_RUNS_RED; `pr view --json state` prints $STUB_PR_STATE (default OPEN).
+    # $STUB_RUNS_RED; `pr view --json state` prints $STUB_PR_STATE (default OPEN). prstatus.py's `pr view --json body,state`
+    # gets an open PR with two Human test steps, `pr edit --body-file` is logged with the body, and the comments query
+    # prints the validator's comment URL.
     write_stub(bin_dir / "gh", "gh",
                'if [[ "$*" == "pr checks"* ]]; then\n'
                '  [ "${STUB_CHECKS:-}" = red ] && { echo "build  fail  1m  https://ci.example/1"; exit 1; }\n'
@@ -82,6 +86,12 @@ def runner(tmp_path):
                ' (repository.pullRequest.statusCheckRollup)" >&2; exit 1; }\n'
                'elif [[ "$*" == "pr merge"* ]]; then\n'
                '  exit "${STUB_MERGE_EXIT:-0}"\n'
+               'elif [[ "$*" == "pr view"*body,state* ]]; then\n'
+               '  echo \'{"body": "## Human test steps\\n1. a\\n2. b\\n", "state": "OPEN"}\'\n'
+               'elif [[ "$*" == "pr view"*viewerDidAuthor* ]]; then\n'
+               '  echo https://github.com/o/x/pull/9#issuecomment-1\n'
+               'elif [[ "$*" == "pr edit"*--body-file* ]]; then\n'
+               '  cat "${@: -1}" >> "$STUB_LOG.body"\n'
                'elif [[ "$*" == "pr view"*headRefOid* ]]; then\n'
                '  echo abc123\n'
                'elif [[ "$*" == "pr view"*state* ]]; then\n'
@@ -622,3 +632,49 @@ def test_fresh_attempts_requeue_clears_stage_counters(runner):
     assert runner.queue("get", key, "attempts").stdout.strip() == "0"
     for field in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts"):
         assert runner.queue("get", key, field).returncode == 1, field
+
+
+def body_edits(runner, tmp_path):
+    edits = [c for c in runner.calls() if c.startswith("gh pr edit 9") and "--body-file" in c]
+    body = (tmp_path / "stub.log.body").read_text() if (tmp_path / "stub.log.body").exists() else ""
+    return edits, body
+
+
+def test_review_changes_records_fields_and_edits_the_pr_body_once(runner, tmp_path):
+    key = awaiting_review(runner, attempts=1)
+    runner(STUB_REVIEW=verdict("changes", "Task 3 permissions are too wide. More."))
+    get = lambda field: runner.queue("get", key, field).stdout.strip()
+    assert (get("review_verdict"), get("review_summary"), get("rerun")) == ("changes", "Task 3 permissions are too wide. More.", "review")
+    edits, body = body_edits(runner, tmp_path)
+    assert len(edits) == 1, runner.calls()
+    assert "**Runner status:** 🔁 Validator review: asked for changes (Task 3 permissions are too wide); " \
+           "implementer re-run queued, attempt 2/2" in body
+    assert body.rstrip().endswith("## Human test steps\n1. a\n2. b")
+
+
+def test_preprod_approve_records_fields_and_edits_the_pr_body_once(runner, tmp_path):
+    key = on_preprod(runner, review_verdict="approve", tier="review")
+    runner(STUB_PREPROD=preprod_verdict("approve", left=["2. check the email"]))
+    get = lambda field: runner.queue("get", key, field).stdout.strip()
+    assert get("preprod_comment") == "https://github.com/o/x/pull/9#issuecomment-1"
+    assert get("left_count") == "1" and get("left_issue") == "https://github.com/o/inbox/issues/5"
+    assert get("merged_at").startswith("20")
+    edits, body = body_edits(runner, tmp_path)
+    assert len(edits) == 1, runner.calls()
+    assert "**Runner status:** ✅ Merged; 1 steps left for you (https://github.com/o/inbox/issues/5)" in body
+    assert "4. ✅ Second validator runs the Human test steps on preprod and posts a checklist: passed " \
+           "(https://github.com/o/x/pull/9#issuecomment-1)" in body
+    assert get("pr_status_final") == "1"
+
+
+def test_blocked_notice_url_is_recorded(runner):
+    key = awaiting_review(runner, attempts=2)
+    runner(STUB_REVIEW=verdict("changes"))
+    assert runner.status(key) == "blocked"
+    assert runner.queue("get", key, "issue").stdout.strip() == "https://github.com/o/inbox/issues/5"
+
+
+def test_dry_run_syncs_without_editing(runner):
+    awaiting_review(runner)
+    runner(AGENT_DRY_RUN="1")
+    assert not any(c.startswith("gh pr edit") for c in runner.calls())

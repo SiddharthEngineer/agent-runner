@@ -61,6 +61,8 @@ else
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" sweep >> "$STATE/runs.log" 2>&1
     "$HERE/preprod.sh" tick >> "$STATE/runs.log" 2>&1
 fi
+# Every runner PR's status block, from queue state (catches up PRs a missed update left stale). A dry run only logs.
+python3 "$HERE/prstatus.py" sync ${DRY:+--dry-run} >> "$STATE/runs.log" 2>&1
 
 # 2. Health gate
 if ! python3 "$HERE/health.py" gate >/dev/null 2>&1; then
@@ -68,15 +70,26 @@ if ! python3 "$HERE/health.py" gate >/dev/null 2>&1; then
     exit 0
 fi
 
-notify() {  # notify <title> <body>: an agent-notice issue labelled with the repo
+# notify <title> <body>: an agent-notice issue labelled with the repo. Its URL lands in $notice_url and in the item's
+# `issue` field, which the PR status block links while the item is blocked.
+notify() {
+    notice_url=
     [ -n "$DRY" ] && { say "dry run: would notify: $1"; return 0; }
-    [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" notify --slug "$key" --project "$repo" --title "$1" --body "$2" >/dev/null
+    [ -n "${AGENT_INBOX_REPO:-}" ] || return 0
+    notice_url=$(python3 "$HERE/inbox.py" notify --slug "$key" --project "$repo" --title "$1" --body "$2" | tail -n1)
+    [ -n "$notice_url" ] && "${Q[@]}" set "$key" "issue=$notice_url"
+    return 0
+}
+# pr_status: refresh the item's PR status block (prstatus.py), right after a transition. Never fails the tick.
+pr_status() {
+    python3 "$HERE/prstatus.py" update "$key" ${DRY:+--dry-run} >> "$STATE/runs.log" 2>&1 || say "$key: prstatus update failed"
 }
 block() {  # block <log line> <notice title> <notice body>
     say "$key: $1, blocked"
     notify "$2" "$3"
     [ -n "$DRY" ] && exit 0
     "${Q[@]}" set "$key" status=blocked
+    pr_status
     exit 0
 }
 usage_gate() {  # exits unless a Claude run may start now
@@ -273,6 +286,7 @@ closed_by_hand() {
     "${Q[@]}" finish "$key" "$result" >/dev/null
     rm -f "$result"
     if [ "$state" = MERGED ]; then
+        "${Q[@]}" set "$key" "merged_at=$(stamp)"
         say "$key: PR #$pr was merged by hand, done"
         preprod_follow "$pr"
     else
@@ -287,6 +301,7 @@ closed_by_hand() {
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
     local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held
+    local comment left_count
     pr=$("${Q[@]}" get "$key" pr)
     url=$(cfg preprod.health | head -n1 | cut -f1)
     host=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url")
@@ -345,6 +360,9 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
         summary="The preprod validator wrote no verdict $tries times. Log: $plog (on the VPS)."
     fi
     "${Q[@]}" set "$key" "preprod_verdict=$verdict"
+    # The validator's checklist comment: the newest comment by the runner's account.
+    comment=$(gh pr view "$pr" --repo "$GH_REPO" --json comments -q '[.comments[] | select(.viewerDidAuthor)] | last | .url // empty' 2>/dev/null)
+    [ -n "$comment" ] && "${Q[@]}" set "$key" "preprod_comment=$comment"
     # After changes or blocked the PR keeps preprod, so the user can look at it. The lock frees itself when the PR is merged
     # or closed (preprod.sh status), or when the fixed PR is deployed again over its own hold.
     held="It stays on preprod ($base_url) so you can look. Close the PR, or run \`agent-runner preprod release $repo\`, to free preprod."
@@ -353,12 +371,14 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
             left=$(field left_for_you)
             if merge_pr "$pr"; then
                 preprod_follow "$pr"
-                "${Q[@]}" set "$key" status=done
+                left_count=$(printf '%s' "$left" | grep -c '^- ')
+                "${Q[@]}" set "$key" status=done "merged_at=$(stamp)" "left_count=$left_count"
                 say "$key: preprod checks passed, PR #$pr merged"
-                notify "merged; $(printf '%s' "$left" | grep -c '^- ') steps left for you" \
+                notify "merged; $left_count steps left for you" \
                     "https://github.com/$GH_REPO/pull/$pr passed review and its preprod checks and is merged.
 Left for you:
 ${left:-nothing left}"
+                [ -n "$notice_url" ] && "${Q[@]}" set "$key" "left_issue=$notice_url"
             else
                 notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
             fi ;;
@@ -367,6 +387,7 @@ ${left:-nothing left}"
 Failed steps:
 $(field failed)" >/dev/null
             "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
+            "${Q[@]}" set "$key" rerun=preprod
             say "$key: preprod checks failed, back to the implementer"
             [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: preprod checks still failing" \
                 "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary $held" ;;
@@ -379,6 +400,7 @@ $(field failed)" >/dev/null
 if key=$("${Q[@]}" oldest on-preprod --without preprod_verdict); then
     load_item
     closed_by_hand || preprod_stage
+    pr_status
     exit 0
 fi
 
@@ -410,7 +432,11 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
     verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$rresult" 2>/dev/null)
     summary=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",""))' "$rresult" 2>/dev/null)
     case $verdict in
+        changes|approve|blocked) "${Q[@]}" set "$key" "review_verdict=$verdict" "review_summary=$summary" ;;
+    esac
+    case $verdict in
         changes)
+            "${Q[@]}" set "$key" rerun=review
             say "$key: validator asks for changes on PR #$pr"
             "${Q[@]}" requeue "$key" --note "Validator review of PR #$pr asks for changes: $summary
 Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("findings",[])))' "$rresult")" >/dev/null
@@ -422,7 +448,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
                 gh pr edit "$pr" --repo "$GH_REPO" --add-label awaiting-preprod >/dev/null 2>&1
                 say "$key: validator approved PR #$pr, awaiting preprod"
             elif merge_pr "$pr"; then
-                "${Q[@]}" set "$key" status=done
+                "${Q[@]}" set "$key" status=done "merged_at=$(stamp)"
                 say "$key: validator approved PR #$pr, merged"
                 preprod_follow "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
@@ -447,6 +473,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
 if key=$("${Q[@]}" oldest awaiting-review); then
     load_item
     closed_by_hand || review_stage
+    pr_status
     exit 0
 fi
 
@@ -572,6 +599,7 @@ if [ "$status" = ready ]; then
     pr=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pr"])' "$result")
     verdict=$(cd "$wt" && python3 "$HERE/gate.py" "$plan" --config "$toml" --base "origin/$BASE")
     tier=$(echo "$verdict" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
+    "${Q[@]}" set "$key" "tier=$tier"
     if [ "$tier" = review ]; then
         final=needs-review  # the validator reviews it on a later tick (review stage above)
         gh pr comment "$pr" --repo "$GH_REPO" --body "Risk gate: \`review\`, so a validator reviews it next.
@@ -580,6 +608,7 @@ $verdict
 \`\`\`" >/dev/null
     elif merge_pr "$pr"; then
         final=merged
+        "${Q[@]}" set "$key" "merged_at=$(stamp)"
         notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low): https://github.com/$GH_REPO/pull/$pr"
         preprod_follow "$pr"
     else
@@ -617,6 +646,7 @@ case "$new" in
             notify_blocked "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" "$result"
         fi ;;
 esac
+pr_status
 
 # Cap the Docker build cache: a full validation can rebuild an image, and a busted dependency layer adds ~750 MB, so a
 # chain of runs could fill the disk. Recent layers stay, so rebuilds stay fast.

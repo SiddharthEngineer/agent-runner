@@ -60,7 +60,7 @@ Make `notify` echo the URL it gets. Call `prstatus.py update "$key"` right after
 once per tick after the inbox poll (also on a dry run: it only prints what it would edit). Tests with the stubbed `gh`:
 the review `changes` path and the preprod `approve` path both record the fields and edit the PR body once.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
