@@ -58,7 +58,7 @@ runs `versions.py sync "$repo"` before the preprod redeploy, and every tick runs
 poll. A failure (or exit 3) sends one notice per cause (dedupe like the other `[vps]` notices) and never blocks the tick
 or the redeploy. `prstatus.py` stage 5 adds "released in v1.4.4 (pre-release v1.4)" from the tag containing the merge commit (its render test goes in `tests/test_run.py`'s prstatus calls or a new case there).
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (this commit)
 
 ### Task 3: docs and tracking
 **Runs:** unattended

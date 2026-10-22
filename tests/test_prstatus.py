@@ -215,8 +215,8 @@ def cli(tmp_path):
     def queue(items: dict) -> None:
         (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
 
-    def run(*args, body="## Human test steps\n1. a\n2. b\n", state_="OPEN", **env):
-        view.write_text(json.dumps({"body": body, "state": state_}))
+    def run(*args, body="## Human test steps\n1. a\n2. b\n", state_="OPEN", merge_commit=None, **env):
+        view.write_text(json.dumps({"body": body, "state": state_, "mergeCommit": merge_commit and {"oid": merge_commit}}))
         e = {**os.environ, "AGENT_RUNNER_STATE": str(state), "HOME": str(tmp_path), "STUB_LOG": str(log),
              "STUB_VIEW": str(view), "PATH": f"{bin_dir}:{os.environ['PATH']}", **env}
         return subprocess.run([sys.executable, ROOT / "prstatus.py", *args], env=e, capture_output=True, text=True)
@@ -225,6 +225,7 @@ def cli(tmp_path):
     run.calls = lambda: log.read_text().splitlines() if log.exists() else []
     run.body = lambda: Path(f"{log}.body").read_text()
     run.items = lambda: json.loads((state / "queue.json").read_text())["items"]
+    run.state, run.home = state, tmp_path
     return run
 
 
@@ -238,7 +239,7 @@ def test_update_edits_once_then_not_again(cli):
     cli.queue({"engineerfamily/x": item(tier="review")})
     out = cli("update", "engineerfamily/x")
     assert out.returncode == 0, out.stderr
-    assert cli.calls() == ["gh pr view 9 --repo o/engineerfamily --json body,state",
+    assert cli.calls() == ["gh pr view 9 --repo o/engineerfamily --json body,state,mergeCommit",
                            f"gh pr edit 9 --repo o/engineerfamily --body-file {cli.calls()[1].rsplit(' ', 1)[1]}"]
     body = cli.body()
     assert body.startswith(prstatus.START) and "2 Human test steps" in body and body.endswith("## Human test steps\n1. a\n2. b\n")
@@ -286,3 +287,30 @@ def test_closed_pr_is_left_alone(cli):
     cli.queue({"engineerfamily/x": item()})
     cli("update", "engineerfamily/x", state_="CLOSED")
     assert not any(c.startswith("gh pr edit") for c in cli.calls())
+
+
+def test_merged_shows_its_release():
+    out = lines(prstatus.render({"pr": 9, "attempts": 1, "status": "done", "tier": "low"}, has_preprod=True,
+                                human_steps=7, now=NOW, released="v1.4.4 (pre-release v1.4)"))
+    assert out[1].startswith("**Runner status:** ✅ Merged; released in v1.4.4 (pre-release v1.4) ·")
+    assert out[6].startswith("5. ✅") and out[6].endswith(": merged; released in v1.4.4 (pre-release v1.4)")
+
+
+def test_release_repo_block_is_final_once_tagged(cli):
+    toml = cli.state / "configs/engineerfamily.toml"
+    toml.write_text(toml.read_text() + "[release]\n")
+    clone = cli.home / "clone"
+    git = ["git", "-C", str(clone), "-c", "user.email=t@e", "-c", "user.name=t"]
+    subprocess.run(["git", "init", "-q", str(clone)], check=True)
+    subprocess.run([*git, "commit", "-q", "--allow-empty", "-m", "pr 9"], check=True)
+    sha = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+    (cli.home / ".config/agent-runner/repos").mkdir(parents=True)
+    (cli.home / ".config/agent-runner/repos/engineerfamily.env").write_text(f"AGENT_REPO={clone}\n")
+    cli.queue({"engineerfamily/x": item(status="done", tier="low")})
+    assert cli("update", "engineerfamily/x", merge_commit=sha).returncode == 0
+    assert "released in" not in cli.body() and "pr_status_final" not in cli.items()["engineerfamily/x"]
+    subprocess.run([*git, "tag", "-a", "v1.4.4", "-m", "v1.4.4"], check=True)
+    subprocess.run([*git, "tag", "v1.4.5"], check=True)
+    assert cli("update", "engineerfamily/x", merge_commit=sha).returncode == 0
+    assert "Merged; released in v1.4.4 (pre-release v1.4)" in cli.body()
+    assert cli.items()["engineerfamily/x"]["pr_status_final"] == 1

@@ -64,8 +64,9 @@ def issue_link(issue) -> str:
     return str(issue)
 
 
-def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, base: str = "main") -> str:
-    """The status block for one queue item (no network)."""
+def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, base: str = "main",
+           released: str = "") -> str:
+    """The status block for one queue item (no network). `released`: the tag with the merge commit (`release_tag`)."""
     max_attempts = buildqueue.MAX_ATTEMPTS
     status = item.get("status", "")
     rv, pv, rerun = item.get("review_verdict"), item.get("preprod_verdict"), item.get("rerun")
@@ -147,6 +148,8 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
             detail = "merged; nothing left for you"
         else:
             detail = "merged"
+        if released:
+            detail += f"; released in {released}"
         stages[4] = [DONE, detail]
         head = f"{DONE} {detail[0].upper()}{detail[1:]}"
     elif status == "cancelled":
@@ -228,12 +231,24 @@ def repo_config(repo: str) -> config.RunnerConfig | None:
         return None
 
 
+def release_tag(repo: str, sha: str) -> str:
+    """"v1.4.4 (pre-release v1.4)": the oldest vX.Y.Z tag containing <sha> in the repo's clone (versions.py tags it), or ""."""
+    path = config.repo_env(repo).get("AGENT_REPO")
+    if not sha or not path:
+        return ""
+    out = subprocess.run(["git", "-C", path, "tag", "--contains", sha, "-l", "v*"], capture_output=True, text=True,
+                         timeout=30)
+    found = sorted((t for t in out.stdout.split() if re.fullmatch(r"v\d+\.\d+\.\d+", t)),
+                   key=lambda t: tuple(int(n) for n in t[1:].split(".")))
+    return f"{found[0]} (pre-release {found[0].rsplit('.', 1)[0]})" if found else ""
+
+
 def gh(*args: str) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=30).stdout
 
 
 def refresh(key: str, it: dict, *, dry_run: bool) -> bool:
-    """Bring one item's PR block up to date. True if the block on the PR is (now) the current one."""
+    """Bring one item's PR block up to date. True if the block on the PR is (now) the current one, and final if done."""
     repo = key.partition("/")[0]
     cfg = repo_config(repo)
     if cfg is None:
@@ -241,16 +256,20 @@ def refresh(key: str, it: dict, *, dry_run: bool) -> bool:
         return False
     pr, gh_repo = str(it["pr"]), cfg.repo.github
     try:
-        view = json.loads(gh("pr", "view", pr, "--repo", gh_repo, "--json", "body,state"))
+        view = json.loads(gh("pr", "view", pr, "--repo", gh_repo, "--json", "body,state,mergeCommit"))
     except (subprocess.SubprocessError, OSError, ValueError) as exc:
         log(f"{key}: gh pr view {gh_repo}#{pr} failed: {str(exc).splitlines()[0] if str(exc) else type(exc).__name__}")
         return False
     body = view.get("body") or ""
+    # A [release] repo's merged PR shows its tag; until versions.py has made it, the block isn't final (sync retries).
+    tagging = cfg.release is not None and cfg.release.tags and it.get("status") == "done"
+    released = release_tag(repo, (view.get("mergeCommit") or {}).get("oid", "")) if tagging else ""
+    final = not tagging or bool(released)
     block = render(it, has_preprod=cfg.preprod is not None, human_steps=human_steps(BLOCK_RE.sub("", body)),
-                   now=buildqueue.now(), base=cfg.repo.base)
+                   now=buildqueue.now(), base=cfg.repo.base, released=released)
     old = BLOCK_RE.search(body)
     if old and same(old.group(0), block):
-        return True
+        return final
     if view.get("state") == "CLOSED" and it.get("status") != "done":
         return False
     if dry_run:
@@ -267,7 +286,7 @@ def refresh(key: str, it: dict, *, dry_run: bool) -> bool:
     finally:
         os.unlink(path)
     log(f"{key}: {gh_repo}#{pr}: {block.splitlines()[1]}")
-    return True
+    return final
 
 
 def mark_final(key: str) -> None:
