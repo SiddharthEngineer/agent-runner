@@ -10,7 +10,9 @@ Steps:
 4. Run the `/code-review` skill on the diff.
 5. Check each finding against the plan's Goal and Files. Keep only real defects: a bug, a failing check, a test weakened to pass,
    or something the plan requires that is missing. Style, naming and taste are never defects.
-6. Check that every task the plan marks `**Runs:** unattended` has `**Status:** ✅`.
+6. Check that every task the plan marks `**Runs:** unattended` has `**Status:** ✅`. One exception: a task that can only run
+   against preprod (its Runs or What line says so) and is `⏭️ skipped` for that reason is not a defect. The runner deploys
+   the PR to preprod only after you approve, and the preprod stage covers it: note it as "left for the preprod stage".
 7. Decide:
    - `approve`: validation passes, no real defects, the plan's tasks are done.
    - `changes`: one or more real defects or missing plan requirements the implementer can fix. List each with file:line and what to change.

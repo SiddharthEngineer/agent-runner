@@ -1,5 +1,5 @@
 # Plan: preprod-only tasks don't fail review, and a failed preprod check stays on preprod
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-22
 **Risk:** low (no prod impact; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** - (goes live only when the user installs a release: AM7)
 
@@ -33,7 +33,7 @@ Two runner problems from engineerfamily PR #63 (2026-10-21), which ended `blocke
 or What line says so) and is `⏭️ skipped` for that reason: note it in the review as "left for the preprod stage", not as a
 defect. Keep the prompt's placeholders (`{repo}`, `{pr}`, `{{…}}`) intact.
 **Validate:** `.venv/bin/pytest -q tests/test_review.py` (or `uv run pytest -q tests/test_review.py`) passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (f586c3d)
 
 ### Task 2: keep a failed PR on preprod
 **Runs:** unattended
@@ -44,7 +44,7 @@ re-queues (and still notifies when out of attempts); add to every notice from th
 `test_preprod_changes_releases_and_requeues` to `…_stays_and_requeues` and assert no release call; add a test that
 `blocked` keeps the lock and notifies with the release command.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (a2dfba2)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -52,7 +52,7 @@ re-queues (and still notifies when out of attempts); add to every notice from th
 **What:** README: the review-stage rule for preprod-only tasks, a line that plans put preprod checks in Human test
 steps, and the new `changes`/`blocked` preprod outcomes. ROADMAP: A19 row ✅ with the PR; AM7 stays for the user.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (4c7448a)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
@@ -61,3 +61,5 @@ steps, and the new `changes`/`blocked` preprod outcomes. ROADMAP: A19 row ✅ wi
 1. 2026-10-22 (user): after a failed preprod check, the PR stays on preprod so the user can look at it.
 2. Holding the global lock delays other repos' preprod deploys until the PR is fixed, merged, closed or released by hand.
    Accepted: preprod items are rare and the notice names the way out.
+3. 2026-10-22 (implementer, from self-review): `preprod.sh tick` returned while any lock was held, so the fixed PR was
+   never redeployed over its own hold. While preprod is held, tick now deploys only the holder's own `awaiting-preprod` item.

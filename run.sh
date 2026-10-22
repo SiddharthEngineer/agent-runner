@@ -286,7 +286,7 @@ closed_by_hand() {
 # 3a. Preprod stage (design D3): an approved `review` PR now on preprod gets its Human test steps run by the validator.
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
-    local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries
+    local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held
     pr=$("${Q[@]}" get "$key" pr)
     url=$(cfg preprod.health | head -n1 | cut -f1)
     host=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url")
@@ -345,6 +345,9 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
         summary="The preprod validator wrote no verdict $tries times. Log: $plog (on the VPS)."
     fi
     "${Q[@]}" set "$key" "preprod_verdict=$verdict"
+    # After changes or blocked the PR keeps preprod, so the user can look at it. The lock frees itself when the PR is merged
+    # or closed (preprod.sh status), or when the fixed PR is deployed again over its own hold.
+    held="It stays on preprod ($base_url) so you can look. Close the PR, or run \`agent-runner preprod release $repo\`, to free preprod."
     case $verdict in
         approve)
             left=$(field left_for_you)
@@ -360,18 +363,16 @@ ${left:-nothing left}"
                 notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
             fi ;;
         changes)
-            "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
             "${Q[@]}" requeue "$key" --note "Preprod checks of PR #$pr failed: $summary
 Failed steps:
 $(field failed)" >/dev/null
             "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
             say "$key: preprod checks failed, back to the implementer"
             [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: preprod checks still failing" \
-                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary" ;;
+                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary $held" ;;
         *)
-            "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
             "${Q[@]}" set "$key" status=blocked
-            notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" ;;
+            notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr $held" ;;
     esac
 }
 

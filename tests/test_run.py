@@ -57,7 +57,7 @@ def runner(tmp_path):
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id; triage prints $STUB_TRIAGE.
     write_stub(bin_dir / "claude", "claude",
-               'if [[ "$*" == *"preprod stage"* ]]; then\n'
+               'if [[ "$*" == *", preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
                '  echo "${PREPROD_NETRC:-}" >> "$STUB_LOG.netrc"\n'
                '  cat "$(echo "$*" | grep -o -- "--settings [^ ]*" | cut -d" " -f2)" >> "$STUB_LOG.settings"\n'
@@ -477,15 +477,36 @@ def test_preprod_approve_merges_releases_notifies(runner):
     assert runner.status(key) == "done"
 
 
-def test_preprod_changes_releases_and_requeues(runner):
+def test_preprod_changes_stays_and_requeues(runner):
     key = on_preprod(runner)
     runner(STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
     calls = runner.calls()
-    assert "preprod release engineerfamily" in calls
+    assert not any(c.startswith("preprod release") for c in calls)  # the PR stays on preprod for the user to look at
     assert not any(c.startswith("gh pr merge") for c in calls)
     assert runner.status(key) == "queued"
     assert "the page is blank" in runner.queue("get", key, "notes").stdout
     assert runner.queue("get", key, "preprod_verdict").returncode == 1  # cleared for the next round
+
+
+def test_preprod_changes_out_of_attempts_stays_and_notifies(runner):
+    key = on_preprod(runner, attempts=2)
+    runner(STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
+    calls = runner.calls()
+    assert not any(c.startswith("preprod release") for c in calls)
+    assert runner.status(key) == "blocked"
+    [note] = [c for c in calls if c.startswith("inbox notify")]
+    assert "preprod checks still failing" in note and "agent-runner preprod release engineerfamily" in note
+
+
+def test_preprod_blocked_keeps_the_lock_and_notifies(runner):
+    key = on_preprod(runner)
+    runner(STUB_PREPROD=preprod_verdict("blocked"))
+    calls = runner.calls()
+    assert not any(c.startswith("preprod release") for c in calls)
+    assert runner.status(key) == "blocked"
+    [note] = [c for c in calls if c.startswith("inbox notify")]
+    assert "preprod validator blocked on PR #9" in note
+    assert "It stays on preprod (https://" in note and "agent-runner preprod release engineerfamily" in note
 
 
 @pytest.mark.parametrize("stage", ["awaiting-review", "on-preprod"])

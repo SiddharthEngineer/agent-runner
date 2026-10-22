@@ -189,14 +189,16 @@ cmd_release() {
 
 cmd_tick() {
     cmd_status
-    holder >/dev/null && return 0
-    local next
-    next=$(python3 - "$STATE/queue.json" <<'EOF'
+    local next held
+    held=$(holder) || held=""
+    # While preprod is held, only the holder's own PR may deploy (its fix, over its own hold).
+    next=$(python3 - "$STATE/queue.json" "$held" <<'EOF'
 import json, os, sys
-path = sys.argv[1]
+path, held = sys.argv[1], sys.argv[2].split()
 items = json.load(open(path))["items"] if os.path.exists(path) else {}
 waiting = sorted((it["updated"], it.get("repo") or "strelitzia", it["pr"]) for it in items.values()
                  if it["status"] == "awaiting-preprod" and it.get("pr"))
+waiting = [w for w in waiting if not held or [w[1], str(w[2])] == held]
 print(f"{waiting[0][1]} {waiting[0][2]}" if waiting else "")
 EOF
 )

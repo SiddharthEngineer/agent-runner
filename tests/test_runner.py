@@ -457,6 +457,25 @@ def test_preprod_tick_picks_oldest_across_repos(preprod, tmp_path):
     assert json.loads((state / "queue.json").read_text())["items"]["engineerfamily/b"]["status"] == "on-preprod"
 
 
+@pytest.mark.parametrize("held, deployed", [("engineerfamily\t5", True), ("strelitzia\t3", False)])
+def test_preprod_tick_while_held_deploys_only_the_holder(preprod, tmp_path, held, deployed):
+    preprod.config("engineerfamily", "echo ef {sha} >> LOG")
+    preprod.config("strelitzia", "echo st {sha} >> LOG")
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    preprod.lock.write_text(f"{held}\tdeadbeef\t2026-10-19T00:00:00Z\n")  # held after a failed preprod check
+    items = {
+        "strelitzia/a": {"repo": "strelitzia", "status": "awaiting-preprod", "pr": 4, "updated": "2026-10-19T01:00:00+00:00"},
+        "engineerfamily/b": {"repo": "engineerfamily", "status": "awaiting-preprod", "pr": 5, "updated": "2026-10-19T02:00:00+00:00"},
+    }
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
+    out = preprod("cmd_tick")
+    assert ("engineerfamily#5 deployed to preprod" in out.stdout) == deployed, out.stdout + out.stderr
+    assert "strelitzia#4" not in out.stdout
+    statuses = {k: v["status"] for k, v in json.loads((state / "queue.json").read_text())["items"].items()}
+    assert statuses == {"strelitzia/a": "awaiting-preprod", "engineerfamily/b": "on-preprod" if deployed else "awaiting-preprod"}
+
+
 @pytest.fixture
 def health_server():
     """A local HTTP server: /ok 200, /bad 502, /json-true and /json-false bodies. Yields its base URL."""
