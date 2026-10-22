@@ -158,6 +158,9 @@ approve its own PR) and writes `results/<repo>/<slug>.review.json` (`approve | c
 - `changes` → re-queued for the implementer with the review as a note, resuming its session. It costs an attempt, so out of
   attempts it is `blocked` and you get a notice.
 - `blocked`, or no verdict twice → `blocked`, with a notice.
+Every `**Runs:** unattended` task must be `✅`, except one that can only run against preprod and is `⏭️ skipped` for that
+reason: the PR reaches preprod only after this review approves, so the review notes it as "left for the preprod stage". Plans
+put such checks in their Human test steps, which the preprod validator runs.
 **Validator, preprod stage.** Once an approved `review` PR is `on-preprod` (`preprod.sh tick` deployed it), the next tick runs
 one Sonnet validator (45 min at most) with [prompts/preprod-check.md](prompts/preprod-check.md). It works through the plan's
 Human test steps on the public preprod host: `curl` with the repo's netrc, and the Playwright MCP, whose browser gets the
@@ -167,8 +170,12 @@ types a password. Steps that need your own account, prod, email, money, a device
 "left for you". It comments a checklist on the PR and writes `results/<repo>/<slug>.preprod.json`.
 - `approve` → merged after green CI, preprod on the new base branch, and one notice "`[<key>] merged; N steps left for you`"
   listing the steps only you can do (left-for-you steps never block the merge).
-- `changes` → preprod released and the item re-queued for the implementer with the failed steps as a note (costs an attempt).
-- `blocked`, or no verdict twice → preprod released, item `blocked`, notice.
+- `changes` → the item re-queued for the implementer with the failed steps as a note (costs an attempt; out of attempts it is
+  `blocked`, with a notice).
+- `blocked`, or no verdict twice → item `blocked`, notice.
+After `changes` or `blocked` the PR stays on preprod (the lock is held) so you can look at it, and the notice says so. The lock
+frees itself when the PR is merged or closed, or when the fixed PR is deployed again; `agent-runner preprod release <repo>`
+frees it by hand. Until then other PRs wait for preprod.
 **The signed-in session (ROADMAP AM3).** Do this after engineerfamily E2 (preprod-open) is on preprod, so no basic-auth
 prompt sits in front of Google's sign-in. Redo it when the session expires: 30 days after sign-in, not rolling.
 1. On your laptop (it needs a screen), with Node installed:

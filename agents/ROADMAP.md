@@ -39,7 +39,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A16 | CI fallback without check access, preprod follows each merge, hand-merged PRs | [runner-11-autopilot](plans/done/runner-11-autopilot.md) | agent-runner | ✅ #69 | cutover |
 | A17 | `install.sh` skips the test suite when CI passed on the tag | [runner-12-fast-install](plans/done/runner-12-fast-install.md) | agent-runner | ✅ #75 | A16 |
 | A18 | Finished plans move to `agents/plans/done/` (`/implement` does it; validators find moved plans; move today's 18) | [plans-done-folder](plans/done/plans-done-folder.md) | agent-runner | ✅ PR open 2026-10-21 | - |
-| A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/runner-13-preprod-holds.md) | agent-runner | ⏳ queued 2026-10-22 (before engineerfamily E3) | - |
+| A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/runner-13-preprod-holds.md) | agent-runner | ✅ PR open 2026-10-22 | - |
 
 ## Manual steps (you)
 
