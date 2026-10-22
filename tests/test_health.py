@@ -296,6 +296,7 @@ def ticker(home, monkeypatch):
     monkeypatch.setattr(health, "notify_again", lambda e, p, *a: t.calls.append(("again", p.key)) or True)
     monkeypatch.setattr(health, "notify_recovered", lambda e, key, m: t.calls.append(("recovered", key)) or True)
     monkeypatch.setattr(health.config, "load_env", lambda: None)
+    monkeypatch.setattr(health, "claude_sessions", lambda *a, **k: [])
     return t
 
 
@@ -464,3 +465,70 @@ def test_diagnose_settings_allow_nothing_destructive():
     for rule in settings["permissions"]["allow"]:
         assert not any(word in rule for word in ("rm", "prune", "kill", "sudo")), rule
     assert {"Edit", "Write", "Bash(rm:*)", "Bash(sudo:*)"} <= set(settings["permissions"]["deny"])
+
+
+# --- Claude desktop sessions (report only)
+
+def fake_proc(root: Path, home: Path, procs: dict) -> Path:
+    """A fake /proc: {pid: (argv, cpu_ticks, rss_kb)}, plus a non-numeric entry and a process that isn't ccd-cli."""
+    (root / "self").mkdir(parents=True)
+    for pid, (argv, ticks, rss_kb) in procs.items():
+        d = root / str(pid)
+        d.mkdir()
+        (d / "cmdline").write_bytes(b"\0".join(a.encode() for a in argv) + b"\0")
+        (d / "stat").write_text(f"{pid} (x y) S 1 1 1 0 -1 0 0 0 0 0 {ticks} 0 0 0 20 0 1 0")
+        (d / "status").write_text(f"Name:\tx\nVmRSS:\t  {rss_kb} kB\n")
+    return root
+
+
+def test_claude_sessions_reads_only_ccd_cli(home, tmp_path):
+    cli = str(home / ".claude/remote/ccd-cli/2.1.304-abc")
+    proc = fake_proc(tmp_path / "proc", home, {
+        10: ([cli, "--output-format", "stream-json", "--resume=225a6352-7587"], 500, 300 * 1024),
+        11: ([cli, "--output-format", "stream-json"], 100, 230 * 1024),
+        12: (["/bin/bash", "-c", f"pgrep -f {cli}"], 5, 4000),  # mentions the path but isn't a session
+    })
+    found = health.claude_sessions(proc, home)
+    assert [(s.pid, s.rss_mb, s.session_id) for s in found] == [(10, 300, "225a6352-7587"), (11, 230, None)]
+    assert found[0].cpu_s == 500 / health.os.sysconf("SC_CLK_TCK")
+
+
+def test_idle_time_tracks_cpu_rate(home):
+    from datetime import datetime, timedelta, timezone
+
+    at = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    state: dict = {}
+    busy, idle = health.Session(1, 300, 10.0, "aaaaaaaa-1"), health.Session(2, 250, 10.0, None)
+    health.track_sessions([busy, idle], state, at)
+    for _ in range(8):  # two hours of 15-minute ticks
+        at += timedelta(minutes=15)
+        busy.cpu_s += 60  # 0.067 CPU-s/s: working
+        idle.cpu_s += 6  # 0.0067 CPU-s/s: idle
+        health.track_sessions([busy, idle], state, at)
+    text = health.sessions_report([busy, idle], state, at)
+    assert "2 open, 550 MB" in text
+    assert text.index("pid 2: 250 MB, idle 2 h, new session") < text.index("pid 1: 300 MB, active, session `aaaaaaaa`")
+    health.track_sessions([busy], state, at)  # pid 2 was archived
+    assert set(state["sessions"]) == {"1"}
+
+
+def test_first_seen_session_counts_as_active(home):
+    from datetime import datetime, timezone
+
+    at = datetime(2026, 10, 21, 12, 0, tzinfo=timezone.utc)
+    state: dict = {}
+    s = health.Session(5, 200, 99.0, None)
+    health.track_sessions([s], state, at)
+    assert "active" in health.sessions_report([s], state, at)
+    assert health.sessions_report([], state, at) == ""
+
+
+def test_tick_lists_sessions_only_on_memory_notices(ticker, monkeypatch):
+    bodies = {}
+    monkeypatch.setattr(health, "claude_sessions", lambda *a, **k: [health.Session(7, 280, 1.0, None)])
+    monkeypatch.setattr(health, "notify_new", lambda p, m, c, d, extra="": bodies.update({p.key: extra}) or 7)
+    monkeypatch.setattr(health, "problems", lambda m, th: [health.Problem("memory", "low", False),
+                                                           health.Problem("disk", "full", True)])
+    health.tick()
+    assert "pid 7: 280 MB" in bodies["memory"] and bodies["disk"] == ""
+    assert "7" in health.load_state()["sessions"]

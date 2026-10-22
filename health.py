@@ -6,6 +6,7 @@ Usage: python3 health.py check                          (JSON metrics and proble
        python3 health.py tick                           (cron, every 15 min: measure, clean, measure, notify)
        python3 health.py gate                           (exit 1 while disk is at or over disk_alert_pct)
        python3 health.py diagnose [--force]             (the read-only Sonnet diagnosis; --force ignores the 6 h spacing)
+       python3 health.py sessions                       (open Claude desktop sessions: memory and idle time; read-only)
 
 Thresholds default to DEFAULTS and can be overridden in ~/.config/agent-runner/health.toml under [thresholds].
 Rules are code, not config: each one deletes only under its own root, and never follows symlinks.
@@ -464,6 +465,87 @@ def cmd_clean(argv: list[str]) -> int:
     return 1 if any("error" in r for r in results) else 0
 
 
+# --- Claude desktop sessions. Each open session keeps a ccd-cli process (~200-300 MB) on the VPS until it is archived in
+# the desktop app. Only the app can archive, so this only reports; it never signals or stops a process.
+
+ACTIVE_CPU = 0.02  # CPU-seconds per second between ticks; an idle session uses about 0.007, a working one 0.03 or more
+
+
+@dataclass
+class Session:
+    pid: int
+    rss_mb: int
+    cpu_s: float
+    session_id: str | None  # from --resume; None for a session started fresh in this process
+
+
+def claude_sessions(proc: Path = Path("/proc"), home: Path | None = None) -> list[Session]:
+    """The user's ccd-cli processes (argv[0] under ~/.claude/remote/ccd-cli/). Reads only cmdline, stat and status."""
+    prefix = str((home or Path.home()) / ".claude/remote/ccd-cli") + "/"
+    hz = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
+    found = []
+    for d in sorted(proc.iterdir()) if proc.is_dir() else []:
+        if not d.name.isdigit():
+            continue
+        try:
+            argv = (d / "cmdline").read_bytes().split(b"\0")
+            if not argv[0].decode(errors="replace").startswith(prefix):
+                continue
+            fields = (d / "stat").read_text().rsplit(")", 1)[1].split()
+            rss_kb = next((int(line.split()[1]) for line in (d / "status").read_text().splitlines()
+                           if line.startswith("VmRSS:")), 0)
+        except (OSError, IndexError, ValueError):
+            continue  # the process ended, or isn't readable
+        resume = next((a.decode()[len("--resume="):] for a in argv if a.startswith(b"--resume=")), None)
+        found.append(Session(int(d.name), rss_kb // 1024, (int(fields[11]) + int(fields[12])) / hz, resume))
+    return found
+
+
+def track_sessions(sessions: list[Session], state: dict, at: datetime) -> None:
+    """Keep `state["sessions"][pid] = {"cpu", "at", "active_at"}`: active_at moves to `at` while the CPU rate is over
+    ACTIVE_CPU. A session first seen counts as active now, so idle times are never overstated."""
+    old = state.get("sessions", {})
+    new = {}
+    for s in sessions:
+        prev = old.get(str(s.pid))
+        active_at = at.isoformat()
+        if prev and s.cpu_s >= prev["cpu"]:
+            elapsed = (at - datetime.fromisoformat(prev["at"])).total_seconds()
+            if elapsed > 0 and (s.cpu_s - prev["cpu"]) / elapsed < ACTIVE_CPU:
+                active_at = prev["active_at"]
+        new[str(s.pid)] = {"cpu": s.cpu_s, "at": at.isoformat(), "active_at": active_at}
+    state["sessions"] = new
+
+
+def idle_for(delta: timedelta) -> str:
+    hours = delta.total_seconds() / 3600
+    return "active" if hours < 0.25 else f"idle {hours:.0f} h" if hours >= 1 else f"idle {hours * 60:.0f} min"
+
+
+def sessions_report(sessions: list[Session], state: dict, at: datetime) -> str:
+    """Markdown list of open sessions, most idle first, for memory and swap notices. Empty when there are none."""
+    if not sessions:
+        return ""
+    tracked = state.get("sessions", {})
+
+    def idle(s: Session) -> timedelta:
+        entry = tracked.get(str(s.pid))
+        return at - datetime.fromisoformat(entry["active_at"]) if entry else timedelta(0)
+
+    rows = sorted(sessions, key=idle, reverse=True)
+    lines = [f"**Claude sessions** ({len(rows)} open, {sum(s.rss_mb for s in rows)} MB). Each keeps its memory until you "
+             "archive it in the desktop app; archive the idle ones you're done with."]
+    lines += [f"- pid {s.pid}: {s.rss_mb} MB, {idle_for(idle(s))}"
+              + (f", session `{s.session_id[:8]}`" if s.session_id else ", new session") for s in rows]
+    return "\n".join(lines)
+
+
+def cmd_sessions() -> int:
+    sessions = claude_sessions()
+    print(sessions_report(sessions, load_state(), now()) or "no Claude sessions open")
+    return 0
+
+
 # --- tick: measure, clean, measure again, and keep one inbox issue per open problem.
 
 LOAD_CONFIRM = timedelta(minutes=15)  # load is a problem only when it was also high on a tick at least this much earlier
@@ -491,31 +573,33 @@ def inbox(*args: str) -> str | None:
     return out.stdout.strip()
 
 
-def report(m: Metrics, cleaned: list[dict], diagnosis: str | None = None) -> str:
-    """Issue/comment body: metrics, what this tick's cleanup freed, the diagnosis. Never file contents."""
+def report(m: Metrics, cleaned: list[dict], diagnosis: str | None = None, sessions: str = "") -> str:
+    """Issue/comment body: metrics, what this tick's cleanup freed, open sessions, the diagnosis. Never file contents."""
     lines = ["**Metrics**", "```", json.dumps(asdict(m), indent=2), "```"]
     if cleaned:
         lines += ["", "**Cleanup this tick**"]
         lines += [f"- {r['rule']}: freed {human(r['freed_bytes'])}" + (f" (error: {r['error']})" if "error" in r else "")
                   for r in cleaned]
+    if sessions:
+        lines += ["", sessions]
     if diagnosis:
         lines += ["", "**Diagnosis** (read-only Sonnet run; nothing was changed)", "", diagnosis]
     return "\n".join(lines)
 
 
-def notify_new(problem: Problem, m: Metrics, cleaned: list[dict], diagnosis: str | None) -> int | None:
+def notify_new(problem: Problem, m: Metrics, cleaned: list[dict], diagnosis: str | None, sessions: str = "") -> int | None:
     """Open the problem's issue; its number, or None if that failed (retried next tick)."""
     after = " after cleanup" if problem.cleanable else ""
     out = inbox("notify", "--project", "vps-health", "--json", "--title", f"[vps] {problem.summary}{after}",
-                "--body", report(m, cleaned, diagnosis))
+                "--body", report(m, cleaned, diagnosis, sessions))
     try:
         return int(json.loads(out)["number"]) if out else None
     except (ValueError, KeyError, TypeError):
         return None
 
 
-def notify_again(entry: dict, problem: Problem, m: Metrics, cleaned: list[dict]) -> bool:
-    body = f"Still open: {problem.summary} (since {entry['since']}).\n\n{report(m, cleaned)}"
+def notify_again(entry: dict, problem: Problem, m: Metrics, cleaned: list[dict], sessions: str = "") -> bool:
+    body = f"Still open: {problem.summary} (since {entry['since']}).\n\n{report(m, cleaned, sessions=sessions)}"
     return inbox("comment", str(entry["issue"]), "--body", body) is not None
 
 
@@ -620,17 +704,21 @@ def tick() -> int:
         at = now()
         found = confirmed(problems(m, th), state, at)
         open_ = state.setdefault("open", {})
+        sessions = claude_sessions()
+        track_sessions(sessions, state, at)
+        listing = sessions_report(sessions, state, at)
 
         new = [p for p in found if p.key not in open_]
         diagnosis = diagnose(new, m, cleaned, state) if new else None
         for p in found:
             entry = open_.get(p.key)
+            extra = listing if p.key in ("memory", "swap") else ""
             if entry is None:
-                issue = notify_new(p, m, cleaned, diagnosis)
+                issue = notify_new(p, m, cleaned, diagnosis, extra)
                 if issue is not None:
                     open_[p.key] = {"since": at.isoformat(), "issue": issue, "last_notified": at.isoformat()}
             elif at - datetime.fromisoformat(entry["last_notified"]) >= RENOTIFY:
-                if notify_again(entry, p, m, cleaned):
+                if notify_again(entry, p, m, cleaned, extra):
                     entry["last_notified"] = at.isoformat()
         for key in [k for k in open_ if k not in {p.key for p in found}]:
             if notify_recovered(open_[key], key, m):
@@ -666,10 +754,13 @@ def main(argv: list[str]) -> int:
             return gate()
         if argv[:1] == ["diagnose"] and set(argv[1:]) <= {"--force"}:
             return cmd_diagnose("--force" in argv)
+        if argv == ["sessions"]:
+            return cmd_sessions()
     except HealthError as exc:
         print(exc, file=sys.stderr)
         return 2
-    print("usage: health.py check | clean [--dry-run] [--pressure] | tick | gate | diagnose [--force]", file=sys.stderr)
+    print("usage: health.py check | clean [--dry-run] [--pressure] | tick | gate | diagnose [--force] | sessions",
+          file=sys.stderr)
     return 2
 
 

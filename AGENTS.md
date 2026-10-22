@@ -18,7 +18,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `inbox.py` | Inbox issues in this repo, plus an ntfy push |
 | `usage.py` | Claude session-usage gate |
 | `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
-| `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis), `gate` |
+| `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis, idle Claude sessions on memory notices), `gate`, `sessions` |
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
 | `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, review stage), `preprod-check.md` (validator, preprod stage) |
 | `mcp_config.py` | Per-run Playwright MCP config for the preprod stage (basic auth, storage state; 0600, deleted after) |
