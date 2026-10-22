@@ -44,7 +44,7 @@ re-queues (and still notifies when out of attempts); add to every notice from th
 `test_preprod_changes_releases_and_requeues` to `…_stays_and_requeues` and assert no release call; add a test that
 `blocked` keeps the lock and notifies with the release command.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-22 (a2dfba2)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
