@@ -30,10 +30,12 @@ def test_settings_are_read_only():
 def test_preprod_prompt_formats():
     template = (ROOT / "prompts/preprod-check.md").read_text()
     names = set(re.findall(r"(?<!\{)\{(\w+)\}(?!\})", template))
-    assert names == {"repo", "pr", "plan_path", "base_url", "result_file", "signed_in"}
+    assert names == {"repo", "pr", "plan_path", "base_url", "result_file", "signed_in", "netrc_file"}
     text = template.format(repo="o/r", pr=9, plan_path="p.md", base_url="https://preprod.example/", result_file="/r.json",
-                           signed_in="false")
+                           signed_in="false", netrc_file="/tmp/x/preprod.netrc")
     assert "gh pr comment 9 --repo o/r" in text and '"left_for_you"' in text
+    # a $VAR in the curl command is refused by the validator's permission rules, so the path must be literal
+    assert "--netrc-file /tmp/x/preprod.netrc" in text and "$PREPROD_NETRC" not in text
 
 
 def mcp(tmp_path, *extra):

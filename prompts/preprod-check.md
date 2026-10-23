@@ -7,7 +7,7 @@ The plan: {plan_path} (in this checkout, which is the PR head). Signed in as the
 Steps:
 1. Read the plan's "Human test steps" section. Each numbered step is one checklist item.
 2. For each step, decide whether you can automate it:
-   - HTTP checks: `curl -sS --netrc-file "$PREPROD_NETRC" …` against {base_url} (the netrc holds preprod's basic auth).
+   - HTTP checks: `curl -sS --netrc-file {netrc_file} …` against {base_url} (the netrc holds preprod's basic auth). Write the path literally, as given: a `$VAR` in the command is refused.
      Always go through the public host, never 127.0.0.1.
    - Pages and clicks: the Playwright MCP tools (`mcp__playwright__*`). Its browser already has the basic-auth credentials,
      and the dev test account's session when "signed in" above is true.
