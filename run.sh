@@ -370,8 +370,8 @@ preprod_stage() {
 s = json.load(open(sys.argv[1])); s["permissions"]["allow"] += ["mcp__playwright", "Bash(curl:*)", "Bash(gh pr comment:*)"]
 json.dump(s, open(sys.argv[2], "w"))' "$vsettings" "$tmpd/settings.json"
     vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
-base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7]))' \
-        "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$(pr_plan "$pwt")" "$base_url" "$presult" "$signed")
+base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file=sys.argv[8]))' \
+        "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$(pr_plan "$pwt")" "$base_url" "$presult" "$signed" "${netrc:-/dev/null}")
     say "$key: validator (preprod) start for PR #$pr, signed_in=$signed (log $plog)"
     since=$(stamp)
     (
