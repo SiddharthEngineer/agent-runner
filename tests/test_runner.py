@@ -476,6 +476,44 @@ def test_preprod_tick_while_held_deploys_only_the_holder(preprod, tmp_path, held
     assert statuses == {"strelitzia/a": "awaiting-preprod", "engineerfamily/b": "on-preprod" if deployed else "awaiting-preprod"}
 
 
+@pytest.mark.parametrize("deploy, health, why", [
+    ("echo ef {sha} >> LOG", 'echo "health failed: https://x/ returned 401: <html>"; return 1',
+     "health failed: https://x/ returned 401"),
+    ("false", "echo healthy", "the deploy command failed"),
+])
+def test_preprod_failed_deploy_blocks_and_is_not_retried(preprod, tmp_path, deploy, health, why):
+    preprod.config("engineerfamily", deploy)
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    items = {"engineerfamily/b": {"repo": "engineerfamily", "status": "awaiting-preprod", "pr": 5,
+                                  "updated": "2026-10-19T01:00:00+00:00"}}
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
+    stub = f"health_check() {{ {health}; }}; "
+    out = preprod(stub + "cmd_tick", stub_health=False)
+    assert out.returncode == 1 and "deploy of engineerfamily#5 failed" in out.stdout, out.stdout + out.stderr
+    item = json.loads((state / "queue.json").read_text())["items"]["engineerfamily/b"]
+    assert (item["status"], item["deploy_failed"]) == ("blocked", why)
+    assert not preprod.lock.exists()
+    assert "--remove-label awaiting-preprod" in preprod.log()
+    assert "gh pr comment" not in preprod.log()
+    deploys = preprod.log().count("headRefOid")
+    again = preprod(stub + "cmd_tick", stub_health=False)
+    assert "engineerfamily#5" not in again.stdout and preprod.log().count("headRefOid") == deploys
+
+
+def test_preprod_successful_deploy_clears_deploy_failed(preprod, tmp_path):
+    preprod.config("engineerfamily", "echo ef {sha} >> LOG")
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    items = {"engineerfamily/b": {"repo": "engineerfamily", "status": "awaiting-preprod", "pr": 5, "deploy_failed": "x",
+                                  "updated": "2026-10-19T01:00:00+00:00"}}
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
+    out = preprod("cmd_tick")
+    assert "engineerfamily#5 deployed to preprod" in out.stdout, out.stdout + out.stderr
+    item = json.loads((state / "queue.json").read_text())["items"]["engineerfamily/b"]
+    assert item["status"] == "on-preprod" and "deploy_failed" not in item
+
+
 @pytest.fixture
 def health_server():
     """A local HTTP server: /ok 200, /bad 502, /json-true and /json-false bodies. Yields its base URL."""

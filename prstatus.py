@@ -117,6 +117,8 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         """Where a blocked or waiting item stopped (0-based)."""
         if pv == "approve":
             return 4
+        if item.get("deploy_failed"):  # preprod.sh: the deploy or its health check failed
+            return 2
         if pv == "blocked" or item.get("preprod_attempts"):
             return 3
         if rv == "blocked" or item.get("review_attempts"):
@@ -195,7 +197,7 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         if status in ("waiting-answer", "question"):
             why = "waiting for your answer"
         else:
-            why = {0: summary, 1: item.get("review_summary"),
+            why = {0: summary, 1: item.get("review_summary"), 2: item.get("deploy_failed"),
                    3: item.get("preprod_summary") or (notes[-1] if rerun == "preprod" and notes else ""), 4: summary}[at]
             why = f"blocked: {first_sentence(why)}" if why else "blocked"
         detail = why + (f" ({issue})" if issue else "")
