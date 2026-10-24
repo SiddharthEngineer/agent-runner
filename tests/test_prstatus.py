@@ -133,6 +133,8 @@ def test_merged_by_hand():
      "Preprod checks: blocked: Login 500s"),
     (dict(review_verdict="approve", rerun="preprod", review_attempts=2), 3, "Validator review: blocked"),
     (dict(last_result={"summary": "Missing access."}), 2, "Implementer: blocked: Missing access"),
+    (dict(review_verdict="approve", deploy_failed="health failed: https://x/ returned 401"), 4,
+     "Preprod deploy: blocked: health failed: https://x/ returned 401"),
 ])
 def test_blocked_shows_where_and_the_issue(fields, at, why):
     out = lines(block(status="blocked", tier="review", notice="https://github.com/o/inbox/issues/3", issue=1, **fields))

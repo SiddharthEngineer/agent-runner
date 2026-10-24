@@ -84,6 +84,9 @@ until S2 deletes it.
 - Preprod follows each merge: after any merge (low, or after the validator), a repo with `[preprod]` gets
   `preprod.sh release <repo>`, so preprod runs the new base, unless another PR holds the lock (its release puts the base back
   later). One `runs.log` line either way; a failed redeploy sends a notice and leaves the item `done`.
+- Failed preprod deploy: when a PR's deploy or its health checks fail, preprod goes back on the base and the item is
+  `blocked` (`deploy_failed` says why), with one notice. Tick doesn't retry it; re-queue with
+  `agent-runner queue set <key> status=awaiting-preprod`.
 - Hand merges: before the review or preprod stage acts on an item, the runner reads its PR's state. Merged by hand → `done`
   ("merged by hand"), preprod put on the base; closed → `cancelled` (preprod released if it held it). No validator run.
 - After each run the Docker build cache is pruned down to `AGENT_BUILD_CACHE_KEEP` (default `3GB`), so a long chain can't fill the disk.

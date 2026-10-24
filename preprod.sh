@@ -143,7 +143,7 @@ cmd_status() {
 }
 
 cmd_deploy() {
-    local repo=$1 pr=$2 cur sha key
+    local repo=$1 pr=$2 cur sha key out why
     if cur=$(holder) && [ "$cur" != "$repo $pr" ]; then
         echo "preprod busy: ${cur/ /#}"
         return 4
@@ -151,18 +151,41 @@ cmd_deploy() {
     load_repo "$repo" || return 3
     sha=$(gh pr view "$pr" --repo "$GH_REPO" --json headRefOid -q .headRefOid) || { echo "can't read $repo#$pr"; return 1; }
     printf '%s\t%s\t%s\t%s\n' "$repo" "$pr" "$sha" "$(date -u +%FT%TZ)" > "$LOCK"
-    if ! deploy_ref "pull/$pr/head" "$sha"; then
+    out=$(mktemp)
+    deploy_ref "pull/$pr/head" "$sha" | tee "$out"
+    if [ "${PIPESTATUS[0]}" -ne 0 ]; then
+        why=$(grep -m1 -o '^health failed: [^ ]* returned [0-9]*' "$out")
+        rm -f "$out"
         echo "deploy of $repo#$pr failed; restoring $BASE"
         cmd_release "$repo"
+        deploy_failed "$repo" "$pr" "${why:-the deploy command failed}"
         return 1
     fi
+    rm -f "$out"
     gh pr edit "$pr" --repo "$GH_REPO" --add-label on-preprod --remove-label awaiting-preprod >/dev/null 2>&1
     gh pr comment "$pr" --repo "$GH_REPO" --body "Deployed to preprod (health checks passed). Test steps are in the PR description." >/dev/null
     key=$(key_for_pr "$repo" "$pr")
-    [ -n "$key" ] && "${Q[@]}" set "$key" status=on-preprod
+    [ -n "$key" ] && "${Q[@]}" set "$key" status=on-preprod && "${Q[@]}" unset "$key" deploy_failed
     python3 "$HERE/inbox.py" notify --title "$repo#$pr is on preprod, ready for you to test" --project "$repo" \
         --body "https://github.com/$GH_REPO/pull/$pr. Test steps are in the PR description." ${key:+--slug "$key"} >/dev/null
     echo "$repo#$pr deployed to preprod"
+}
+
+# deploy_failed <repo> <pr> <why>: block the item, so tick doesn't redeploy it every few minutes, and send one notice.
+# Preprod is already back on the base. `why` (the first failed health URL and its code) goes in the item's `deploy_failed`.
+deploy_failed() {
+    local repo=$1 pr=$2 why=$3 key url
+    gh pr edit "$pr" --repo "$GH_REPO" --remove-label awaiting-preprod >/dev/null 2>&1
+    key=$(key_for_pr "$repo" "$pr")
+    [ -n "$key" ] || return 0
+    "${Q[@]}" set "$key" status=blocked "deploy_failed=$why"
+    url=$(python3 "$HERE/inbox.py" notify --slug "$key" --project "$repo" --title "preprod deploy of $repo#$pr failed" \
+        --body "https://github.com/$GH_REPO/pull/$pr: $why. Preprod is back on $BASE. Fix the PR, or the [preprod] health \
+checks in agents/runner.toml on $BASE (the runner reads them from there, never from the PR), then re-queue with: \
+agent-runner queue set $key status=awaiting-preprod" 2>/dev/null | tail -n1)
+    [ -n "$url" ] && "${Q[@]}" set "$key" "notice=$url"
+    python3 "$HERE/prstatus.py" update "$key" >/dev/null 2>&1
+    return 0
 }
 
 cmd_release() {
