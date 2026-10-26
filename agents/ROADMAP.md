@@ -42,6 +42,8 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/done/runner-13-preprod-holds.md) | agent-runner | ✅ PR open 2026-10-22 | - |
 | A20 | Stage checklist at the top of every runner PR's description, refreshed each tick (all repos) | [runner-14-pr-checklist](plans/done/runner-14-pr-checklist.md) | agent-runner | ✅ PR open 2026-10-22 | - |
 | A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/done/runner-15-versions.md) | agent-runner | ✅ PR open 2026-10-22 | A20 |
+| A22 | Queue intake, part 1: `[intake]` in runner.toml and `intake.py scan` (a pushed plan with `**Queue:** yes` gets queued) | [intake-1-scan](plans/intake-1-scan.md) | agent-runner | ⏳ | - |
+| A23 | Queue intake, part 2: every tick runs it, `agent-runner intake`, `/plan` writes the line and works in cloud sessions | [intake-2-wiring](plans/intake-2-wiring.md) | agent-runner | ⏳ | A22 |
 
 ## Manual steps (you)
 
@@ -58,6 +60,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM7 | After A19 merges: `agent-runner release --install`, so the runner uses it (engineerfamily E3's validation benefits; E3 doesn't need it to pass). | ☐ |
 | AM8 | After A20 and A21 merge: `agent-runner release --install`. Until then PRs show no status block and nothing is tagged. | ☐ |
 | AM9 | Once, after AM8 and engineerfamily E11 merge: `agent-runner versions promote engineerfamily v1.3.3` (what prod runs). The next tick tags main `v1.4.0` and opens the `v1.4` pre-release. | ☐ |
+| AM10 | After A23 merges: `agent-runner release --install`, then opt each repo in by adding `[intake]` with `enabled = true` to its `agents/runner.toml` on the base branch (agent-runner first, for the Human test steps in [intake-2-wiring](plans/intake-2-wiring.md); then engineerfamily and Strelitzia). | ☐ |
 
 ## Decisions (current)
 - 2026-10-22 (user): status visible without Claude or the VPS: a stage checklist on every runner PR (A20), and per-merge patch tags with a `vX.Y` pre-release promoted to a full release on each prod deploy (A21, engineerfamily E11). The runner tags; prod stays manual (`make prod-release`).
@@ -75,6 +78,8 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
   and S2 moves the commands to the CLI after it.
 
 ## Backlog (not yet planned)
+- engineerfamily and Strelitzia `/plan`: add the `**Queue:**` header line and the cloud-session note from A23 (their `.claude/commands/plan.md`; `agent-runner check-commands` shows the drift). After AM10.
+- Open-source readiness (user, 2026-10-26): remove the hardcoded owner and repo names (`config.py` PROD_PATTERNS → per-repo `[preprod] prod_patterns`, inbox `strelitzia` label and ntfy title, `buildqueue.py`/`inbox.py` descriptions, `install.sh` default remote, `preprod.sh`/`run.sh` Strelitzia-era fallbacks), and a generic README quick start. Queue and config already live outside the repo (`~/.local/state`, `~/.config`).
 - Implementer ↔ validator back-and-forth (user, 2026-10-19; not pressing): let the validator's findings go back to the
   implementer and its fix go back to the validator within one item, for a few rounds, instead of each "changes" costing an
   attempt; also re-queue on a "changes requested" PR review. Moved here from Strelitzia's backlog.
