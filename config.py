@@ -8,7 +8,8 @@ Usage: python3 config.py check <runner.toml>             (prints `ok`, or one pr
        python3 config.py env-file                        (the shared env file's path, for bash to source; exit 1 if none)
 
 A repo describes itself in `agents/runner.toml`: base branch, merge method, validate commands, risk-gate patterns,
-preprod commands and (optionally) `[release]`, which turns on versions.py's tags and releases. `load` checks every field and refuses any preprod command that could touch prod, so no caller can
+preprod commands, (optionally) `[release]`, which turns on versions.py's tags and releases, and `[intake]`,
+which lets intake.py queue plans pushed to the base branch. `load` checks every field and refuses any preprod command that could touch prod, so no caller can
 hold a `RunnerConfig` with a prod command in it. Standard library only (Python 3.11+ for `tomllib`).
 """
 
@@ -89,12 +90,18 @@ class Release:
 
 
 @dataclass(frozen=True)
+class Intake:
+    enabled: bool = False  # intake.py scan queues this repo's plans that say `**Queue:** yes` on origin/<base>
+
+
+@dataclass(frozen=True)
 class RunnerConfig:
     repo: Repo
     validate: Validate
     gate: Gate
     preprod: Preprod | None = None
     release: Release | None = None
+    intake: Intake | None = None
 
 
 class _Reader:
@@ -194,6 +201,13 @@ def _parse(data: dict) -> tuple[RunnerConfig | None, list[str]]:
         tags = r.get(rel_t, "release", "tags", bool, default=True)
         release = Release(tags=bool(tags))
 
+    intake = None
+    in_t = r.table(data, "intake", required=False)
+    if in_t is not None:
+        enabled = r.get(in_t, "intake", "enabled", bool, default=False)
+        problems.extend(f"unknown key intake.{k}" for k in in_t if k != "enabled")
+        intake = Intake(enabled=bool(enabled))
+
     if problems:
         return None, problems
     cfg = RunnerConfig(
@@ -202,6 +216,7 @@ def _parse(data: dict) -> tuple[RunnerConfig | None, list[str]]:
         gate=Gate(high_risk=high_risk, doc_or_test=doc_or_test, code_line_budget=budget, tests_dir=tests_dir),
         preprod=preprod,
         release=release,
+        intake=intake,
     )
     return cfg, prod_problems(cfg)
 
