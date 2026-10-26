@@ -191,3 +191,17 @@ def test_own_runner_toml_and_agent_settings():
     for f in files:
         deny = json.loads(f.read_text())["permissions"]["deny"]
         assert {"Bash(crontab:*)", "Bash(git tag:*)"} <= set(deny), f.name
+
+
+def test_intake_table(tmp_path):
+    assert config.load(write(tmp_path, MINIMAL)).intake is None
+    cfg = config.load(write(tmp_path, MINIMAL + "[intake]\nenabled = true\n"))
+    assert cfg.intake == config.Intake(True)
+    assert cli("get", str(tmp_path / "runner.toml"), "intake.enabled").stdout == "True\n"
+    assert config.load(write(tmp_path, MINIMAL + "[intake]\n")).intake == config.Intake(False)
+
+
+def test_intake_problems(tmp_path):
+    with pytest.raises(config.ConfigError) as err:
+        config.load(write(tmp_path, MINIMAL + '[intake]\nenabled = "yes"\nauto = true\n'))
+    assert err.value.problems == ["intake.enabled must be true or false", "unknown key intake.auto"]

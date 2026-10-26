@@ -38,7 +38,7 @@ the user's `~/.config/agent-runner/repos/*.env`. Nothing machine- or user-specif
 `_parse` reads `[intake] enabled` (bool, default `False`; any other key is a problem, like other tables). `config get … intake.enabled` works.
 **Validate:** `uv run --with pytest pytest tests/test_config.py -q` → passes, with new tests: no table → `intake is None`;
 `enabled = true` → `Intake(True)`; `enabled = "yes"` → ConfigError `intake.enabled must be bool`.
-**Status:** ❌
+**Status:** ✅ 2026-10-26
 
 ### Task 2: `intake.py scan`
 **Runs:** unattended
