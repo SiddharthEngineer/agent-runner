@@ -130,6 +130,9 @@ health = [{ url = "https://preprod.engineerfamily.net/", status = 200 },
 ```
 Health checks go through Cloudflare with the netrc, so they prove the public host routes to the right nginx. Each URL gets
 6 tries, 10 s apart; a failure prints the URL, the HTTP code and at most 300 characters of the body, and the deploy is rolled back.
+The deploy and seed commands' output (docker build logs) goes to `logs/<time>-<repo>.preprod-deploy.log` in the state
+dir, not `runs.log`, which gets one line naming that file, plus its last 15 lines when a command fails. `preprod tick` logs
+nothing when preprod is free or still held; `agent-runner preprod status` still says which.
 
 ## How a tick works (`run.sh`)
 Every 5 minutes, for every registered repo, with at most one Claude run at a time (a `flock` on `run.lock`):
