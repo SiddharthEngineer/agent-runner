@@ -68,6 +68,10 @@ load_repo() {
     LOADED=$repo
 }
 
+log_tail() {  # log_tail <what failed> <log>: one line, then the log's last 15 lines indented, on stderr
+    { echo "$1; last lines of $2:"; tail -n 15 "$2" | sed 's/^/    /'; } >&2
+}
+
 with_sha() { echo "${1//\{sha\}/$2}"; }  # with_sha <command> <sha>
 
 deploy_ref() {  # deploy_ref <ref to fetch into APP_DIR> <sha>
@@ -76,10 +80,15 @@ deploy_ref() {  # deploy_ref <ref to fetch into APP_DIR> <sha>
         git -C "$APP_DIR" fetch -q origin "$ref" || return 1
         git -C "$APP_DIR" checkout -q --detach "$sha" || return 1
     fi
-    bash -c "$(with_sha "$DEPLOY" "$sha")" || return 1
-    # Seed output goes to stderr so it reaches runs.log even when cmd_release silences stdout.
+    # Deploy and seed output (docker build logs) goes to its own file, not runs.log. Lines about it go to stderr, so they
+    # reach runs.log even when cmd_release silences stdout; a failure adds the log's last lines.
+    local dlog
+    mkdir -p "$STATE/logs"
+    dlog=$STATE/logs/$(date -u +%Y%m%dT%H%M%SZ)-${LOADED:-preprod}.preprod-deploy.log
+    echo "preprod deploy output: $dlog" >&2
+    bash -c "$(with_sha "$DEPLOY" "$sha")" >> "$dlog" 2>&1 || { log_tail "deploy command failed" "$dlog"; return 1; }
     if [ -n "$SEED" ]; then
-        bash -c "$SEED" >&2 || return 1
+        bash -c "$SEED" >> "$dlog" 2>&1 || { log_tail "seed command failed" "$dlog"; return 1; }
     fi
     sleep 10
     health_check
@@ -128,7 +137,8 @@ EOF
 
 cmd_status() {
     local cur repo pr state key
-    cur=$(holder) || { echo "preprod: free"; return 0; }
+    # QUIET_IDLE (cmd_tick): say nothing when preprod is free or still held, so runs.log only gets changes.
+    cur=$(holder) || { [ -n "${QUIET_IDLE:-}" ] || echo "preprod: free"; return 0; }
     read -r repo pr <<<"$cur"
     load_repo "$repo" >/dev/null || { echo "preprod: held by $repo#$pr since $(lock_since) (its config can't be read)"; return 0; }
     state=$(gh pr view "$pr" --repo "$GH_REPO" --json state -q .state 2>/dev/null)
@@ -139,7 +149,7 @@ cmd_status() {
         cmd_release "$repo"
         return 0
     fi
-    echo "preprod: held by $repo#$pr since $(lock_since)"
+    [ -n "${QUIET_IDLE:-}" ] || echo "preprod: held by $repo#$pr since $(lock_since)"
 }
 
 cmd_deploy() {
@@ -211,7 +221,7 @@ cmd_release() {
 }
 
 cmd_tick() {
-    cmd_status
+    QUIET_IDLE=1 cmd_status
     local next held
     held=$(holder) || held=""
     # While preprod is held, only the holder's own PR may deploy (its fix, over its own hold).
