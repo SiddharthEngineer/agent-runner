@@ -44,6 +44,10 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/done/runner-15-versions.md) | agent-runner | ✅ PR open 2026-10-22 | A20 |
 | A22 | Queue intake, part 1: `[intake]` in runner.toml and `intake.py scan` (a pushed plan with `**Queue:** yes` gets queued) | [intake-1-scan](plans/intake-1-scan.md) | agent-runner | ⏳ | - |
 | A23 | Queue intake, part 2: every tick runs it, `agent-runner intake`, `/plan` writes the line and works in cloud sessions | [intake-2-wiring](plans/intake-2-wiring.md) | agent-runner | ⏳ | A22 |
+| A24 | Validator loop, part 1: up to 3 fix rounds per item that don't use attempts; blocked when rounds run out or findings come back unfixed | [validator-loop-1-rounds](plans/validator-loop-1-rounds.md) | agent-runner | ⏳ | A23 |
+| A25 | Validator loop, part 2: re-reviews on Sonnet, scoped to the previous findings and the fix diff (first review stays Opus) | [validator-loop-2-rereview](plans/validator-loop-2-rereview.md) | agent-runner | ⏳ | A24 |
+| A26 | Validator loop, part 3: a cost line per Claude run in `runs.log`, `agent-runner usage report`, text-first preprod checks | [validator-loop-3-costs](plans/validator-loop-3-costs.md) | agent-runner | ⏳ | A25 |
+| A27 | Validator loop, part 4: a `/fix <change>` PR comment sends an open runner PR back to the implementer | [validator-loop-4-fix-comments](plans/validator-loop-4-fix-comments.md) | agent-runner | ⏳ | A26 |
 
 ## Manual steps (you)
 
@@ -80,6 +84,4 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 ## Backlog (not yet planned)
 - engineerfamily and Strelitzia `/plan`: add the `**Queue:**` header line and the cloud-session note from A23 (their `.claude/commands/plan.md`; `agent-runner check-commands` shows the drift). After AM10.
 - Open-source readiness (user, 2026-10-26): remove the hardcoded owner and repo names (`config.py` PROD_PATTERNS → per-repo `[preprod] prod_patterns`, inbox `strelitzia` label and ntfy title, `buildqueue.py`/`inbox.py` descriptions, `install.sh` default remote, `preprod.sh`/`run.sh` Strelitzia-era fallbacks), and a generic README quick start. Queue and config already live outside the repo (`~/.local/state`, `~/.config`).
-- Implementer ↔ validator back-and-forth (user, 2026-10-19; not pressing): let the validator's findings go back to the
-  implementer and its fix go back to the validator within one item, for a few rounds, instead of each "changes" costing an
-  attempt; also re-queue on a "changes requested" PR review. Moved here from Strelitzia's backlog.
+- Implementer ↔ validator back-and-forth: planned 2026-10-26 as A24-A27 (validator-loop-1 to 4).
