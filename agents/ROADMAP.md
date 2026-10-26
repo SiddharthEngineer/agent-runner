@@ -42,7 +42,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A19 | Review accepts preprod-only skipped tasks; a failed preprod check stays on preprod for the user (from engineerfamily #63) | [runner-13-preprod-holds](plans/done/runner-13-preprod-holds.md) | agent-runner | ✅ PR open 2026-10-22 | - |
 | A20 | Stage checklist at the top of every runner PR's description, refreshed each tick (all repos) | [runner-14-pr-checklist](plans/done/runner-14-pr-checklist.md) | agent-runner | ✅ PR open 2026-10-22 | - |
 | A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/done/runner-15-versions.md) | agent-runner | ✅ PR open 2026-10-22 | A20 |
-| A22 | Queue intake, part 1: `[intake]` in runner.toml and `intake.py scan` (a pushed plan with `**Queue:** yes` gets queued) | [intake-1-scan](plans/intake-1-scan.md) | agent-runner | ⏳ | - |
+| A22 | Queue intake, part 1: `[intake]` in runner.toml and `intake.py scan` (a pushed plan with `**Queue:** yes` gets queued) | [intake-1-scan](plans/done/intake-1-scan.md) | agent-runner | ✅ | - |
 | A23 | Queue intake, part 2: every tick runs it, `agent-runner intake`, `/plan` writes the line and works in cloud sessions | [intake-2-wiring](plans/intake-2-wiring.md) | agent-runner | ⏳ | A22 |
 
 ## Manual steps (you)

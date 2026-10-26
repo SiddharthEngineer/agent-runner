@@ -1,5 +1,5 @@
 # Plan: Queue intake from GitHub, part 1: `[intake]` config and `intake.py scan`
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-26
 **Risk:** low (new script and an optional config table; nothing calls it until intake-2; runner programme PRs auto-merge on green CI, user 2026-10-19)
 
 ## Goal
@@ -62,7 +62,7 @@ Exit 0 unless the queue file is unreadable. A failed `git fetch` for one repo pr
 `source=intake`; second scan → no duplicate; `no` before start → cancelled; `no` after start → untouched; done/ and ✅ plans skipped;
 bullet `- **Queue:**` ignored; oversize plan → refused, one notice, none on the next scan, re-checked after a new commit;
 naive `at` → refused; `after` to an unknown key → refused; two plans pushed together with `after` → both queued; `--dry-run` writes nothing.
-**Status:** ❌
+**Status:** ✅ 2026-10-26
 
 ## Validation
 - `scripts/validate.sh` passes.
