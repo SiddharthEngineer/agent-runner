@@ -50,6 +50,9 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A27 | Validator loop, part 4: a `/fix <change>` PR comment sends an open runner PR back to the implementer | [validator-loop-4-fix-comments](plans/validator-loop-4-fix-comments.md) | agent-runner | ⏳ | A26 |
 | A28 | Usage strategy: weekly cap, weekly pacing, daytime reserve, `agent-runner usage status` | [usage-strategy](plans/usage-strategy.md) | agent-runner | ⏳ | - |
 | A29 | Pin bumps: after a child merge is tagged, open a `Pin <child> <tag>` PR in the parent's `components.toml` and merge it on green CI (no review), then preprod follows | [runner-16-pins](plans/runner-16-pins.md) | agent-runner | ⏳ | engineerfamily E12; queue after A23, A24 (run.sh) |
+| A30 | Conflicting PRs: detected before the CI wait; the runner merges the base (clean) or sends the implementer a conflict round (no attempt used, 2 at most); notices name the conflict, not "no CI checks" (from #127) | [runner-17-conflicts](plans/runner-17-conflicts.md) | agent-runner | ⏳ | A23; A24 and A28 queue after it |
+| A31 | Resolver, part 1: `awaiting-resolve` status and `queue hold`, `prompts/resolve.md`, PR status line | [resolver-1-agent](plans/resolver-1-agent.md) | agent-runner | ⏳ | A29 |
+| A32 | Resolver, part 2: every block with fixable work goes to a one-shot Opus resolver first (replaces triage); the user hears only if it fails | [resolver-2-wiring](plans/resolver-2-wiring.md) | agent-runner | ⏳ | A31 |
 
 ## Manual steps (you)
 
