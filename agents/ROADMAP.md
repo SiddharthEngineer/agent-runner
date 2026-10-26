@@ -48,6 +48,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A25 | Validator loop, part 2: re-reviews on Sonnet, scoped to the previous findings and the fix diff (first review stays Opus) | [validator-loop-2-rereview](plans/validator-loop-2-rereview.md) | agent-runner | ⏳ | A24 |
 | A26 | Validator loop, part 3: a cost line per Claude run in `runs.log`, `agent-runner usage report`, text-first preprod checks | [validator-loop-3-costs](plans/validator-loop-3-costs.md) | agent-runner | ⏳ | A25 |
 | A27 | Validator loop, part 4: a `/fix <change>` PR comment sends an open runner PR back to the implementer | [validator-loop-4-fix-comments](plans/validator-loop-4-fix-comments.md) | agent-runner | ⏳ | A26 |
+| A28 | Usage strategy: weekly cap, weekly pacing, daytime reserve, `agent-runner usage status` | [usage-strategy](plans/usage-strategy.md) | agent-runner | ⏳ | - |
 
 ## Manual steps (you)
 
