@@ -407,6 +407,35 @@ def test_preprod_deploy_uses_runner_toml_from_base(preprod):
     assert "gh pr comment 7 --repo o/strelitzia" in preprod.log()
 
 
+def test_preprod_deploy_output_goes_to_its_own_log(preprod, tmp_path):
+    preprod.config("strelitzia", "echo docker build noise; echo more noise >&2", 'seed = "echo seeded 18 jobs"')
+    out = preprod("cmd_deploy strelitzia 7")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert "noise" not in out.stdout + out.stderr and "seeded" not in out.stdout + out.stderr
+    logs = list((tmp_path / "state/logs").glob("*-strelitzia.preprod-deploy.log"))
+    assert len(logs) == 1 and f"preprod deploy output: {logs[0]}" in out.stderr
+    assert logs[0].read_text().split("\n")[:3] == ["docker build noise", "more noise", "seeded 18 jobs"]
+
+
+def test_preprod_failed_deploy_command_shows_the_log_tail(preprod):
+    preprod.config("strelitzia", "seq 1 30; echo 'ERROR: build broke'; false")
+    out = preprod("load_repo strelitzia && deploy_ref pull/7/head abc123")
+    assert out.returncode == 1
+    assert "deploy command failed; last lines of" in out.stderr
+    assert "    ERROR: build broke" in out.stderr and "    17\n" in out.stderr and "    16\n" not in out.stderr
+
+
+@pytest.mark.parametrize("lock", ["", "engineerfamily\t5\tdeadbeef\t2026-10-19T00:00:00Z\n"])
+def test_preprod_tick_is_quiet_when_nothing_changes(preprod, tmp_path, lock):
+    preprod.config("engineerfamily", "echo ef {sha} >> LOG")
+    preprod.lock.parent.mkdir(parents=True, exist_ok=True)
+    if lock:
+        preprod.lock.write_text(lock)  # the stub gh says the holder's PR is still OPEN
+    out = preprod("cmd_tick")
+    assert out.stdout == "" and out.returncode in (0, 1), out.stdout + out.stderr
+    assert preprod("cmd_status").stdout.startswith("preprod: held by" if lock else "preprod: free")
+
+
 def test_preprod_app_dir_checks_out_the_sha(preprod, tmp_path):
     origin = preprod.config("strelitzia", "true")
     app = tmp_path / "app"
