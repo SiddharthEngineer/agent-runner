@@ -41,7 +41,7 @@ line; a report test sums two fixture lines.
 text) to read pages and find elements. Take `browser_take_screenshot` only when a step is about appearance, at most once per step,
 and never full-page unless the step needs it. Keep every placeholder.
 **Validate:** `uv run --with pytest pytest tests/test_review.py -q` passes; assert the prompt mentions `browser_snapshot`.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: docs and tracking
 **Runs:** unattended

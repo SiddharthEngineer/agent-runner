@@ -36,6 +36,8 @@ def test_preprod_prompt_formats():
     assert "gh pr comment 9 --repo o/r" in text and '"left_for_you"' in text
     # a $VAR in the curl command is refused by the validator's permission rules, so the path must be literal
     assert "--netrc-file /tmp/x/preprod.netrc" in text and "$PREPROD_NETRC" not in text
+    # text first: the accessibility snapshot reads pages, a screenshot only for a step about appearance
+    assert "`browser_snapshot`" in text and "`browser_take_screenshot`" in text and "at most once per step" in text
 
 
 def mcp(tmp_path, *extra):
