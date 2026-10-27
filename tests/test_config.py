@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -147,6 +148,19 @@ def test_load_env_parses_like_inbox(home, monkeypatch):
     monkeypatch.setenv("PRESET", "env")
     config.load_env()
     assert [os.environ[k] for k in ("K1", "K2", "K3", "PRESET")] == ["v 1", "v2", "v3", "env"]
+
+
+def test_load_env_applies_tz_from_file(home, monkeypatch):
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
+    monkeypatch.delenv("TZ")
+    put(home / ".config/agent-runner/env", "export TZ=America/Chicago\n")
+    try:
+        config.load_env()
+        assert time.strftime("%Z", time.localtime(1_700_000_000)) == "CST"  # UTC would read "UTC"
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
 
 
 def test_load_env_without_file(home):
