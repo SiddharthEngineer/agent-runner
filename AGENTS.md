@@ -21,7 +21,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
 | `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis, idle Claude sessions on memory notices), `gate`, `sessions` |
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
-| `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, first review), `rereview-pr.md` (validator, re-review after a fix round), `preprod-check.md` (validator, preprod stage) |
+| `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, first review), `rereview-pr.md` (validator, re-review after a fix round), `preprod-check.md` (validator, preprod stage), `resolve.md` (resolver, one fix try before a block) |
 | `versions.py` | Repos with `[release]`: `sync` gives each merged PR the next patch tag and keeps a `vX.Y` pre-release; `promote` (the user's, on prod deploy) makes it full; `status` |
 | `pins.py` | `sync` (every tick): a `Pin <child> <tag>` PR (branch `pin/<name>`, label `pin-bump`) when a child of a parent's `components.toml` has a newer tag; `tick`: merge them on green CI (no review), preprod follows |
 | `prcomments.py` | `scan` (every tick): a `/fix <change>` comment by the user on a runner PR re-queues it as a user fix round (no round, no attempt) |

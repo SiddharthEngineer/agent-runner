@@ -1,5 +1,5 @@
 # Plan: Resolver, part 1: the `awaiting-resolve` status, the prompt and the PR status block
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (queue bookkeeping, a new prompt, status rendering; nothing routes items to it until resolver-2; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** runner-16-pins (last plan in the run.sh chain; this part doesn't edit run.sh, but part 2 does)
 
@@ -28,7 +28,7 @@ and the PR status line. resolver-2 wires it into run.sh.
 `requeue --fresh-attempts` keeps working for the resolver's `transient` case and also sets `resolve_tried=1`.
 **Validate:** `uv run --with pytest pytest tests/test_runner.py -q` → passes with tests for: first hold → awaiting-resolve; hold with
 `resolve_tried=1` → blocked; `AGENT_RESOLVE=0` and `AGENT_TRIAGE=0` → blocked; `oldest awaiting-resolve` finds it.
-**Status:** ✅ 2026-10-27 (this commit: buildqueue.py hold)
+**Status:** ✅ 2026-10-27 (cafea51)
 
 ### Task 2: `prompts/resolve.md`
 **Runs:** unattended
@@ -47,7 +47,7 @@ and the PR status line. resolver-2 wires it into run.sh.
 6. Never quote secrets, tokens, environment variables or personal data.
 **Validate:** `python3 -c 'import string,sys; print(sorted({f for _,f,_,_ in string.Formatter().parse(open("prompts/resolve.md").read()) if f}))'`
 → exactly the 11 fields above.
-**Status:** ✅ 2026-10-27 (this commit: prompts/resolve.md)
+**Status:** ✅ 2026-10-27 (fa80a58)
 
 ### Task 3: PR status block
 **Runs:** unattended
@@ -55,7 +55,7 @@ and the PR status line. resolver-2 wires it into run.sh.
 **What:** `awaiting-resolve` renders a first line `🔁 Resolver is trying one fix: <block_title>` and marks the stage it stopped at
 (`block_stage`) 🔁. A `blocked` item with `resolve_tried=1` adds "the resolver tried once" to the blocked line.
 **Validate:** `uv run --with pytest pytest tests/test_prstatus.py -q` → passes with one test per case.
-**Status:** ✅ 2026-10-27 (this commit: prstatus awaiting-resolve)
+**Status:** ✅ 2026-10-27 (7cf310d)
 
 ## Validation
 - `scripts/validate.sh` passes.
