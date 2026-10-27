@@ -24,7 +24,7 @@ hand. `/plan` writes the `**Queue:**` line and works in a cloud session with no 
 **What:** the upkeep line above (never fails the tick); `agent-runner intake scan [--repo N] [--dry-run]`.
 **Validate:** `uv run --with pytest pytest tests/test_run.py -q` → passes, with a new test: a repo with `[intake] enabled = true` and a
 plan with `**Queue:** yes` on origin → after one `run.sh` tick, `queue.json` has the item and `runs.log` has `intake: queued`.
-**Status:** ❌
+**Status:** ✅ (2026-10-27)
 
 ### Task 2: `/plan` and `/schedule-build`
 **Runs:** unattended

@@ -115,7 +115,8 @@ def runner(tmp_path):
         return subprocess.run(["git", *map(str, args)], check=True, capture_output=True, text=True).stdout.strip()
 
     def register(name: str, base: str = "main", merge: str = "merge", deploy: str | None = "true",
-                 plan: str | None = "low", mcp: bool = False, release: bool = False) -> None:
+                 plan: str | None = "low", mcp: bool = False, release: bool = False, intake: bool = False,
+                 plans: dict[str, str] | None = None) -> None:
         origin, clone = tmp_path / f"{name}.git", tmp_path / f"{name}-clone"
         work = tmp_path / f"{name}-work"
         git("init", "-q", "-b", base, work)
@@ -123,9 +124,12 @@ def runner(tmp_path):
         health = 'health = [{ url = "https://preprod.example/", status = 200 }]\n'
         preprod = f'[preprod]\ndeploy = "{deploy}"\n{health}' if deploy else ""
         (work / "agents/runner.toml").write_text(TOML.format(name=name, base=base, merge=merge, preprod=preprod)
-                                                 + ("[release]\n" if release else ""))
+                                                 + ("[release]\n" if release else "")
+                                                 + ("[intake]\nenabled = true\n" if intake else ""))
         if plan:
             (work / "agents/plans/x.md").write_text(f"# Plan: x\n**Risk:** {plan}\n")
+        for slug, text in (plans or {}).items():
+            (work / f"agents/plans/{slug}.md").write_text(text)
         (work / "README.md").write_text("x\n")
         if mcp:
             (work / "agents/mcp.json").write_text('{"mcpServers": {}}\n')
@@ -190,6 +194,31 @@ def test_unreadable_queue_is_logged_not_nothing_due(runner):
     assert out.returncode == 1 and "migrate first" in out.stderr
     log = runner.runs_log()
     assert "queue unreadable, no runs" in log and "nothing due" not in log
+
+
+QUEUED_PLAN = ("# Plan: p\n**Status:** ❌ Not started\n**Risk:** low\n**Queue:** yes\n\n## Tasks\n"
+               "### Task 1: t\n**Runs:** unattended\n**Files:** README.md (modify)\n**Status:** ❌\n")
+
+
+def test_tick_queues_an_opted_in_plan(runner):
+    runner.register("engineerfamily", intake=True, plans={"p": QUEUED_PLAN})
+    runner()
+    assert "intake: queued engineerfamily/p" in runner.runs_log()
+    items = json.loads((runner.state / "queue.json").read_text())["items"]
+    assert items["engineerfamily/p"]["source"] == "intake"
+
+
+def test_dry_run_tick_logs_intake_and_writes_nothing(runner):
+    runner.register("engineerfamily", intake=True, plans={"p": QUEUED_PLAN})
+    runner(AGENT_DRY_RUN="1")
+    assert "intake: queued engineerfamily/p" in runner.runs_log()
+    assert not (runner.state / "queue.json").exists()
+
+
+def test_tick_without_intake_queues_nothing(runner):
+    runner.register("engineerfamily", plans={"p": QUEUED_PLAN})
+    runner()
+    assert "intake:" not in runner.runs_log() and runner.status("engineerfamily/p") == ""
 
 
 def test_plan_missing_on_base_blocks(runner):

@@ -85,9 +85,12 @@ Merged PRs are tagged on the next tick after this is fixed. \`agent-runner versi
 # 1. Upkeep
 if [ -n "$DRY" ]; then
     say "dry run: would poll the inbox, sync versions and tick preprod"
+    python3 "$HERE/intake.py" scan --dry-run >> "$STATE/runs.log" 2>&1 || true  # writes nothing
 else
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" poll >> "$STATE/runs.log" 2>&1
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" sweep >> "$STATE/runs.log" 2>&1
+    # Plans pushed with `**Queue:** yes` (opted-in repos), before the next-item pick so they can start this tick.
+    python3 "$HERE/intake.py" scan >> "$STATE/runs.log" 2>&1 || true
     # Tags for PRs merged outside the runner too (by hand in the GitHub app), before prstatus.py shows them.
     for repo_file in "$HOME"/.config/agent-runner/repos/*.env; do
         [ -e "$repo_file" ] && versions_sync "$(basename "$repo_file" .env)"
