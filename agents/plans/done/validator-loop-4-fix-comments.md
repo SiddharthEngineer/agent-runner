@@ -1,5 +1,5 @@
 # Plan: Validator loop, part 4: a `/fix` PR comment sends the PR back to the implementer
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (a new upkeep script; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** validator-loop-3-costs
 
@@ -39,7 +39,7 @@ logs one line and leaves the item alone. buildqueue gets `--stage user` as in Co
 **Validate:** `uv run --with pytest pytest tests/test_prcomments.py tests/test_runner.py -q` passes, with tests (fake `gh`): a new `/fix`
 re-queues once and a second scan does nothing; a comment that doesn't start with `/fix` is ignored; a `blocked` item goes back to
 `queued` with `fix_rounds` unchanged; a merged PR gets one reply; a `running` item is skipped.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: wire it in
 **Runs:** unattended
@@ -47,7 +47,7 @@ re-queues once and a second scan does nothing; a comment that doesn't start with
 **What:** the upkeep line and the `User /fix` opener from Context; the "never start a comment with `/fix`" line in the three prompts.
 **Validate:** `scripts/validate.sh` passes; a run test: a tick with a `/fix` comment on an `awaiting-preprod` item re-queues it, and
 the next implementer run's prompt contains "The user asked for this change".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -56,7 +56,7 @@ the next implementer run's prompt contains "The user asked for this change".
 attempts. "How a tick works": the upkeep step. AGENTS.md Map: `prcomments.py`. ROADMAP: A27 ✅ with the PR; remove the
 back-and-forth item from Backlog.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.

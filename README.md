@@ -172,7 +172,8 @@ nothing when preprod is free or still held; `agent-runner preprod status` still 
 Every 5 minutes, for every registered repo, with at most one Claude run at a time (a `flock` on `run.lock`):
 1. **Upkeep:** inbox replies (`inbox.py poll`), closing the notices of items that are `done` or `cancelled`
    (`inbox.py sweep`), queue intake for opted-in repos (`intake.py scan`, before the next-item pick so a plan pushed now
-   can start this tick), and the global preprod lock (`preprod.sh tick`).
+   can start this tick), your `/fix` PR comments (`prcomments.py scan`, see Day to day), and the global preprod lock
+   (`preprod.sh tick`).
 2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
 3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the usage gate.
 4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
@@ -346,6 +347,11 @@ A plan pushed to a repo's base branch (from a Claude cloud session, the GitHub w
 - Logs: `runs.log` (one line per event) and `logs/<time>-<slug>.log` (full JSON output) in the state dir.
 - When an agent asks a question, reply on the inbox issue. The next tick re-queues the item with your answer and resumes the
   agent's own session.
+- **`/fix <what to change>`** as a comment on a runner PR (the GitHub app is fine) sends it back to the implementer: the next
+  tick re-queues the item with your text and replies "Queued". It works while the item is awaiting review, awaiting or on
+  preprod, blocked or queued (a comment made during a run is picked up after it); on a merged or closed PR you get a reply to
+  plan a follow-up instead. It uses no fix round and no attempt, and it unblocks an item whose rounds ran out. The comment
+  must start with `/fix` at the very beginning. The fix then goes through the gate, a scoped re-review of your ask, and preprod.
 
 ## Develop
 `scripts/validate.sh` (`bash -n`, `py_compile`, hermetic pytest via `uv`) runs locally and in CI (`.github/workflows/ci.yml`, once it is added: ROADMAP AM1a).

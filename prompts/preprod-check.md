@@ -27,3 +27,4 @@ Steps:
    `blocked` when preprod itself is broken or unreachable, or the steps can't be followed.
 
 Never put secrets, personal data, job data or page contents beyond what a step needs in the comment or the result file.
+Never start a comment or a review with `/fix`: that is the user's command for sending the PR back to the implementer.
