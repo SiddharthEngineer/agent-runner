@@ -14,13 +14,17 @@ Usage:
   buildqueue.py list
   buildqueue.py cancel <slug>
   buildqueue.py next                 print the next runnable key, or exit 1 (cron pre-check; no Claude cost)
-  buildqueue.py start <slug>         mark running, count an attempt, log the run
+  buildqueue.py start <slug>         mark running, count an attempt (not for a fix round), log the run
   buildqueue.py finish <slug> <result.json>   apply the agent's result (missing file = failed attempt)
   buildqueue.py set <slug> key=value [...]    used by inbox.py / preprod.sh / run.sh
   buildqueue.py unset <slug> key [...]        used by run.sh (clears `resume`)
   buildqueue.py answer <slug> TEXT   attach the user's answer and re-queue with fresh attempts, resuming the session
   buildqueue.py requeue <slug> --note TEXT   re-queue with a note, resuming the session, keeping the attempts used
-                                     (the validator's `changes`); out of attempts → blocked
+                                     (the old validator path); out of attempts → blocked
+                                     --fix --stage review|preprod [--unresolved JSON]: a fix round (the validator's
+                                     `changes`): costs no attempt; over AGENT_MAX_FIX_ROUNDS (default 3, shared by both
+                                     stages) → blocked (`blocked_why=rounds`), and so are unresolved findings two rounds
+                                     running (`blocked_why=stuck`)
                                      --fresh-attempts: attempts back to 0, a fresh session (triage's re-queue)
                                      --conflict: a conflict round (run.sh, the PR conflicts with its base): sets `conflict=1`,
                                      gives the attempt back; over AGENT_MAX_CONFLICT_ROUNDS (default 2) → blocked
@@ -56,6 +60,8 @@ MAX_ATTEMPTS = int(os.environ.get("AGENT_MAX_ATTEMPTS", "2"))
 MAX_RUNS_PER_DAY = int(os.environ.get("AGENT_MAX_RUNS_PER_DAY", "0") or 0)
 # Conflict rounds per item (the PR conflicts with its base); they cost no attempt, so they have their own cap.
 MAX_CONFLICT_ROUNDS = int(os.environ.get("AGENT_MAX_CONFLICT_ROUNDS", "2") or 2)
+# Fix rounds per item (a validator's `changes`, review and preprod stages together); a fix run costs an attempt only if it fails.
+MAX_FIX_ROUNDS = int(os.environ.get("AGENT_MAX_FIX_ROUNDS", "3") or 3)
 
 # Result statuses the agent may write, mapped to the item status they leave behind.
 RESULT_TO_STATUS = {
@@ -169,6 +175,8 @@ def cmd_list(_: argparse.Namespace) -> int:
     print(f"runs in last 24h: {runs_last_day()}" + (f"/{MAX_RUNS_PER_DAY}" if MAX_RUNS_PER_DAY else " (no daily cap)"))
     for slug, it in sorted(data["items"].items(), key=lambda kv: kv[1]["not_before"]):
         extra = " ".join(f"{k}={it[k]}" for k in ("after", "pr", "issue") if it.get(k))
+        if it.get("fix_rounds"):
+            extra = f"rounds={it['fix_rounds']}/{MAX_FIX_ROUNDS} {extra}"
         print(f"{it['status']:<17} {slug:<50} attempts={it['attempts']}/{MAX_ATTEMPTS} not_before={it['not_before']} {extra}")
     return 0
 
@@ -182,7 +190,8 @@ def cmd_next(_: argparse.Namespace) -> int:
     due = [
         (it["not_before"], slug)
         for slug, it in data["items"].items()
-        if it["status"] == "queued" and it["attempts"] < MAX_ATTEMPTS and datetime.fromisoformat(it["not_before"]) <= now()
+        if it["status"] == "queued" and (it["attempts"] < MAX_ATTEMPTS or it.get("fix_pending"))
+        and datetime.fromisoformat(it["not_before"]) <= now()
         and (not it.get("after") or data["items"].get(it["after"], {}).get("status") == "done")
     ]
     if not due:
@@ -195,7 +204,11 @@ def cmd_start(args: argparse.Namespace) -> int:
     data = load()
     key = resolve(data, args.slug)
     it = data["items"][key]
-    it.update(status="running", attempts=it["attempts"] + 1, updated=iso(now()))
+    if it.pop("fix_pending", None):
+        # A fix round costs no attempt up front; finish charges one if the run fails.
+        it.update(status="running", run_kind="fix", updated=iso(now()))
+    else:
+        it.update(status="running", run_kind="build", attempts=it["attempts"] + 1, updated=iso(now()))
     save(data)
     STATE.mkdir(parents=True, exist_ok=True)
     with RUNS.open("a") as f:
@@ -214,6 +227,8 @@ def cmd_finish(args: argparse.Namespace) -> int:
             result = {}
     status = RESULT_TO_STATUS.get(result.get("status", ""))
     if status is None:  # crashed, timed out or wrote nothing: a failed attempt
+        if it.get("run_kind") == "fix":
+            it["attempts"] += 1  # a crashed fix run is a run failure, not a review outcome
         status = "queued" if it["attempts"] < MAX_ATTEMPTS else "blocked"
         result.setdefault("summary", "run ended without a result file")
         # A failed attempt starts fresh: its context is the thing that went wrong.
@@ -276,7 +291,8 @@ def cmd_requeue(args: argparse.Namespace) -> int:
         # Triage found a transient cause: one fresh set of attempts, and a fresh session (the old one is what went wrong).
         it["notes"].append(f"Triage ({iso(now())}): {args.note}")
         it.update(status="queued", attempts=0, not_before=iso(now()), updated=iso(now()))
-        for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts", "conflict", "conflict_rounds"):
+        for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts", "conflict", "conflict_rounds",
+                      "fix_rounds", "fix_pending", "last_unresolved", "blocked_why"):
             it.pop(stale, None)
         save(data)
         print("queued")
@@ -295,6 +311,8 @@ def cmd_requeue(args: argparse.Namespace) -> int:
         save(data)
         print(it["status"])
         return 0
+    if args.fix:
+        return fix_round(data, it, args)
     it["notes"].append(f"Validator ({iso(now())}): {args.note}")
     # Like `answer`, but the attempts already used still count: a third failed try ends in `blocked`.
     status = "queued" if it["attempts"] < MAX_ATTEMPTS else "blocked"
@@ -302,6 +320,36 @@ def cmd_requeue(args: argparse.Namespace) -> int:
     save(data)
     print(status)
     return 0
+
+
+def fix_round(data: dict, it: dict, args: argparse.Namespace) -> int:
+    """The validator asked for changes: one more fix round, or blocked when the rounds ran out or the findings are stuck."""
+    stage = args.stage.capitalize()
+    rounds = int(it.get("fix_rounds", 0))
+    why = "rounds" if rounds >= MAX_FIX_ROUNDS else "stuck" if args.unresolved and it.get("last_unresolved") else ""
+    if why:
+        it["notes"].append(f"{stage} validator, blocked ({why}) ({iso(now())}): {args.note}")
+        it.update(status="blocked", blocked_why=why, last_unresolved=args.unresolved, updated=iso(now()))
+        it.pop("fix_pending", None)
+    else:
+        rounds += 1
+        it["notes"].append(f"{stage} validator, round {rounds}/{MAX_FIX_ROUNDS} ({iso(now())}): {args.note}")
+        it.update(status="queued", fix_rounds=rounds, fix_pending=1, last_unresolved=args.unresolved, resume=1,
+                  not_before=iso(now()), updated=iso(now()))
+        it.pop("blocked_why", None)
+    save(data)
+    print(it["status"])
+    return 0
+
+
+def unresolved_list(text: str) -> list:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise argparse.ArgumentTypeError(f"not JSON: {e}") from e
+    if not isinstance(value, list):
+        raise argparse.ArgumentTypeError("not a JSON list")
+    return value
 
 
 def cmd_oldest(args: argparse.Namespace) -> int:
@@ -373,6 +421,9 @@ def main() -> int:
     how = p.add_mutually_exclusive_group()
     how.add_argument("--fresh-attempts", action="store_true")
     how.add_argument("--conflict", action="store_true")
+    how.add_argument("--fix", action="store_true", help="a fix round (the validator's changes; needs --stage)")
+    p.add_argument("--stage", choices=("review", "preprod"))
+    p.add_argument("--unresolved", type=unresolved_list, default=[], help="JSON list: the validator's unresolved findings")
     p.set_defaults(fn=cmd_requeue)
     p = sub.add_parser("oldest")
     p.add_argument("status")
@@ -382,6 +433,8 @@ def main() -> int:
     p.add_argument("hours", type=float)
     p.set_defaults(fn=cmd_pause)
     args = parser.parse_args()
+    if getattr(args, "fix", False) and not args.stage:
+        parser.error("requeue --fix needs --stage")
     return args.fn(args)
 
 

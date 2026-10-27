@@ -43,7 +43,7 @@ the attempt then (a crashed fix still counts), and if that reaches `MAX_ATTEMPTS
 **Validate:** `uv run --with pytest pytest tests/test_runner.py -q` passes, with new tests: three `--fix` re-queues each leave
 `attempts` unchanged across start/finish(ready); a fourth blocks with `rounds`; a non-empty `--unresolved` twice in a row blocks
 with `stuck`; a crashed fix run adds an attempt.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: run.sh: both stages use rounds; the fix run knows it's a fix
 **Runs:** unattended
