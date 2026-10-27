@@ -89,6 +89,5 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 ## Backlog (not yet planned)
 - engineerfamily and Strelitzia `/plan`: add the `**Queue:**` header line and the cloud-session note from A23 (their `.claude/commands/plan.md`; `agent-runner check-commands` shows the drift). After AM10.
 - Open-source readiness (user, 2026-10-26): remove the hardcoded owner and repo names (`config.py` PROD_PATTERNS → per-repo `[preprod] prod_patterns`, inbox `strelitzia` label and ntfy title, `buildqueue.py`/`inbox.py` descriptions, `install.sh` default remote, `preprod.sh`/`run.sh` Strelitzia-era fallbacks), and a generic README quick start. Queue and config already live outside the repo (`~/.local/state`, `~/.config`).
-- Implementer ↔ validator back-and-forth: planned 2026-10-26 as A24-A27 (validator-loop-1 to 4).
 - Parallel runs (not needed yet, 2026-10-26): one Claude run at a time (`run.lock`) and one preprod for every repo
   (`preprod.lock`). Revisit if items often wait on preprod or the queue backs up within a usage window.

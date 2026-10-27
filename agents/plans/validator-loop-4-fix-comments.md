@@ -56,7 +56,7 @@ the next implementer run's prompt contains "The user asked for this change".
 attempts. "How a tick works": the upkeep step. AGENTS.md Map: `prcomments.py`. ROADMAP: A27 ✅ with the PR; remove the
 back-and-forth item from Backlog.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
