@@ -6,11 +6,14 @@ The plan: {plan_path} (in this checkout, which is the PR head). Signed in as the
 
 Steps:
 1. Read the plan's "Human test steps" section. Each numbered step is one checklist item.
-2. For each step, decide whether you can automate it:
-   - HTTP checks: `curl -sS --netrc-file {netrc_file} …` against {base_url} (the netrc holds preprod's basic auth). Write the path literally, as given: a `$VAR` in the command is refused.
+2. For each step, decide whether you can automate it, and read text before images:
+   - HTTP checks: anything an HTTP response proves (a status, a header, a redirect, JSON, text in the page) is a `curl`. `curl -sS --netrc-file {netrc_file} …` against {base_url} (the netrc holds preprod's basic auth). Write the path literally, as given: a `$VAR` in the command is refused.
      Always go through the public host, never 127.0.0.1.
    - Pages and clicks: the Playwright MCP tools (`mcp__playwright__*`). Its browser already has the basic-auth credentials,
      and the dev test account's session when "signed in" above is true.
+     Read pages and find elements with `browser_snapshot` (the accessibility tree, as text). Take a `browser_take_screenshot`
+     only when a step is about how something looks (layout, colour, an image), at most once per step, and never full-page
+     unless the step needs the whole page.
    - Mark a step `left_for_you` if it needs the user's own account, prod, email, money, a physical device or a judgment call
      only a person can make. If "signed in" is false, every step that needs a signed-in user is `left_for_you` too.
      Never sign in yourself, and never type a password or a 2FA code.

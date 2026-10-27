@@ -1,5 +1,5 @@
 # Plan: Validator loop, part 3: cost per run in runs.log, text-first preprod checks
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (logging and a prompt; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** validator-loop-2-rereview
 
@@ -32,7 +32,7 @@ calls and appends the line to `runs.log` with a timestamp. `usage.py report [--d
 and by repo: runs, turns, USD. Note in the help text that USD is the API-equivalent figure, not a subscription charge.
 **Validate:** `uv run --with pytest pytest tests/test_usage.py tests/test_run.py -q` passes; a run test asserts one `cost … review`
 line; a report test sums two fixture lines.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: preprod validator reads text first
 **Runs:** unattended
@@ -41,7 +41,7 @@ line; a report test sums two fixture lines.
 text) to read pages and find elements. Take `browser_take_screenshot` only when a step is about appearance, at most once per step,
 and never full-page unless the step needs it. Keep every placeholder.
 **Validate:** `uv run --with pytest pytest tests/test_review.py -q` passes; assert the prompt mentions `browser_snapshot`.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -49,7 +49,7 @@ and never full-page unless the step needs it. Keep every placeholder.
 **What:** README: the `cost` line in "How a tick works", `agent-runner usage report` in the CLI table, the text-first rule in
 "Validator, preprod stage". ROADMAP: A26 ✅ with the PR.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.

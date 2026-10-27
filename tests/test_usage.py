@@ -236,3 +236,74 @@ def test_check_disabled_ignores_other_bad_settings(env, monkeypatch, capsys):
     env.update(AGENT_MAX_SESSION_USAGE="0", AGENT_WEEKLY_PACE="fast")
     monkeypatch.setattr(usage, "probe", lambda: pytest.fail("no probe when the gate is off"))
     assert usage.cmd_check() == 0
+
+
+# cost / report
+
+RESULT = json.dumps({"type": "result", "num_turns": 7, "total_cost_usd": 0.1849, "session_id": "s",
+                     "usage": {"input_tokens": 12, "cache_read_input_tokens": 3400, "cache_creation_input_tokens": 560,
+                               "output_tokens": 78}})
+
+
+def test_cost_line_from_the_last_result(tmp_path, capsys, monkeypatch):
+    log = tmp_path / "run.log"
+    older = json.dumps({"type": "result", "num_turns": 1, "total_cost_usd": 9})
+    log.write_text(f"noise\n{older}\n{RESULT}\nvalidation output\n")
+    monkeypatch.setattr(sys, "argv", ["usage.py", "cost", str(log), "--role", "preprod", "--key", "a/b",
+                                      "--model", "claude-sonnet-5-5"])
+    assert usage.main() == 0
+    assert capsys.readouterr().out == ("cost a/b preprod claude-sonnet-5-5 turns=7 in=12 cache_read=3400 cache_write=560"
+                                       " out=78 usd=0.18\n")
+
+
+@pytest.mark.parametrize("text", [None, "no result here\n{\"session_id\": \"s\"}\n"])
+def test_cost_without_a_result_prints_nothing(tmp_path, capsys, text):
+    log = tmp_path / "run.log"
+    if text is not None:
+        log.write_text(text)
+    assert usage.cmd_cost([str(log), "--role", "review", "--key", "a/b", "--model", "m"]) == 0
+    assert capsys.readouterr().out == ""
+
+
+def test_cost_after_skips_earlier_runs(tmp_path, capsys):
+    """An appended log: a run that wrote no result line must not report the previous run's cost again."""
+    log = tmp_path / "run.log"
+    log.write_text(RESULT + "\n")
+    start = log.stat().st_size
+    with log.open("a") as f:
+        f.write("killed by the timeout\n")
+    args = [str(log), "--role", "review", "--key", "a/b", "--model", "m"]
+    assert usage.cmd_cost([*args, "--after", str(start)]) == 0
+    assert capsys.readouterr().out == ""
+    assert usage.cmd_cost([*args, "--after", "0"]) == 0
+    assert "turns=7" in capsys.readouterr().out
+
+
+def test_cost_bad_args_exit_2():
+    assert usage.cmd_cost(["log", "--role", "review"]) == 2
+    assert usage.cmd_cost(["log", "--role", "r", "--key", "k", "--model", "m", "--after", "x"]) == 2
+
+
+def test_report_sums_by_role_and_repo(env, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("AGENT_RUNNER_STATE", str(tmp_path))
+    (tmp_path / "runs.log").write_text(
+        "2026-10-26T09:00:00Z a/x: run start\n"
+        "2026-10-26T09:30:00Z cost a/x review claude-opus-5-5 turns=40 in=1 cache_read=2 cache_write=3 out=4 usd=1.25\n"
+        "2026-10-26T10:00:00Z cost b/y review claude-opus-5-5 turns=30 in=1 cache_read=2 cache_write=3 out=4 usd=1.00\n"
+        "2026-10-10T10:00:00Z cost a/x implement claude-opus-5-5 turns=99 in=1 cache_read=2 cache_write=3 out=4 usd=9.00\n")
+    monkeypatch.setattr(sys, "argv", ["usage.py", "report", "--days", "1"])
+    assert usage.main() == 0
+    out = capsys.readouterr().out
+    assert "not a subscription charge" in out
+    rows = [line.split() for line in out.splitlines()]
+    assert ["review", "2", "runs", "70", "turns", "$2.25"] in rows
+    assert ["a", "1", "runs", "40", "turns", "$1.25"] in rows and ["b", "1", "runs", "30", "turns", "$1.00"] in rows
+    assert ["total", "2", "runs", "70", "turns", "$2.25"] in rows
+    assert "implement" not in out  # older than a day
+
+
+def test_report_without_runs(env, tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("AGENT_RUNNER_STATE", str(tmp_path))
+    assert usage.cmd_report([]) == 0
+    assert "No runs." in capsys.readouterr().out
+    assert usage.cmd_report(["--days", "x"]) == 2
