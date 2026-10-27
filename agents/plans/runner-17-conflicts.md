@@ -67,7 +67,7 @@ after the next `start`; round 3 blocked; `--conflict` and `--fresh-attempts` tog
 pushed and merged (no block, no notice); a real conflict requeues a conflict round with the files in the note and no `ci-failed`
 label; the conflict-round run gets the conflict prompt and the merge already started; a third conflict blocks with "conflicts with
 main in …" in the notice; "no checks reported" on a conflicting PR says conflict, not "no CI checks".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: Docs
 **Runs:** unattended

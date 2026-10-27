@@ -257,17 +257,94 @@ $diagnosis"
     fi
 }
 
-merge_pr() {  # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed
-    local checks
+# merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed,
+# 4 = conflicts with $BASE (files in $conflict_files). GitHub runs no CI on a conflicting PR, so that comes first: the base
+# is merged into the PR when it merges cleanly, and the CI wait is then on the new head.
+merge_pr() {
+    local checks rc
+    conflict_files=
+    if [ "$(pr_mergeable "$1")" = CONFLICTING ]; then
+        sync_base "$1"
+        [ $? = 1 ] && return 4
+    fi
     if ! checks=$(timeout 30m gh pr checks "$1" --repo "$GH_REPO" --watch --fail-fast 2>&1); then
         if [[ $checks == *"Resource not accessible"* ]]; then
-            ci_runs "$1" || return  # its own exit code
+            ci_runs "$1"
+            rc=$?
+            [ "$rc" = 2 ] && [ "$(pr_mergeable "$1")" = CONFLICTING ] && return 4
+            [ "$rc" = 0 ] || return "$rc"
         else
-            [[ $checks == *"no checks reported"* ]] && return 2
+            if [[ $checks == *"no checks reported"* ]]; then
+                [ "$(pr_mergeable "$1")" = CONFLICTING ] && return 4
+                return 2
+            fi
             return 1
         fi
     fi
     gh pr merge "$1" --repo "$GH_REPO" "--$MERGE" --delete-branch >/dev/null 2>&1 || return 3
+}
+# pr_mergeable <pr>: MERGEABLE, CONFLICTING or UNKNOWN. GitHub computes it lazily, so UNKNOWN is polled 6 times, 10 s apart.
+pr_mergeable() {
+    local m i
+    for i in 1 2 3 4 5 6; do
+        m=$(gh pr view "$1" --repo "$GH_REPO" --json mergeable -q .mergeable 2>/dev/null)
+        case $m in MERGEABLE|CONFLICTING) echo "$m"; return 0 ;; esac
+        [ "$i" -lt 6 ] && sleep "${AGENT_MERGEABLE_POLL:-10}"
+    done
+    echo UNKNOWN
+}
+# sync_base <pr>: merge origin/$BASE into the PR branch in a temp worktree. 0 = merged cleanly and pushed (a normal push),
+# 1 = real conflicts (the files in $conflict_files, the merge aborted), 2 = couldn't try (logged; the CI wait goes on as before).
+sync_base() {
+    local head swt rc
+    conflict_files=
+    head=$(gh pr view "$1" --repo "$GH_REPO" --json headRefName -q .headRefName 2>/dev/null)
+    [ -n "$head" ] || { say "$key: can't read PR #$1's branch to merge $BASE into it"; return 2; }
+    swt=$STATE/worktrees/$repo/sync-$1
+    mkdir -p "$(dirname "$swt")"
+    git -C "$AGENT_REPO" worktree remove --force "$swt" 2>/dev/null
+    if ! { git -C "$AGENT_REPO" fetch -q origin && git -C "$AGENT_REPO" worktree add -q --detach "$swt" "origin/$head"; } \
+            >> "$STATE/runs.log" 2>&1; then
+        say "$key: can't check out PR #$1's branch $head to merge $BASE into it"
+        return 2
+    fi
+    if git -C "$swt" merge -q --no-edit "origin/$BASE" >> "$STATE/runs.log" 2>&1; then
+        if git -C "$swt" push -q origin "HEAD:refs/heads/$head" >> "$STATE/runs.log" 2>&1; then
+            say "$key: merged $BASE into PR #$1 (clean), CI re-runs"
+            sleep "${AGENT_CI_SETTLE:-30}"  # let the new head's checks register before the CI wait
+            rc=0
+        else
+            say "$key: merged $BASE into PR #$1, but the push failed"
+            rc=2
+        fi
+    else
+        conflict_files=$(git -C "$swt" diff --name-only --diff-filter=U | paste -sd, - | sed 's/,/, /g')
+        git -C "$swt" merge --abort >/dev/null 2>&1
+        if [ -n "$conflict_files" ]; then
+            say "$key: PR #$1 conflicts with $BASE in $conflict_files"
+            rc=1
+        else
+            say "$key: merging $BASE into PR #$1 failed (no conflicting files, see runs.log)"
+            rc=2
+        fi
+    fi
+    git -C "$AGENT_REPO" worktree remove --force "$swt" >/dev/null 2>&1
+    return "$rc"
+}
+# conflict_back <pr>: after merge_pr returned 4 (or sync_base 1), send the item back to the implementer for a conflict round
+# (no attempt used); once AGENT_MAX_CONFLICT_ROUNDS are used up it is blocked, with a notice. 1 = blocked.
+conflict_back() {
+    local why new
+    why=$(merge_failure 4)
+    new=$("${Q[@]}" requeue "$key" --conflict --note "PR #$1 $why")
+    if [ "$new" = blocked ]; then
+        gh pr comment "$1" --repo "$GH_REPO" --body "Not merged: $why, after ${AGENT_MAX_CONFLICT_ROUNDS:-2} conflict round(s)." >/dev/null 2>&1
+        say "$key: PR #$1 $why, out of conflict rounds, blocked"
+        notify "blocked: PR #$1 $why" "https://github.com/$GH_REPO/pull/$1 still $why after ${AGENT_MAX_CONFLICT_ROUNDS:-2} conflict round(s). Merge $BASE into it by hand, or re-queue $key."
+        return 1
+    fi
+    gh pr comment "$1" --repo "$GH_REPO" --body "Not merged yet: $why. Back to the implementer for a conflict round." >/dev/null 2>&1
+    say "$key: PR #$1 $why, back to the implementer for a conflict round"
 }
 # ci_runs <pr>: CI through the Actions runs of the PR head, for a token that can't read the check rollup (agent-runner).
 # Waits up to 30 min for a run to show up. 0 = all green, 1 = one failed (or gh failed), 2 = no run.
@@ -303,6 +380,7 @@ merge_failure() {  # merge_failure <merge_pr exit code>: why it didn't merge, fo
     case $1 in
         2) echo "no CI checks on this repo, so it isn't merged without them" ;;
         3) echo "CI is green but gh pr merge failed" ;;
+        4) echo "conflicts with $BASE${conflict_files:+ in $conflict_files}" ;;
         *) echo "CI is red or timed out" ;;
     esac
 }
@@ -420,6 +498,11 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
 Left for you:
 ${left:-nothing left}"
                 [ -n "$notice_url" ] && "${Q[@]}" set "$key" "left_issue=$notice_url"
+            elif [ $? = 4 ]; then
+                # Back to the implementer: the conflict round's PR goes through the gate, review and preprod again.
+                "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+                "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
+                conflict_back "$pr"
             else
                 notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
             fi ;;
@@ -494,6 +577,9 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
                 say "$key: validator approved PR #$pr, merged"
                 preprod_follow "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
+            elif [ $? = 4 ]; then
+                "${Q[@]}" unset "$key" review_attempts
+                conflict_back "$pr"
             else
                 "${Q[@]}" set "$key" status=blocked
                 notify "PR #$pr approved but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr"
@@ -576,7 +662,46 @@ run_claude() {
 }
 
 : > "$log"
-if [ -n "$resume_id" ]; then
+# A conflict round (`conflict=1`, set by `requeue --conflict`): the worktree goes to the PR head and the runner starts
+# `git merge origin/$BASE` itself (the implementer can't run git merge). Clean: pushed, no Claude run. Conflicts: Claude
+# gets a prompt for resolving just those, not /implement.
+conflict_round=
+conflict_prompt=
+if [ "$("${Q[@]}" get "$key" conflict 2>/dev/null)" = 1 ]; then
+    conflict_round=1
+    conflict_pr=$("${Q[@]}" get "$key" pr)
+    {
+        git -C "$wt" fetch -q origin
+        git -C "$wt" merge -q --ff-only "origin/$branch" 2>/dev/null || git -C "$wt" reset -q --hard "origin/$branch"
+    } >> "$log" 2>&1
+    if git -C "$wt" merge --no-edit "origin/$BASE" >> "$log" 2>&1; then
+        if git -C "$wt" push -q origin HEAD >> "$log" 2>&1; then
+            say "$key: conflict round: merged $BASE into PR #$conflict_pr (clean), no Claude run"
+            printf '{"status": "ready", "pr": %s, "summary": "Merged %s into PR #%s (clean)."}' \
+                "$conflict_pr" "$BASE" "$conflict_pr" > "$result"
+        else
+            say "$key: conflict round: merged $BASE into PR #$conflict_pr, but the push failed (log $log)"
+        fi
+    else
+        conflict_files=$(git -C "$wt" diff --name-only --diff-filter=U | paste -sd, - | sed 's/,/, /g')
+        if [ -n "$conflict_files" ]; then
+            conflict_prompt="PR #$conflict_pr for $plan conflicts with origin/$BASE. The runner started \`git merge origin/$BASE\` in this worktree; these files have conflict markers: $conflict_files. Resolve them, keeping both sides' intent; run \`$VALIDATE_FULL\`; \`git add\` them, \`git commit --no-edit\`, \`git push origin HEAD\`. Then write the result file as for /implement (\`ready\` with the PR). Change nothing else.
+
+Result file: $result"
+        else
+            git -C "$wt" merge --abort >/dev/null 2>&1
+            say "$key: conflict round: merging $BASE failed without conflicting files (log $log)"
+        fi
+    fi
+fi
+if [ -n "$conflict_round" ]; then
+    code=0
+    if [ -n "$conflict_prompt" ]; then
+        say "$key: conflict round start for PR #$conflict_pr in $conflict_files (log $log)"
+        run_claude "$conflict_prompt"
+        code=$?
+    fi
+elif [ -n "$resume_id" ]; then
     if [ "$resume_why" = limit ]; then
         opener="Your previous run was stopped by the Claude usage limit. The work you committed or left in the worktree is still there."
     else
@@ -617,6 +742,7 @@ for line in reversed(open(sys.argv[1], errors="replace").read().splitlines()):
 ' "$log")
 [ -n "$session_id" ] && "${Q[@]}" set "$key" "session_id=$session_id"
 say "$key: claude exit $code"
+[ -n "$conflict_round" ] && "${Q[@]}" unset "$key" conflict
 
 # A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue.
 if [ ! -f "$result" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$log"; then
@@ -637,35 +763,52 @@ if [ "$status" = ready ] && ! (cd "$wt" && bash -c "$VALIDATE_FULL" >> "$log" 2>
     rm -f "$result"
     status=""
 fi
+conflicted=
 if [ "$status" = ready ]; then
     pr=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pr"])' "$result")
-    verdict=$(cd "$wt" && python3 "$HERE/gate.py" "$plan" --config "$toml" --base "origin/$BASE")
-    tier=$(echo "$verdict" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
-    "${Q[@]}" set "$key" "tier=$tier"
-    if [ "$tier" = review ]; then
-        final=needs-review  # the validator reviews it on a later tick (review stage above)
-        gh pr comment "$pr" --repo "$GH_REPO" --body "Risk gate: \`review\`, so a validator reviews it next.
-\`\`\`json
-$verdict
-\`\`\`" >/dev/null
-    elif merge_pr "$pr"; then
-        final=merged
-        "${Q[@]}" set "$key" "merged_at=$(stamp)"
-        notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low): https://github.com/$GH_REPO/pull/$pr"
-        preprod_follow "$pr"
-    else
-        # Not merged (gate tier low): the PR stays open, labelled ci-failed, and the item is blocked. Preprod is only
-        # for `review` PRs the validator approved, so a repo without [preprod] can't get stuck waiting for it.
-        merge_rc=$?
-        not_merged=$(merge_failure "$merge_rc")
-        final=blocked
-        gh pr edit "$pr" --repo "$GH_REPO" --add-label ci-failed >/dev/null 2>&1 \
-            || { gh label create ci-failed --repo "$GH_REPO" --force >/dev/null; gh pr edit "$pr" --repo "$GH_REPO" --add-label ci-failed >/dev/null; }
-        gh pr comment "$pr" --repo "$GH_REPO" --body "Not merged: $not_merged. Risk gate: \`$tier\`
-\`\`\`json
-$verdict
-\`\`\`" >/dev/null
+    # A conflicting PR gets no CI: merge the base in first, so the gate and the validator see a mergeable PR.
+    conflict_files=
+    if [ "$(pr_mergeable "$pr")" = CONFLICTING ]; then
+        sync_base "$pr"
+        [ $? = 1 ] && conflicted=1
     fi
+    if [ -n "$conflicted" ]; then
+        final=blocked  # `finish` records the PR; conflict_back below re-queues it for a conflict round
+    else
+        verdict=$(cd "$wt" && python3 "$HERE/gate.py" "$plan" --config "$toml" --base "origin/$BASE")
+        tier=$(echo "$verdict" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])')
+        "${Q[@]}" set "$key" "tier=$tier"
+        if [ "$tier" = review ]; then
+            final=needs-review  # the validator reviews it on a later tick (review stage above)
+            gh pr comment "$pr" --repo "$GH_REPO" --body "Risk gate: \`review\`, so a validator reviews it next.
+\`\`\`json
+$verdict
+\`\`\`" >/dev/null
+        elif merge_pr "$pr"; then
+            final=merged
+            "${Q[@]}" set "$key" "merged_at=$(stamp)"
+            notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low): https://github.com/$GH_REPO/pull/$pr"
+            preprod_follow "$pr"
+        else
+            # Not merged (gate tier low): the PR stays open, labelled ci-failed, and the item is blocked. Preprod is only
+            # for `review` PRs the validator approved, so a repo without [preprod] can't get stuck waiting for it.
+            # A conflict instead goes back to the implementer (conflict_back below), with no label.
+            merge_rc=$?
+            final=blocked
+            if [ "$merge_rc" = 4 ]; then
+                conflicted=1
+            else
+                not_merged=$(merge_failure "$merge_rc")
+                gh pr edit "$pr" --repo "$GH_REPO" --add-label ci-failed >/dev/null 2>&1 \
+                    || { gh label create ci-failed --repo "$GH_REPO" --force >/dev/null; gh pr edit "$pr" --repo "$GH_REPO" --add-label ci-failed >/dev/null; }
+                gh pr comment "$pr" --repo "$GH_REPO" --body "Not merged: $not_merged. Risk gate: \`$tier\`
+\`\`\`json
+$verdict
+\`\`\`" >/dev/null
+            fi
+        fi
+    fi
+    [ -n "$conflicted" ] && not_merged=$(merge_failure 4)
     python3 - "$result" "$final" "${not_merged:-}" <<'EOF'
 import json, sys
 path, final, not_merged = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -677,6 +820,10 @@ EOF
 fi
 
 new=$("${Q[@]}" finish "$key" "$result")
+if [ -n "$conflicted" ]; then
+    conflict_back "$pr"  # queued for a conflict round (the worktree stays), or blocked with its own notice
+    new=$("${Q[@]}" get "$key" status)
+fi
 say "$key: -> $new"
 case "$new" in
     done|awaiting-preprod|awaiting-review)
@@ -684,7 +831,9 @@ case "$new" in
     blocked)
         # Blocked at the implementer: an earlier stage's verdict no longer says where it is (the PR status block).
         [ -z "${not_merged:-}" ] && "${Q[@]}" unset "$key" rerun review_verdict review_summary
-        if [ -n "${not_merged:-}" ]; then
+        if [ -n "$conflicted" ]; then
+            :  # conflict_back sent the notice
+        elif [ -n "${not_merged:-}" ]; then
             notify "PR #$pr not merged: $not_merged" "https://github.com/$GH_REPO/pull/$pr stays open, labelled ci-failed. Fix it and merge by hand, or re-queue $key. Log: $log (on the VPS)."
         else
             notify_blocked "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" "$result"
