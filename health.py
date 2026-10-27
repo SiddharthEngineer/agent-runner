@@ -646,7 +646,7 @@ def diagnosis_skip(m: Metrics, state: dict, force: bool = False) -> str | None:
     if run_lock_held():
         return "another Claude run holds the run lock"
     if not usage_ok():
-        return "session usage over its limit"
+        return "the usage gate refuses a start"
     return None
 
 

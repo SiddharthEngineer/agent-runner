@@ -73,21 +73,20 @@ class Verdict:
 
 def five_hour_window(lines: list[str]) -> tuple[float, int | None] | None:
     """(utilization 0-1, resetsAt epoch seconds) from stream-json lines, or None if no rate_limit_event has it."""
-    found = None
-    for line in lines:
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if not isinstance(event, dict) or event.get("type") != "rate_limit_event":
-            continue
-        info = event.get("rate_limit_info") or {}
-        window = (info.get("unifiedWindows") or {}).get("five_hour")
-        if window and window.get("utilization") is not None:
-            found = (float(window["utilization"]), window.get("resetsAt"))
-        elif info.get("rateLimitType") == "five_hour" and info.get("utilization") is not None:
-            found = (float(info["utilization"]), info.get("resetsAt"))
-    return found
+    window = windows(lines).get("five_hour")
+    return None if window is None else (window.utilization, window.resets_at)
+
+
+def _window(raw: object) -> Window | None:
+    """A Window from {"utilization", "resetsAt"}, or None if it isn't one (a missing or odd resetsAt reads as None)."""
+    if not isinstance(raw, dict):
+        return None
+    try:
+        utilization = float(raw["utilization"])
+    except (KeyError, TypeError, ValueError):
+        return None
+    resets = raw.get("resetsAt")
+    return Window(utilization, int(resets) if isinstance(resets, (int, float)) and not isinstance(resets, bool) else None)
 
 
 def windows(lines: list[str]) -> dict[str, Window]:
@@ -100,14 +99,19 @@ def windows(lines: list[str]) -> dict[str, Window]:
             continue
         if not isinstance(event, dict) or event.get("type") != "rate_limit_event":
             continue
-        info = event.get("rate_limit_info") or {}
-        unified = info.get("unifiedWindows") or {}
+        info = event.get("rate_limit_info")
+        info = info if isinstance(info, dict) else {}
+        unified = info.get("unifiedWindows")
+        unified = unified if isinstance(unified, dict) else {}
+        current: dict[str, Window] = {}
         for name in ("five_hour", "seven_day"):
-            window = unified.get(name)
-            if window and window.get("utilization") is not None:
-                found[name] = Window(float(window["utilization"]), window.get("resetsAt"))
-            elif info.get("rateLimitType") == name and info.get("utilization") is not None:
-                found[name] = Window(float(info["utilization"]), info.get("resetsAt"))
+            window = _window(unified.get(name))
+            if window is None and info.get("rateLimitType") == name:
+                window = _window(info)
+            if window is not None:
+                current[name] = window
+        if current:
+            found = current
     return found
 
 
@@ -122,10 +126,14 @@ def _percent(env: Mapping[str, str], name: str, default: str) -> float:
     return value
 
 
+def session_cap_from_env(env: Mapping[str, str]) -> float:
+    """AGENT_MAX_SESSION_USAGE; empty has always meant 0 (the whole gate off), so keep that."""
+    return _percent(env, "AGENT_MAX_SESSION_USAGE", "70") if env.get("AGENT_MAX_SESSION_USAGE", "70").strip() else 0.0
+
+
 def strategy_from_env(env: Mapping[str, str]) -> Strategy:
     """The rules' settings from the environment; ValueError naming the bad variable."""
-    # Empty AGENT_MAX_SESSION_USAGE has always meant 0 (gate off); keep that.
-    session = env.get("AGENT_MAX_SESSION_USAGE", "70").strip() or "0"
+    session_cap = session_cap_from_env(env)
     day_hours = None
     raw_hours = env.get("AGENT_DAY_HOURS", "").strip()
     if raw_hours:
@@ -137,7 +145,7 @@ def strategy_from_env(env: Mapping[str, str]) -> Strategy:
     if pace not in ("even", "off"):
         raise ValueError(f"AGENT_WEEKLY_PACE={pace!r} is not even or off")
     return Strategy(
-        session_cap=_percent({"AGENT_MAX_SESSION_USAGE": session}, "AGENT_MAX_SESSION_USAGE", "70"),
+        session_cap=session_cap,
         day_hours=day_hours,
         day_cap=_percent(env, "AGENT_DAY_SESSION_USAGE", "40"),
         weekly_cap=_percent(env, "AGENT_MAX_WEEKLY_USAGE", "90"),
@@ -233,11 +241,11 @@ def evaluate(win: dict[str, Window], s: Strategy, now: datetime) -> list[Verdict
 
 
 def _summary(win: dict[str, Window], s: Strategy, now: datetime) -> str:
-    text = f"5h {win['five_hour'].utilization * 100:.0f}%"
+    text = f"5h {_pct(win['five_hour']):.0f}%"
     week = win.get("seven_day")
     if week is None:
         return text + ", 7d unknown"
-    text += f", 7d {week.utilization * 100:.0f}%"
+    text += f", 7d {_pct(week):.0f}%"
     if s.pace == "even" and week.resets_at:
         text += f" (pace allows {pace_allowance(week, s, now):.0f}%)"
     return text
@@ -255,33 +263,48 @@ def probe() -> list[str]:
     return out.stdout.splitlines()
 
 
+def _read() -> tuple[dict[str, Window], datetime] | str:
+    """Probe once: (windows, now), or why the usage is unknown."""
+    try:
+        win = windows(probe())
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"usage unknown: {exc}"
+    if "five_hour" not in win:
+        return "usage unknown: no rate_limit_event in the probe output"
+    return win, datetime.now().astimezone()
+
+
+def _hold(verdicts: list[Verdict]) -> tuple[Verdict, float] | None:
+    """The refusing rule with the longest pause, and that pause (at least one cron tick), or None if every rule allows.
+    The queue pauses for the longest refusal, so the next tick doesn't start straight into another one."""
+    refused = [v for v in verdicts if not v.allowed]
+    if not refused:
+        return None
+    holder = max(refused, key=lambda v: v.pause_hours or 0)
+    return holder, max(holder.pause_hours or 0, MIN_PAUSE_HOURS)
+
+
 def cmd_check() -> int:
     try:
+        if session_cap_from_env(os.environ) <= 0:
+            print("session usage check disabled")
+            return 0
         strategy = strategy_from_env(os.environ)
     except ValueError as exc:
         print(f"usage settings: {exc}")
         return 11
-    if strategy.session_cap <= 0:
-        print("session usage check disabled")
-        return 0
-    try:
-        win = windows(probe())
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"session usage unknown: {exc}")
+    read = _read()
+    if isinstance(read, str):
+        print(read)
         return 11
-    if "five_hour" not in win:
-        print("session usage unknown: no rate_limit_event in the probe output")
-        return 11
-    now = datetime.now().astimezone()
+    win, now = read
     verdicts = evaluate(win, strategy, now)
-    refused = [v for v in verdicts if not v.allowed]
-    if not refused:
+    hold = _hold(verdicts)
+    if hold is None:
         print(f"usage ok: {_summary(win, strategy, now)}")
         return 0
-    print("; ".join(f"{v.rule}: {v.message}" for v in refused))
-    # Pause for the longest refusal, so the next tick doesn't start straight into another one (at least one cron tick).
-    hours = max(max(v.pause_hours or 0 for v in refused), MIN_PAUSE_HOURS)
-    print(f"{math.ceil(hours * 100) / 100}")
+    print("; ".join(f"{v.rule}: {v.message}" for v in verdicts if not v.allowed))
+    print(f"{math.ceil(hold[1] * 100) / 100}")
     return 10
 
 
@@ -300,17 +323,14 @@ def _utc(epoch: float | None) -> str:
 def cmd_status() -> int:
     try:
         strategy = strategy_from_env(os.environ)
-        win = windows(probe())
     except ValueError as exc:
         print(f"usage settings: {exc}")
         return 11
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"usage unknown: {exc}")
+    read = _read()
+    if isinstance(read, str):
+        print(read)
         return 11
-    if "five_hour" not in win:
-        print("usage unknown: no rate_limit_event in the probe output")
-        return 11
-    now = datetime.now().astimezone()
+    win, now = read
     session, week = win["five_hour"], win.get("seven_day")
     print(f"5-hour  {_pct(session):.0f}% used, resets {_utc(session.resets_at)}")
     if week is None:
@@ -318,24 +338,22 @@ def cmd_status() -> int:
     else:
         gone = f" ({_days_gone(week, now):.1f} of 7 days gone)" if week.resets_at else ""
         print(f"7-day   {_pct(week):.0f}% used, resets {_utc(week.resets_at)}{gone}")
-    verdicts = {v.rule: v for v in evaluate(win, strategy, now)}
+    verdicts = evaluate(win, strategy, now)
+    by_rule = {v.rule: v for v in verdicts}
     off = dict(OFF)
     if strategy.day_hours is not None:
         off["daytime reserve"] = "off (AGENT_DAY_SESSION_USAGE=0)"
     for rule in RULES:
-        v = verdicts.get(rule)
+        v = by_rule.get(rule)
         icon = "➖" if v is None or v.skipped else "✅" if v.allowed else "❌"
         print(f"{icon} {rule:<16} {off[rule] if v is None else v.message}")
+    hold = _hold(verdicts)
     if strategy.session_cap <= 0:
         print("Runs may start (the gate is off).")
-        return 0
-    refused = [v for v in verdicts.values() if not v.allowed]
-    if not refused:
+    elif hold is None:
         print("Runs may start.")
-        return 0
-    holder = max(refused, key=lambda v: v.pause_hours or 0)
-    until = now.timestamp() + max(holder.pause_hours or 0, MIN_PAUSE_HOURS) * 3600
-    print(f"Held by {holder.rule} until ~{_utc(until)}.")
+    else:
+        print(f"Held by {hold[0].rule} until ~{_utc(now.timestamp() + hold[1] * 3600)}.")
     return 0
 
 

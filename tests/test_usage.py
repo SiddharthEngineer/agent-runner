@@ -221,3 +221,18 @@ def test_status_probe_or_settings_failure_exits_11(env, monkeypatch):
     assert usage.cmd_status() == 11
     env["AGENT_WEEKLY_PACE"] = "fast"
     assert usage.cmd_status() == 11
+
+
+def test_windows_takes_the_last_event_and_skips_odd_values():
+    lines = [event(0.1, 100, 0.2, 200), event(0.3, 300, week=None)]
+    assert usage.windows(lines) == {"five_hour": usage.Window(0.3, 300)}  # no stale 7-day window from the first event
+    odd = json.dumps({"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
+        "five_hour": {"utilization": 0.4, "resetsAt": "2026-10-26T14:00Z"}, "seven_day": "n/a"}}})
+    assert usage.windows([odd]) == {"five_hour": usage.Window(0.4, None)}
+    assert usage.five_hour_window([odd]) == (0.4, None)
+
+
+def test_check_disabled_ignores_other_bad_settings(env, monkeypatch, capsys):
+    env.update(AGENT_MAX_SESSION_USAGE="0", AGENT_WEEKLY_PACE="fast")
+    monkeypatch.setattr(usage, "probe", lambda: pytest.fail("no probe when the gate is off"))
+    assert usage.cmd_check() == 0

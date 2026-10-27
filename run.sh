@@ -6,8 +6,8 @@
 # 1. Upkeep: pick up your inbox replies, close notices of finished items, tag merged PRs (versions.py), release/advance the global preprod lock (preprod.sh tick).
 # 2. Health gate: while disk is critical (health.py gate), no Claude run starts; upkeep above still ran.
 # 3. `buildqueue.py next` picks a due `<repo>/<slug>` (honours pause, optional daily cap, attempt limit) or we exit.
-#    Then usage.py checks the Claude "Current session" usage (one tiny Haiku probe): at or above
-#    AGENT_MAX_SESSION_USAGE (default 70%) the queue pauses until the 5-hour window resets.
+#    Then usage.py checks Claude usage (one tiny Haiku probe; 5-hour and 7-day windows) against the session cap, daytime
+#    reserve, weekly cap and weekly pacing (`agent-runner usage status`); when one refuses, the queue pauses as long as it says.
 # 4. The repo comes from ~/.config/agent-runner/repos/<repo>.env (AGENT_REPO = its dev clone). Its agents/runner.toml and
 #    the plan are read from origin/<base>, never from a branch, and the config must pass config.py's checks.
 # 5. The agent runs `/implement <plans>/<slug>.md --unattended` in worktrees/<repo>/<slug> on branch agent/<slug>, with the

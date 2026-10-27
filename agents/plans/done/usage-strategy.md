@@ -1,5 +1,5 @@
 # Plan: Usage strategy: weekly cap, weekly pacing, daytime reserve
-**Status:** 🔄 In progress
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (the usage gate and its docs; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 
 ## Goal
@@ -102,7 +102,7 @@ pauses until the weekly reset, not 5 h), otherwise pause 5 h as today; log which
 `agent-runner usage status`; the usage-limit bullet says it pauses for the gate's time. CLI table: `usage` → "Claude usage gate
 and status". AGENTS.md map line for `usage.py`. ROADMAP A28 → ✅ with the PR.
 **Validate:** `scripts/validate.sh` → all PASS; `grep -n "AGENT_WEEKLY_PACE" README.md` → at least one line.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 (d190b42)
 
 ## Validation
 - `scripts/validate.sh` passes.
