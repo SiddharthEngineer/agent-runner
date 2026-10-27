@@ -1,5 +1,5 @@
 # Plan: Validator loop, part 1: fix rounds don't use up attempts
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (queue bookkeeping and run.sh wiring; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** intake-2-wiring (both edit run.sh and tests/test_run.py)
 
