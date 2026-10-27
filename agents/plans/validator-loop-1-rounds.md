@@ -74,7 +74,7 @@ instead of `attempt N/2`. A rounds/stuck block shows ⏸ with `blocked_why`. Oth
 **What:** README "Limits" and both "Validator" sections: `changes` starts a fix round (3 per item, shared by both stages, no attempt
 used), blocked when rounds run out or findings come back unfixed twice; attempts count failed runs only. ROADMAP: A24 ✅ with the PR.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.

@@ -128,7 +128,8 @@ until S2 deletes it.
   5h if the gate allows a start or can't tell), gives the attempt back, and the next run resumes that session (`resume=limit`).
 - A run that ends without a result file, or whose `ready` fails the repo's full validation, counts as a failed attempt. After 2
   failures the item is `blocked` and you get a notice.
-- **Triage** (once per item): when an item turns `blocked` (2 failed attempts, or the review validator's `blocked` or no verdict twice), one read-only
+- **Triage** (once per item): when an item turns `blocked` (2 failed attempts, the review validator's `blocked` or no verdict
+  twice, or fix rounds used up or stuck), one read-only
   Sonnet run (15 min at most, [prompts/triage.md](prompts/triage.md), [settings/triage.json](settings/triage.json): reading,
   `tail`/`grep`/`ls`, `gh pr view/checks/diff`, `gh run view`; no writes) reads its last two logs, last result and PR, and
   classifies the cause: `transient` | `fixed-elsewhere` | `plan-problem` | `code-problem` | `environment`. The first two
@@ -197,8 +198,10 @@ never sees the implementer's session: its prompt ([prompts/review-pr.md](prompts
 repo's full validation. It runs `/code-review`, posts one `gh pr review --comment` (GitHub won't let the runner's account
 approve its own PR) and writes `results/<repo>/<slug>.review.json` (`approve | changes | blocked`, a summary, findings).
 - `approve` → `awaiting-preprod`, or merged after green CI when the repo has no preprod.
-- `changes` → re-queued for the implementer with the review as a note, resuming its session. It costs an attempt, so out of
-  attempts it is `blocked` and you get a notice.
+- `changes` → a **fix round**: re-queued for the implementer with the review as a note ("Review validator, round N/3"),
+  resuming its session, and the run is told to fix exactly those findings. It uses no attempt (only a failed fix run does). An
+  item gets 3 fix rounds (`AGENT_MAX_FIX_ROUNDS`), shared with the preprod stage; after that, or when the validator's
+  `unresolved` list (previous findings still not fixed) is non-empty two rounds running, it is `blocked` and you get a notice.
 - `blocked`, or no verdict twice → `blocked`, with a notice.
 Every `**Runs:** unattended` task must be `✅`, except one that can only run against preprod and is `⏭️ skipped` for that
 reason: the PR reaches preprod only after this review approves, so the review notes it as "left for the preprod stage". Plans
@@ -212,8 +215,8 @@ types a password. Steps that need your own account, prod, email, money, a device
 "left for you". It comments a checklist on the PR and writes `results/<repo>/<slug>.preprod.json`.
 - `approve` → merged after green CI, preprod on the new base branch, and one notice "`[<key>] merged; N steps left for you`"
   listing the steps only you can do (left-for-you steps never block the merge).
-- `changes` → the item re-queued for the implementer with the failed steps as a note (costs an attempt; out of attempts it is
-  `blocked`, with a notice).
+- `changes` → a fix round: the item re-queued for the implementer with the failed steps as a note ("Preprod validator,
+  round N/3"; no attempt used). The 3 rounds are shared with the review stage; out of rounds it is `blocked`, with a notice.
 - `blocked`, or no verdict twice → item `blocked`, notice.
 After `changes` or `blocked` the PR stays on preprod (the lock is held) so you can look at it, and the notice says so. The lock
 frees itself when the PR is merged or closed, or when the fixed PR is deployed again; `agent-runner preprod release <repo>`
@@ -255,7 +258,7 @@ Every PR the runner builds, in every registered repo, starts with a status block
 
 ```
 <!-- agent-runner:status -->
-**Runner status:** 🔁 Validator review: asked for changes (…); implementer re-run queued, attempt 2/2 · updated 2026-10-22 16:40 UTC
+**Runner status:** 🔁 Validator review: asked for changes (…); implementer re-run queued, fix round 1/3 · updated 2026-10-22 16:40 UTC
 1. ✅ Implementer opened the PR, 7 Human test steps
 2. 🔁 Validator reviews the code: asked for changes: …
 3. ⏳ Runner deploys the branch to preprod
