@@ -7,7 +7,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 ## Map
 | Path | What |
 |---|---|
-| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `usage`, `config`, `health`, `preprod`, `versions`, `run`, `version`, `release`, `install` (the last two are the user's) |
+| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `intake`, `usage`, `config`, `health`, `preprod`, `versions`, `run`, `version`, `release`, `install` (the last two are the user's) |
 | `install.sh` | `install.sh [<tag>]` (`agent-runner install`): mirror, release worktree, validate, switch `current` atomically (the user runs it) |
 | `release.sh` | `agent-runner release [vX.Y.Z]`: tag `origin/main` as the next version and push it (the user runs it) |
 | `ci.sh` | Shared by both: CI verdict on a commit, newest `vX.Y.Z` tag, version compare |
@@ -16,6 +16,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `gate.py` | Risk gate (plan risk + diff checks); `--plan` checks a plan's size budget |
 | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
 | `inbox.py` | Inbox issues in this repo, plus an ntfy push |
+| `intake.py` | `scan`: queue plans pushed to an opted-in repo's `origin/<base>` with `**Queue:** yes` (every tick; refusals as notices) |
 | `usage.py` | Claude session-usage gate |
 | `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
 | `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis, idle Claude sessions on memory notices), `gate`, `sessions` |

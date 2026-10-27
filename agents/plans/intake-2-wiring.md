@@ -43,7 +43,7 @@ use `after`. `/schedule-build` says it is still the way to queue on the VPS dire
 **What:** README: `intake` row in the CLI table; tick step 1 mentions intake; a short "Queue from anywhere" section (the `**Queue:**`
 grammar, `[intake] enabled`, intake once / local wins, refusals as notices, only `origin/<base>` is read). AGENTS.md: `intake.py` row in the Map.
 **Validate:** `grep -c "intake" README.md AGENTS.md` → both non-zero; `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ (2026-10-27)
 
 ## Validation
 - `scripts/validate.sh` passes.
