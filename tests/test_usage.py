@@ -183,3 +183,41 @@ def test_check_bad_settings_exit_11(env, monkeypatch, capsys, name, value):
 def test_check_old_default_70_holds(env, monkeypatch, five, code):
     monkeypatch.setattr(usage, "probe", lambda: [event(five, week=0.1)])
     assert usage.cmd_check() == code
+
+
+# status
+
+def test_status_reads_env_file_and_names_holding_rule(env, monkeypatch, tmp_path, capsys):
+    (tmp_path / ".config" / "agent-runner").mkdir(parents=True)
+    (tmp_path / ".config" / "agent-runner" / "env").write_text("AGENT_MAX_WEEKLY_USAGE=20\n")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(usage, "probe", lambda: [event(0.15, T + 2 * H, 0.32, T + 3.5 * 86400)])
+    monkeypatch.setattr(usage.sys, "argv", ["usage.py", "status"])
+    assert usage.main() == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out[0] == "5-hour  15% used, resets 2026-10-26 14:00 UTC"
+    assert out[1] == "7-day   32% used, resets 2026-10-30 00:00 UTC (3.5 of 7 days gone)"
+    assert out[2:6] == [
+        "✅ session cap      15% < 70%",
+        "➖ daytime reserve  off (AGENT_DAY_HOURS not set)",
+        "❌ weekly cap       32% ≥ 20%",
+        "❌ weekly pacing    32% > 20% allowed (cap 20%, slack 10, 3.5 of 7 days gone)",
+    ]
+    assert out[6] == "Held by weekly cap until ~2026-10-30 00:00 UTC."
+
+
+def test_status_runs_may_start(env, monkeypatch, capsys):
+    env["AGENT_DAY_HOURS"] = "08-22"
+    monkeypatch.setattr(usage, "probe", lambda: [event(0.15, week=None)])
+    assert usage.cmd_status() == 0
+    out = capsys.readouterr().out
+    assert "✅ daytime reserve  15% < 40% during 08-22" in out
+    assert "➖ weekly cap       skipped: no 7-day window in the probe" in out
+    assert out.endswith("Runs may start.\n")
+
+
+def test_status_probe_or_settings_failure_exits_11(env, monkeypatch):
+    monkeypatch.setattr(usage, "probe", lambda: [])
+    assert usage.cmd_status() == 11
+    env["AGENT_WEEKLY_PACE"] = "fast"
+    assert usage.cmd_status() == 11

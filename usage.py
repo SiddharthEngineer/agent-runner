@@ -31,7 +31,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Mapping
 
@@ -285,11 +285,67 @@ def cmd_check() -> int:
     return 10
 
 
+OFF = {
+    "session cap": "off (AGENT_MAX_SESSION_USAGE=0: the whole gate is off)",
+    "daytime reserve": "off (AGENT_DAY_HOURS not set)",
+    "weekly cap": "off (AGENT_MAX_WEEKLY_USAGE=0)",
+    "weekly pacing": "off (AGENT_WEEKLY_PACE=off)",
+}
+
+
+def _utc(epoch: float | None) -> str:
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(epoch)) if epoch else "unknown"
+
+
+def cmd_status() -> int:
+    try:
+        strategy = strategy_from_env(os.environ)
+        win = windows(probe())
+    except ValueError as exc:
+        print(f"usage settings: {exc}")
+        return 11
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"usage unknown: {exc}")
+        return 11
+    if "five_hour" not in win:
+        print("usage unknown: no rate_limit_event in the probe output")
+        return 11
+    now = datetime.now().astimezone()
+    session, week = win["five_hour"], win.get("seven_day")
+    print(f"5-hour  {_pct(session):.0f}% used, resets {_utc(session.resets_at)}")
+    if week is None:
+        print("7-day   unknown (no 7-day window in the probe)")
+    else:
+        gone = f" ({_days_gone(week, now):.1f} of 7 days gone)" if week.resets_at else ""
+        print(f"7-day   {_pct(week):.0f}% used, resets {_utc(week.resets_at)}{gone}")
+    verdicts = {v.rule: v for v in evaluate(win, strategy, now)}
+    off = dict(OFF)
+    if strategy.day_hours is not None:
+        off["daytime reserve"] = "off (AGENT_DAY_SESSION_USAGE=0)"
+    for rule in RULES:
+        v = verdicts.get(rule)
+        icon = "➖" if v is None or v.skipped else "✅" if v.allowed else "❌"
+        print(f"{icon} {rule:<16} {off[rule] if v is None else v.message}")
+    if strategy.session_cap <= 0:
+        print("Runs may start (the gate is off).")
+        return 0
+    refused = [v for v in verdicts.values() if not v.allowed]
+    if not refused:
+        print("Runs may start.")
+        return 0
+    holder = max(refused, key=lambda v: v.pause_hours or 0)
+    until = now.timestamp() + max(holder.pause_hours or 0, MIN_PAUSE_HOURS) * 3600
+    print(f"Held by {holder.rule} until ~{_utc(until)}.")
+    return 0
+
+
 def main() -> int:
-    if sys.argv[1:] != ["check"]:
+    config.load_env()  # ~/.config/agent-runner/env, so a plain shell gets the same settings as cron
+    commands = {"check": cmd_check, "status": cmd_status}
+    if len(sys.argv) != 2 or sys.argv[1] not in commands:
         print(__doc__.split("Usage:")[1].split("Standard")[0].rstrip(), file=sys.stderr)
         return 2
-    return cmd_check()
+    return commands[sys.argv[1]]()
 
 
 if __name__ == "__main__":

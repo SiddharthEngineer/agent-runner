@@ -62,7 +62,7 @@ rules (minimum 1/12 h); bad settings → exit 11 with the ValueError's message; 
 allowing and refusing at its edge; pause hours for each rule (pacing catch-up time computed and capped at the weekly reset);
 day hours inside/outside and wrapping `22-06`; the largest pause wins when two rules refuse; no `seven_day` window skips
 weekly rules; bad `AGENT_WEEKLY_PACE=fast` / `AGENT_DAY_HOURS=8` → exit 11 naming the variable; the old default (70) still holds.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 (7869b8d)
 
 ### Task 2: `usage.py status`, env file, CLI help
 **Runs:** unattended
@@ -83,7 +83,7 @@ or `Held by weekly pacing until ~2026-10-27 08:00 UTC.` The `agent-runner` help 
 **Validate:** `uv run --with pytest pytest tests/test_usage.py -q` → passes; a test sets `HOME` to a temp dir with
 `.config/agent-runner/env` holding `AGENT_MAX_WEEKLY_USAGE=20` and a stubbed probe at 7-day 0.32, and asserts `status`
 prints the weekly cap as ❌ and the holding rule.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ### Task 3: `run.sh` pause messages and usage-limit exits
 **Runs:** unattended
