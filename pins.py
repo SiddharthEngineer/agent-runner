@@ -40,6 +40,11 @@ LABEL = "pin-bump"
 HEADER_RE = re.compile(r'^\s*\[\s*("?)([A-Za-z0-9_-]+)\1\s*\]\s*(#.*)?$')
 TABLE_RE = re.compile(r"^\s*\[")
 TAG_LINE_RE = re.compile(r'^(\s*tag\s*=\s*)"([^"]*)"(.*)$')
+DIFF_TAG_RE = re.compile(r'^[+-]\s*tag\s*=\s*"(v\d+\.\d+\.\d+)"\s*(#.*)?$')
+DIFF_FILE_RE = re.compile(r"^diff --git a/(\S+) b/(\S+)$", re.M)
+DIFF_META = ("old mode", "new mode", "deleted file", "new file", "similarity", "rename", "copy ", "Binary")
+GREEN = {"SUCCESS", "SKIPPED", "NEUTRAL"}
+RED = {"FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE", "ERROR", "STALE"}
 
 
 def git(repo: Repo, *args: str, check: bool = True, env: dict | None = None) -> subprocess.CompletedProcess:
@@ -261,13 +266,13 @@ def close(repo: Repo, pr: dict, why: str, dry_run: bool) -> None:
         gh("pr", "close", str(pr["number"]), "--repo", repo.github, "--comment", f"Closed: {why}", "--delete-branch")
 
 
-def sync(only: str | None, dry_run: bool) -> int:
+def each_parent(step, only: str | None, dry_run: bool) -> int:
     state, ok = State(dry_run), True
     for name in parents(only):
         try:
             found = open_parent(name)
             if found is not None:
-                ok = sync_parent(*found, state, dry_run) and ok
+                ok = step(*found, state, dry_run) and ok
         except Fail as exc:
             print(f"{exc}")
             ok = False
@@ -275,16 +280,131 @@ def sync(only: str | None, dry_run: bool) -> int:
     return 0 if ok else 1
 
 
+def diff_problem(diff: str) -> str | None:
+    """Why a pin PR's diff isn't only `tag = "vX.Y.Z"` lines in components.toml, or None."""
+    paths = {p for pair in DIFF_FILE_RE.findall(diff) for p in pair}
+    if not paths:
+        return "its diff is empty"
+    if paths != {COMPONENTS}:
+        return f"it changes {', '.join(sorted(paths - {COMPONENTS}))}"
+    lines = diff.splitlines()
+    if any(line.startswith(DIFF_META) for line in lines):
+        return f"it changes {COMPONENTS}'s mode or path"
+    changed = [line for line in lines if line[:1] in "+-" and not line.startswith(("+++ ", "--- "))]
+    other = next((line for line in changed if not DIFF_TAG_RE.match(line)), None)
+    if other is not None:
+        return f"it changes more than tag lines in {COMPONENTS}: `{other[:80]}`"
+    if sum(line[0] == "+" for line in changed) != sum(line[0] == "-" for line in changed):
+        return f"it adds or removes tag lines in {COMPONENTS}"
+    return None
+
+
+def ci(repo: Repo, number: int) -> str:
+    """green, red or pending, read once (no waiting). No checks reported yet counts as pending."""
+    out = versions.run(["gh", "pr", "checks", str(number), "--repo", repo.github, "--json", "state"], check=False)
+    said = out.stdout + out.stderr
+    if "no checks reported" in said:
+        return "pending"
+    if "Resource not accessible" in said:  # a token that can't read the check rollup: the Actions runs of the head
+        sha = gh("pr", "view", str(number), "--repo", repo.github, "--json", "headRefOid", "-q", ".headRefOid").strip()
+        runs = json.loads(gh("run", "list", "--repo", repo.github, "--commit", sha, "--json", "status,conclusion") or "[]")
+        if not runs or any(r.get("status") != "completed" for r in runs):
+            return "pending"
+        return "green" if all((r.get("conclusion") or "").upper() in GREEN for r in runs) else "red"
+    try:
+        states = {(c.get("state") or "").upper() for c in json.loads(out.stdout)}
+    except ValueError as exc:
+        err = said.strip().splitlines()
+        raise Fail(f"gh pr checks failed: {err[-1] if err else f'exit {out.returncode}'}") from exc
+    if states & RED:
+        return "red"
+    return "green" if states and states <= GREEN else "pending"
+
+
+def notify(repo: Repo, title: str, body: str) -> bool:
+    """An agent-notice for the parent. False when inbox.py failed (try again next tick); True when sent or no inbox."""
+    if not os.environ.get("AGENT_INBOX_REPO"):
+        return True
+    sent = subprocess.run([sys.executable, str(HERE / "inbox.py"), "notify", "--project", repo.name,
+                           "--title", title, "--body", body], capture_output=True, text=True)
+    if sent.returncode != 0:
+        err = sent.stderr.strip().splitlines()
+        print(f"notice for {repo.name} failed: {err[-1] if err else f'exit {sent.returncode}'}")
+    return sent.returncode == 0
+
+
+def tick_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
+    """Merge the green pin-bump PRs of one parent. False if any PR failed (the others still ran)."""
+    try:
+        held = {name for name, table in components(tomllib.loads(text)) if isinstance(table.get("hold"), str)}
+    except tomllib.TOMLDecodeError as exc:
+        raise Fail(f"{repo.name}: {COMPONENTS} on origin/{repo.base} doesn't parse: {exc}") from exc
+    prs = json.loads(gh("pr", "list", "--repo", repo.github, "--state", "open", "--base", repo.base, "--label", LABEL,
+                        "--limit", "100", "--json", "number,headRefName,title") or "[]")
+    seen = state.data["notices"]
+    for key in [k for k in seen if k.partition("#")[0] == repo.name
+                and int(k.partition("#")[2]) not in {pr["number"] for pr in prs}]:
+        del seen[key]  # merged or closed: forget it
+    ok = True
+    for pr in prs:
+        n, key = pr["number"], f"{repo.name}#{pr['number']}"
+        url = f"https://github.com/{repo.github}/pull/{n}"
+        name = pr["headRefName"].removeprefix("pin/")
+        if name in held:
+            continue  # sync closes it
+        try:
+            diff = gh("pr", "diff", str(n), "--repo", repo.github)
+            why = diff_problem(diff)
+            if why is not None:
+                cause = f"refused: {why}"
+                if seen.get(key) != cause:
+                    say(dry_run, f"refuse {key} ({pr['title']}): {why}")
+                    if not dry_run:
+                        gh("pr", "comment", str(n), "--repo", repo.github, "--body",
+                           f"Not merged by the runner: {why}. A pin-bump PR merges with no review only when its "
+                           f"diff is nothing but `tag` lines in `{COMPONENTS}`. Merge or close it by hand.")
+                        if notify(repo, f"pin PR {key} not merged: {why}", f"{url} ({pr['title']}): {why}."):
+                            seen[key] = cause
+                continue
+            tag = next(m[1] for line in diff.splitlines() if line.startswith("+") and (m := DIFF_TAG_RE.match(line)))
+            status = ci(repo, n)
+            if status == "pending":
+                continue
+            if status == "red":
+                if seen.get(key) != "red":
+                    say(dry_run, f"notify: {key} ({pr['title']}) CI is red")
+                    if not dry_run and notify(repo, f"pin PR {key} CI is red", f"{url} ({pr['title']}): CI is red, "
+                                              "so the runner doesn't merge it. The next green run merges it."):
+                        seen[key] = "red"
+                continue
+            if dry_run:
+                say(True, f"merge {key} {name} {tag}")
+                continue
+            try:
+                gh("pr", "merge", str(n), "--repo", repo.github, f"--{repo.merge}", "--delete-branch")
+            except Fail as exc:
+                if seen.get(key) != "merge failed" and notify(
+                        repo, f"pin PR {key} merge failed", f"{url} ({pr['title']}): CI is green but {exc}."):
+                    seen[key] = "merge failed"
+                raise
+            seen.pop(key, None)
+            print(f"merged {key} {name} {tag}")
+        except (Fail, ValueError, KeyError, StopIteration) as exc:
+            print(f"{key}: {type(exc).__name__ if isinstance(exc, StopIteration) else exc}")
+            ok = False
+    return ok
+
+
 def main(argv: list[str]) -> int:
     p = argparse.ArgumentParser(prog="pins.py", description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
-    for cmd in ("sync",):
+    for cmd in ("sync", "tick"):
         s = sub.add_parser(cmd)
         s.add_argument("--repo", help="only this parent")
         s.add_argument("--dry-run", action="store_true")
     args = p.parse_args(argv)
     config.load_env()
-    return sync(args.repo, args.dry_run)
+    return each_parent(sync_parent if args.cmd == "sync" else tick_parent, args.repo, args.dry_run)
 
 
 if __name__ == "__main__":

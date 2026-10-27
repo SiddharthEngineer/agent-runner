@@ -259,3 +259,108 @@ def test_set_pin_keeps_comments_and_order():
     import pins
     text = '[a]\ntag = "v1.0.0"\n\n[kid]  # x\n# tag = "v0.0.1"\n  tag = "v1.0.0" # keep\nz = 1\n[b]\ntag = "v1.0.0"\n'
     assert pins.set_pin(text, "kid", "v1.2.0") == text.replace('  tag = "v1.0.0" # keep', '  tag = "v1.2.0" # keep')
+
+
+def set_pr(w: World, number: int, **fields):
+    data = json.loads(w.state.read_text())
+    next(pr for pr in data["prs"] if pr["number"] == number).update(fields)
+    w.state.write_text(json.dumps(data))
+
+
+def inbox_stub(w: World, tmp: Path) -> Path:
+    """pins.py with a stub inbox.py beside it that logs each notice to <tmp>/notices."""
+    code = tmp / "code"
+    code.mkdir()
+    for f in ("pins.py", "versions.py", "config.py"):
+        (code / f).write_text((ROOT / f).read_text())
+    (code / "inbox.py").write_text("import sys\nopen(%r, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+                                   % str(tmp / "notices"))
+    w.env["AGENT_INBOX_REPO"] = "o/inbox"
+    return code
+
+
+def tick(w: World, code: Path, *args):
+    return subprocess.run([sys.executable, str(code / "pins.py"), "tick", *args], env=w.env, capture_output=True,
+                          text=True)
+
+
+def notices(tmp: Path) -> list[str]:
+    return (tmp / "notices").read_text().splitlines() if (tmp / "notices").exists() else []
+
+
+def test_green_pr_is_merged_with_the_parents_method(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    set_pr(w, 10, checks=["SUCCESS", "SKIPPED"])
+    out = tick(w, code)
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert out.stdout.strip() == "merged parent#10 kid v1.0.1"
+    assert ["pr", "merge", "10", "--repo", "o/parent", "--squash", "--delete-branch"] in w.calls()
+    assert w.prs()[0]["state"] == "merged" and notices(tmp_path) == []
+
+
+def test_pending_or_no_checks_waits_quietly(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    assert tick(w, code).stdout == ""  # no checks reported yet
+    set_pr(w, 10, checks=["SUCCESS", "PENDING"])
+    assert tick(w, code).stdout == ""
+    assert not any(c[:2] == ["pr", "merge"] for c in w.calls()) and notices(tmp_path) == []
+
+
+def test_red_ci_sends_one_notice(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    set_pr(w, 10, checks=["SUCCESS", "FAILURE"])
+    tick(w, code)
+    tick(w, code)
+    assert len(notices(tmp_path)) == 1 and "--project parent --title pin PR parent#10 CI is red" in notices(tmp_path)[0]
+    assert not any(c[:2] == ["pr", "merge"] for c in w.calls())
+
+
+def test_pr_that_edits_another_file_is_refused_once(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    w.git("parent", "fetch", "-q", "origin")
+    w.git("parent", "checkout", "-q", "-b", "pin/kid", "origin/pin/kid")
+    (tmp_path / "parent-work/run.sh").write_text("echo sneak\n")
+    w.git("parent", "add", "-A")
+    w.git("parent", "commit", "-qm", "sneak")
+    w.git("parent", "push", "-q", "--force", "origin", "HEAD:pin/kid")
+    set_pr(w, 10, checks=["SUCCESS"])
+    out = tick(w, code)
+    tick(w, code)
+    assert "refuse parent#10" in out.stdout and "run.sh" in out.stdout
+    assert not any(c[:2] == ["pr", "merge"] for c in w.calls())
+    assert len(notices(tmp_path)) == 1 and len(w.prs()[0]["comments"]) == 1
+
+
+def test_tick_dry_run_merges_nothing(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    set_pr(w, 10, checks=["SUCCESS"])
+    out = tick(w, code, "--dry-run")
+    assert "would merge parent#10 kid v1.0.1" in out.stdout and "merged" not in out.stdout
+    assert not any(c[:2] == ["pr", "merge"] for c in w.calls())
+
+
+def test_diff_problem():
+    sys.path.insert(0, str(ROOT))
+    import pins
+    head = "diff --git a/components.toml b/components.toml\nindex 1..2 100644\n--- a/components.toml\n+++ b/components.toml\n@@ -1 +1 @@\n"
+    assert pins.diff_problem(head + '-tag = "v1.0.0"\n+tag = "v1.0.1"  # x\n') is None
+    assert "more than tag lines" in pins.diff_problem(head + '-tag = "v1.0.0"\n+tag = "v1.0.1"\n+x = 1\n')
+    assert "more than tag lines" in pins.diff_problem(head + '-tag = "v1.0.0"\n+tag = "main"\n')
+    assert "adds or removes" in pins.diff_problem(head + '+tag = "v1.0.1"\n')
+    assert "mode" in pins.diff_problem("diff --git a/components.toml b/components.toml\nold mode 100644\nnew mode 100755\n")
+    assert pins.diff_problem("") == "its diff is empty"

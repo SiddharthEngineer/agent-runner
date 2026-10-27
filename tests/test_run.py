@@ -63,6 +63,9 @@ def runner(tmp_path):
     (code / "versions.py").write_text(real.removesuffix(main) + 'if __name__ == "__main__":\n'
                                       + "".join("    " + line + "\n" for line in
                                                 PY_STUB.format(name="versions", exit_env="STUB_VERSIONS_EXIT").splitlines()))
+    # pins.py: logs, prints $STUB_PINS_TICK for `tick` (e.g. a `merged <parent>#<n> …` line), exits $STUB_PINS_EXIT.
+    (code / "pins.py").write_text(PY_STUB.format(name="pins", exit_env="STUB_PINS_EXIT").replace(
+        "sys.exit(", 'sys.argv[1] == "tick" and print(os.environ.get("STUB_PINS_TICK", ""))\nsys.exit('))
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file (or with $STUB_LIMIT, prints a usage-limit
@@ -205,8 +208,9 @@ def test_dry_run_logs_and_stops(runner):
     runner(AGENT_DRY_RUN="1")
     log = runner.runs_log()
     assert f"would run claude for engineerfamily/x in {runner.state}/worktrees/engineerfamily/x" in log
-    assert claude_calls(runner) == [] and not any(c.startswith(("gh ", "inbox poll", "preprod", "versions"))
+    assert claude_calls(runner) == [] and not any(c.startswith(("gh ", "inbox poll", "preprod", "versions", "pins"))
                                                   for c in runner.calls())
+    assert "would poll the inbox, sync versions, sync pins and tick preprod" in log
     assert runner.status("engineerfamily/x") == "queued"
     assert not (runner.state / "worktrees/engineerfamily/x").exists()
 
@@ -343,6 +347,45 @@ def test_versions_sync_failure_notifies_once_per_cause(runner):
     assert len(notices()) == 1 and runner.runs_log().count("versions engineerfamily: exit 3") == 1  # logged once too
     runner(STUB_VERSIONS_EXIT="1")
     assert len(notices()) == 2 and "versions sync for engineerfamily failed" in notices()[1]
+    assert runner.out.returncode == 0
+
+
+@pytest.mark.parametrize("lock, release", [
+    (None, False),
+    (None, True),
+    ("strelitzia\t5\tabc\t2026-10-19T00:00:00Z\n", False),  # another PR holds preprod: the lock rule is unchanged
+])
+def test_merged_pin_pr_is_tagged_and_preprod_follows(runner, lock, release):
+    runner.register("engineerfamily", release=release)
+    if lock:
+        runner.state.mkdir(parents=True, exist_ok=True)
+        (runner.state / "preprod.lock").write_text(lock)
+    runner(STUB_PINS_TICK="merged engineerfamily#12 strelitzia v1.0.1")
+    calls, log = runner.calls(), runner.runs_log()
+    assert runner.out.returncode == 0, runner.out.stderr
+    assert calls.index("versions sync engineerfamily") < calls.index("pins sync") < calls.index("pins tick") \
+        < calls.index("preprod tick")
+    assert "pins: merged engineerfamily#12 strelitzia v1.0.1" in log
+    assert calls.count("versions sync engineerfamily") == (2 if release else 1)
+    if lock:
+        assert "preprod release engineerfamily" not in calls and "preprod is held by strelitzia#5" in log
+    else:
+        assert calls.index("pins tick") < calls.index("preprod release engineerfamily") < calls.index("preprod tick")
+        assert "pins: preprod redeployed on engineerfamily's main after PR #12" in log
+
+
+def test_failed_pin_redeploy_notifies_the_parent(runner):
+    runner.register("engineerfamily")
+    runner(STUB_PINS_TICK="merged engineerfamily#12 strelitzia v1.0.1", STUB_RELEASE_EXIT="1")
+    assert any(c.startswith("inbox notify --project engineerfamily --title preprod redeploy failed after PR #12")
+               for c in runner.calls()), runner.calls()
+
+
+def test_pins_failure_is_logged_and_the_tick_goes_on(runner):
+    runner.register("engineerfamily")
+    runner(STUB_PINS_EXIT="1")
+    assert "pins sync: exit 1" in runner.runs_log() and "pins tick: exit 1" in runner.runs_log()
+    assert "preprod tick" in runner.calls() and "preprod release engineerfamily" not in runner.calls()
     assert runner.out.returncode == 0
 
 
