@@ -1,5 +1,5 @@
 # Plan: Validator loop, part 4: a `/fix` PR comment sends the PR back to the implementer
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (a new upkeep script; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** validator-loop-3-costs
 
