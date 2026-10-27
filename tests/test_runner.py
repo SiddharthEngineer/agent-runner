@@ -965,3 +965,40 @@ def test_user_fix_replaces_a_pending_conflict_round(q):
     assert q("requeue", "plan-a", "--fix", "--stage", "user", "--note", "x").stdout.strip() == "queued"
     assert q("get", "plan-a", "conflict").returncode == 1
     assert q("get", "plan-a", "fix_pending").stdout.strip() == "1"
+
+
+def _hold(q, *extra):
+    return q("hold", "plan-a", "--title", "CI red", "--body", "tests fail", "--stage", "merge", *extra)
+
+
+def test_first_hold_awaits_the_resolver(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    assert _hold(q).stdout.strip() == "awaiting-resolve"
+    assert q("get", "plan-a", "status").stdout.strip() == "awaiting-resolve"
+    assert q("get", "plan-a", "block_title").stdout.strip() == "CI red"
+    assert q("get", "plan-a", "block_body").stdout.strip() == "tests fail"
+    assert q("get", "plan-a", "block_stage").stdout.strip() == "merge"
+    assert q("oldest", "awaiting-resolve").stdout.strip() == "strelitzia/plan-a"
+
+
+def test_hold_after_the_resolver_tried_blocks(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    _hold(q)
+    q("requeue", "plan-a", "--fresh-attempts", "--note", "transient")
+    assert q("get", "plan-a", "resolve_tried").stdout.strip() == "1"
+    assert _hold(q).stdout.strip() == "blocked"
+    assert q("get", "plan-a", "block_stage").stdout.strip() == "merge"
+    assert q("oldest", "awaiting-resolve").returncode == 1
+
+
+@pytest.mark.parametrize("var", ["AGENT_RESOLVE", "AGENT_TRIAGE"])
+def test_hold_with_the_resolver_off_blocks(q, monkeypatch, var):
+    monkeypatch.setenv(var, "0")
+    q("add", "plan-a", "--repo", "strelitzia")
+    assert _hold(q).stdout.strip() == "blocked"
+    assert q("get", "plan-a", "block_title").stdout.strip() == "CI red"
+
+
+def test_hold_needs_a_known_stage(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    assert q("hold", "plan-a", "--title", "t", "--body", "b", "--stage", "deploy").returncode == 2

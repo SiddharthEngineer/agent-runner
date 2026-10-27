@@ -28,7 +28,7 @@ and the PR status line. resolver-2 wires it into run.sh.
 `requeue --fresh-attempts` keeps working for the resolver's `transient` case and also sets `resolve_tried=1`.
 **Validate:** `uv run --with pytest pytest tests/test_runner.py -q` → passes with tests for: first hold → awaiting-resolve; hold with
 `resolve_tried=1` → blocked; `AGENT_RESOLVE=0` and `AGENT_TRIAGE=0` → blocked; `oldest awaiting-resolve` finds it.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit: buildqueue.py hold)
 
 ### Task 2: `prompts/resolve.md`
 **Runs:** unattended
