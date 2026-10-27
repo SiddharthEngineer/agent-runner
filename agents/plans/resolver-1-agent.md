@@ -47,7 +47,7 @@ and the PR status line. resolver-2 wires it into run.sh.
 6. Never quote secrets, tokens, environment variables or personal data.
 **Validate:** `python3 -c 'import string,sys; print(sorted({f for _,f,_,_ in string.Formatter().parse(open("prompts/resolve.md").read()) if f}))'`
 → exactly the 11 fields above.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit: prompts/resolve.md)
 
 ### Task 3: PR status block
 **Runs:** unattended
