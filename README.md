@@ -40,7 +40,7 @@ Agents never push tags or run `install.sh`.
 | `gate` | `gate.py` | Risk gate: the plan's `**Risk:**` line plus diff checks decide auto-merge vs review; `--plan` checks a plan's size budget; `--config` takes a repo's `runner.toml` |
 | `inbox` | `inbox.py` | Questions and notices as issues in this repo, plus an ntfy push; `sweep` closes notices of finished items |
 | `intake` | `intake.py` | `scan [--repo N] [--dry-run]`: queue plans pushed with `**Queue:** yes` (see Queue from anywhere) |
-| `usage` | `usage.py` | Claude usage gate and status |
+| `usage` | `usage.py` | Claude usage gate and `status`; `report [--days N]` sums the `cost` lines of `runs.log` (default 7 days) by role and by repo: runs, turns, USD (the API-equivalent cost, not a subscription charge) |
 | `config` | `config.py` | `check`/`get` a repo's `agents/runner.toml` (refuses prod commands) |
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
 | `preprod` | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
@@ -183,6 +183,12 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
    (`rebase`, `merge` or `squash`, from the config). A `review` tier goes to `awaiting-review` for the validator; a `low` PR
    whose CI isn't green gets `awaiting-preprod` and waits for you.
 
+**Cost lines.** After every Claude run (implementer, review, re-review, preprod, triage) `usage.py cost` reads the last result
+line of that run's log (`--output-format json`) and adds one line to `runs.log`:
+`<time> cost <repo>/<slug> <role> <model> turns=N in=… cache_read=… cache_write=… out=… usd=0.00` (`usd` is the API-equivalent
+cost Claude reports, not a subscription charge; a run with no result line, e.g. killed by the timeout, adds none).
+`agent-runner usage report --days 7` sums them.
+
 **Item lifecycle:** `queued → running → done` for `low` plans; `running → awaiting-review → (validator) → awaiting-preprod →
 on-preprod → done` for `review` plans (a repo with no `[preprod]` merges straight after the validator approves). Also
 `waiting-answer` (a question in the inbox), `blocked` and `cancelled`. A PR that conflicts with its base goes back to `queued`
@@ -218,7 +224,9 @@ one Sonnet validator (45 min at most) with [prompts/preprod-check.md](prompts/pr
 Human test steps on the public preprod host: `curl` with the repo's netrc, and the Playwright MCP, whose browser gets the
 basic-auth credentials and, if `~/.config/agent-runner/preprod-storage-state.json` exists, the dev test account's session
 (ROADMAP AM3). Both go in a 0600 temp config (`mcp_config.py`) that is deleted after the run. It never signs in itself and never
-types a password. Steps that need your own account, prod, email, money, a device, or a sign-in it doesn't have are
+types a password. It reads text first: `curl` for anything an HTTP response proves, and in the browser `browser_snapshot` (the
+accessibility tree) to read pages and find elements; it takes a screenshot only for a step about how something looks, at most
+once per step and not full-page unless the step needs it, so images don't fill its context. Steps that need your own account, prod, email, money, a device, or a sign-in it doesn't have are
 "left for you". It comments a checklist on the PR and writes `results/<repo>/<slug>.preprod.json`.
 - `approve` → merged after green CI, preprod on the new base branch, and one notice "`[<key>] merged; N steps left for you`"
   listing the steps only you can do (left-for-you steps never block the merge).
