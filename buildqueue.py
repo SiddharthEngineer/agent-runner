@@ -22,6 +22,8 @@ Usage:
   buildqueue.py requeue <slug> --note TEXT   re-queue with a note, resuming the session, keeping the attempts used
                                      (the validator's `changes`); out of attempts → blocked
                                      --fresh-attempts: attempts back to 0, a fresh session (triage's re-queue)
+                                     --conflict: a conflict round (run.sh, the PR conflicts with its base): sets `conflict=1`,
+                                     gives the attempt back; over AGENT_MAX_CONFLICT_ROUNDS (default 2) → blocked
   buildqueue.py oldest <status> [--without KEY]   print the key of the least recently updated item with that status
                                      (and no KEY field), or exit 1
   buildqueue.py pause <hours>        stop starting runs (e.g. after a usage-limit exit)
@@ -52,6 +54,8 @@ RUNS = STATE / "runs.jsonl"
 MAX_ATTEMPTS = int(os.environ.get("AGENT_MAX_ATTEMPTS", "2"))
 # 0 (the default) = no daily cap: runs are bounded by MAX_ATTEMPTS per item and by usage.py's session-usage gate.
 MAX_RUNS_PER_DAY = int(os.environ.get("AGENT_MAX_RUNS_PER_DAY", "0") or 0)
+# Conflict rounds per item (the PR conflicts with its base); they cost no attempt, so they have their own cap.
+MAX_CONFLICT_ROUNDS = int(os.environ.get("AGENT_MAX_CONFLICT_ROUNDS", "2") or 2)
 
 # Result statuses the agent may write, mapped to the item status they leave behind.
 RESULT_TO_STATUS = {
@@ -272,10 +276,24 @@ def cmd_requeue(args: argparse.Namespace) -> int:
         # Triage found a transient cause: one fresh set of attempts, and a fresh session (the old one is what went wrong).
         it["notes"].append(f"Triage ({iso(now())}): {args.note}")
         it.update(status="queued", attempts=0, not_before=iso(now()), updated=iso(now()))
-        for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts"):
+        for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts", "conflict", "conflict_rounds"):
             it.pop(stale, None)
         save(data)
         print("queued")
+        return 0
+    if args.conflict:
+        # The PR conflicts with its base: not the implementer's fault, so the attempt comes back, but the rounds are capped.
+        it["notes"].append(f"Conflict ({iso(now())}): {args.note}")
+        rounds = int(it.get("conflict_rounds", 0)) + 1
+        it.update(conflict_rounds=rounds, updated=iso(now()))
+        it.pop("resume", None)
+        if rounds > MAX_CONFLICT_ROUNDS:
+            it.update(status="blocked")
+            it.pop("conflict", None)
+        else:
+            it.update(status="queued", conflict=1, attempts=max(0, it["attempts"] - 1), not_before=iso(now()))
+        save(data)
+        print(it["status"])
         return 0
     it["notes"].append(f"Validator ({iso(now())}): {args.note}")
     # Like `answer`, but the attempts already used still count: a third failed try ends in `blocked`.
@@ -352,7 +370,9 @@ def main() -> int:
     p = sub.add_parser("requeue")
     p.add_argument("slug")
     p.add_argument("--note", required=True)
-    p.add_argument("--fresh-attempts", action="store_true")
+    how = p.add_mutually_exclusive_group()
+    how.add_argument("--fresh-attempts", action="store_true")
+    how.add_argument("--conflict", action="store_true")
     p.set_defaults(fn=cmd_requeue)
     p = sub.add_parser("oldest")
     p.add_argument("status")

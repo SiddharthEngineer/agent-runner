@@ -134,6 +134,49 @@ def test_review_result_waits_for_preprod(q):
 
 
 
+def test_conflict_rounds_give_the_attempt_back_then_block(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    q("start", "plan-a")
+    q("set", "plan-a", "resume=1")
+    q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12}))
+    for rnd in (1, 2):
+        assert q("requeue", "plan-a", "--conflict", "--note", "agents/ROADMAP.md").stdout.strip() == "queued"
+        assert q("get", "plan-a", "conflict").stdout.strip() == "1"
+        assert q("get", "plan-a", "conflict_rounds").stdout.strip() == str(rnd)
+        assert q("get", "plan-a", "resume").returncode == 1
+        assert q("next").stdout.strip() == "strelitzia/plan-a"
+        q("start", "plan-a")
+        assert q("get", "plan-a", "attempts").stdout.strip() == "1"
+        q("unset", "plan-a", "conflict")
+        q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12}))
+    assert q("requeue", "plan-a", "--conflict", "--note", "agents/ROADMAP.md").stdout.strip() == "blocked"
+    assert q("get", "plan-a", "status").stdout.strip() == "blocked"
+    assert q("get", "plan-a", "conflict").returncode == 1
+    assert "Conflict (" in q("get", "plan-a", "notes").stdout
+
+
+def test_fresh_attempts_requeue_resets_conflict_rounds(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    for _ in range(3):
+        q("requeue", "plan-a", "--conflict", "--note", "x")
+    q("requeue", "plan-a", "--fresh-attempts", "--note", "triage")
+    assert q("get", "plan-a", "conflict_rounds").returncode == 1
+    assert q("requeue", "plan-a", "--conflict", "--note", "x").stdout.strip() == "queued"
+
+
+def test_conflict_round_cap_from_env(q, monkeypatch):
+    monkeypatch.setenv("AGENT_MAX_CONFLICT_ROUNDS", "0")
+    q("add", "plan-a", "--repo", "strelitzia")
+    assert q("requeue", "plan-a", "--conflict", "--note", "x").stdout.strip() == "blocked"
+
+
+def test_requeue_conflict_and_fresh_attempts_is_a_usage_error(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    r = q("requeue", "plan-a", "--conflict", "--fresh-attempts", "--note", "x")
+    assert r.returncode == 2
+    assert "not allowed with" in r.stderr
+
+
 def test_after_waits_until_the_dependency_merged(q):
     q("add", "first", "--repo", "strelitzia")
     q("add", "second", "--after", "first", "--repo", "strelitzia")

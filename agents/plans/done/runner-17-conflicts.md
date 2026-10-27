@@ -1,5 +1,5 @@
 # Plan: Conflicting PRs: catch them before CI, merge the base, or send the implementer back
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27 (all 3 tasks)
 **Risk:** low (run.sh merge path and queue bookkeeping; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** intake-2-wiring (both edit run.sh and tests/test_run.py)
 
@@ -40,7 +40,7 @@ GitHub runs no `pull_request` CI on a PR that conflicts with its base, so today 
 Over `AGENT_MAX_CONFLICT_ROUNDS` (default 2) it sets `blocked` instead and prints `blocked`. Otherwise prints `queued`.
 **Validate:** `uv run --with pytest pytest tests/test_runner.py -q` → passes with tests for: round 1 and 2 queued with attempts unchanged
 after the next `start`; round 3 blocked; `--conflict` and `--fresh-attempts` together is a usage error.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: run.sh: detect, merge the base, conflict rounds
 **Runs:** unattended
@@ -67,7 +67,7 @@ after the next `start`; round 3 blocked; `--conflict` and `--fresh-attempts` tog
 pushed and merged (no block, no notice); a real conflict requeues a conflict round with the files in the note and no `ci-failed`
 label; the conflict-round run gets the conflict prompt and the merge already started; a third conflict blocks with "conflicts with
 main in …" in the notice; "no checks reported" on a conflicting PR says conflict, not "no CI checks".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: Docs
 **Runs:** unattended
@@ -75,7 +75,7 @@ main in …" in the notice; "no checks reported" on a conflicting PR says confli
 **What:** "Limits": a "Conflicts" bullet (what the runner merges, conflict rounds, the cap, `AGENT_MAX_CONFLICT_ROUNDS`). "Merging": a
 conflict is never reported as "no CI checks". Item lifecycle: a conflict round goes back to `queued`.
 **Validate:** `grep -n "AGENT_MAX_CONFLICT_ROUNDS" README.md` → one or more lines; `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes.
@@ -91,3 +91,6 @@ None (low risk). After `agent-runner release --install`, the next conflicting ru
 3. A clean base merge on an approved PR goes straight to CI and merge without another review: the gate already saw the PR's own diff,
    and a clean merge adds only what's already on the base. A conflict round goes back through the normal `ready` path (gate, review).
 4. validator-loop-1 (fix rounds) may later fold conflict rounds into its round counter; this plan keeps them separate so it can merge first.
+5. (Implementation, from the self-review) A conflict round that ends without a result (crash, timeout, usage limit, failed push)
+   keeps `conflict=1`, so the next run starts the merge again; only a run with a result clears it. A triage re-queue
+   (`--fresh-attempts`) resets `conflict_rounds`. An approved PR sent back for a conflict round loses its stale verdicts.

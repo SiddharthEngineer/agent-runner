@@ -76,6 +76,7 @@ def runner(tmp_path):
                'elif [[ "$*" == *"You are triaging"* ]]; then\n'
                '  [ -n "${STUB_TRIAGE:-}" ] && echo "$STUB_TRIAGE"\n'
                'else\n'
+               '  git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && echo merging >> "$STUB_LOG.merge"\n'
                '  ready=\'{"status": "ready", "pr": 9}\'\n'
                '  printf "%s" "${STUB_RESULT:-$ready}" > "$AGENT_RESULT_FILE"\n'
                'fi\n'
@@ -84,13 +85,19 @@ def runner(tmp_path):
     # `pr merge` exits $STUB_MERGE_EXIT; `run list` prints the run ids in $STUB_RUNS, and `run watch` fails for those in
     # $STUB_RUNS_RED; `pr view --json state` prints $STUB_PR_STATE (default OPEN). prstatus.py's `pr view --json body,state`
     # gets an open PR with two Human test steps, `pr edit --body-file` is logged with the body, and the comments query
-    # prints the validator's comment URL.
+    # prints the validator's comment URL. `pr view --json mergeable` prints the next word of $STUB_MERGEABLE on each call
+    # (the last one repeats; default MERGEABLE), and `--json headRefName` prints agent/x.
     write_stub(bin_dir / "gh", "gh",
                'if [[ "$*" == "pr checks"* ]]; then\n'
                '  [ "${STUB_CHECKS:-}" = red ] && { echo "build  fail  1m  https://ci.example/1"; exit 1; }\n'
                '  [ "${STUB_CHECKS:-}" = none ] && { echo "no checks reported on the \'x\' branch" >&2; exit 1; }\n'
                '  [ "${STUB_CHECKS:-}" = denied ] && { echo "GraphQL: Resource not accessible by personal access token'
                ' (repository.pullRequest.statusCheckRollup)" >&2; exit 1; }\n'
+               'elif [[ "$*" == "pr view"*mergeable* ]]; then\n'
+               '  n=$(( $(cat "$STUB_LOG.mergeable" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$STUB_LOG.mergeable"\n'
+               '  set -- ${STUB_MERGEABLE:-MERGEABLE}; [ "$n" -gt $# ] && n=$#; echo "${!n}"\n'
+               'elif [[ "$*" == "pr view"*headRefName* ]]; then\n'
+               '  echo agent/x\n'
                'elif [[ "$*" == "pr merge"* ]]; then\n'
                '  exit "${STUB_MERGE_EXIT:-0}"\n'
                'elif [[ "$*" == "pr view"*body,state* ]]; then\n'
@@ -148,7 +155,8 @@ def runner(tmp_path):
     def env(**extra) -> dict:
         e = {k: v for k, v in os.environ.items() if not k.startswith(("AGENT_", "STRELITZIA_", "PREPROD_"))}
         e.update(HOME=str(home), AGENT_RUNNER_STATE=str(state), STUB_LOG=str(log), AGENT_MAX_SESSION_USAGE="0",
-                 AGENT_INBOX_REPO="o/inbox", PATH=f"{bin_dir}:{os.environ['PATH']}", **extra)
+                 AGENT_INBOX_REPO="o/inbox", AGENT_MERGEABLE_POLL="0", AGENT_CI_SETTLE="0",
+                 GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e", PATH=f"{bin_dir}:{os.environ['PATH']}", **extra)
         return e
 
     def run(**extra) -> subprocess.CompletedProcess:
@@ -157,7 +165,22 @@ def runner(tmp_path):
         run.out = out
         return out
 
-    run.register, run.queue = register, queue
+    def pr_branch(name: str, conflict: bool) -> None:
+        """PR #9's branch agent/x on origin edits README.md; then main edits README.md too (conflict) or another file."""
+        origin, work = tmp_path / f"{name}.git", tmp_path / f"{name}-work"
+        commit = ["-c", "user.email=t@e", "-c", "user.name=t", "commit", "-qam"]
+        git("-C", work, "checkout", "-qb", "agent/x")
+        (work / "README.md").write_text("pr\n")
+        git("-C", work, *commit, "pr")
+        git("-C", work, "checkout", "-q", "main")
+        if conflict:
+            (work / "README.md").write_text("main\n")
+        else:
+            (work / "agents/plans/x.md").write_text("# Plan: x\n**Risk:** low\nmore\n")
+        git("-C", work, *commit, "main moves on")
+        git("-C", work, "push", "-q", origin, "agent/x", "main")
+
+    run.register, run.queue, run.pr_branch, run.git = register, queue, pr_branch, git
     run.calls = lambda: log.read_text().splitlines() if log.exists() else []
     run.runs_log = lambda: (state / "runs.log").read_text() if (state / "runs.log").exists() else ""
     run.status = lambda key: queue("get", key, "status").stdout.strip()
@@ -343,6 +366,103 @@ def test_ci_falls_back_to_actions_runs(runner, env, why):
         assert not merged and runner.status("agent-runner/x") == "blocked"
         [notice] = [c for c in calls if c.startswith("inbox notify")]
         assert why in notice
+
+
+def test_conflicting_pr_whose_base_merges_cleanly_is_pushed_and_merged(runner, tmp_path):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.pr_branch("agent-runner", conflict=False)
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner(STUB_MERGEABLE="CONFLICTING MERGEABLE")
+    assert runner.status("agent-runner/x") == "done", runner.runs_log() + runner.out.stderr
+    assert "agent-runner/x: merged main into PR #9 (clean), CI re-runs" in runner.runs_log()
+    origin = tmp_path / "agent-runner.git"
+    assert runner.git("-C", origin, "merge-base", "--is-ancestor", "main", "agent/x") == ""  # main is in the PR now
+    assert "gh pr merge 9 --repo o/agent-runner --squash --delete-branch" in runner.calls()
+    assert not any(c.startswith("inbox notify") and "merged PR #9" not in c for c in runner.calls())
+    assert runner.queue("get", "agent-runner/x", "conflict").returncode == 1
+    assert not (runner.state / "worktrees/agent-runner/sync-9").exists()
+
+
+def test_real_conflict_gets_conflict_rounds_then_blocks(runner, tmp_path):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.pr_branch("agent-runner", conflict=True)
+    key = "agent-runner/x"
+    runner.queue("add", "x", "--repo", "agent-runner")
+    get = lambda field: runner.queue("get", key, field).stdout.strip()
+    runner(STUB_MERGEABLE="CONFLICTING")
+    assert runner.status(key) == "queued", runner.runs_log() + runner.out.stderr
+    assert (get("conflict"), get("conflict_rounds"), get("attempts")) == ("1", "1", "0")
+    assert "Conflict (" in get("notes") and "PR #9 conflicts with main in README.md" in get("notes")
+    calls = runner.calls()
+    assert not any("ci-failed" in c for c in calls) and not any(c.startswith("gh pr merge") for c in calls)
+    assert not any(c.startswith("inbox notify") for c in calls)
+    assert "agent-runner/x: PR #9 conflicts with main in README.md" in runner.runs_log()
+    assert not (runner.state / "worktrees/agent-runner/sync-9").exists()
+    # Round 1: the runner started the merge, Claude gets the conflict prompt (not /implement).
+    runner(STUB_MERGEABLE="CONFLICTING")
+    prompt = claude_calls(runner)[-1]
+    assert "PR #9 for agents/plans/x.md conflicts with origin/main" in prompt and "conflict markers: README.md" in prompt
+    assert "/implement agents/plans" not in prompt
+    assert (Path(str(runner.state)).parent / "stub.log.merge").read_text() == "merging\n"
+    assert runner.status(key) == "queued" and get("conflict_rounds") == "2" and get("attempts") == "0"
+    # Round 2 also ends in a conflict: over the cap, blocked with a conflict notice.
+    runner(STUB_MERGEABLE="CONFLICTING")
+    assert runner.status(key) == "blocked"
+    assert runner.queue("get", key, "conflict").returncode == 1
+    [notice] = [c for c in runner.calls() if c.startswith("inbox notify")]
+    assert "conflicts with main in README.md" in notice and "no CI checks" not in notice
+    assert not any("ci-failed" in c for c in runner.calls())
+
+
+def test_conflict_round_with_a_clean_merge_skips_claude(runner):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.pr_branch("agent-runner", conflict=False)
+    key = "agent-runner/x"
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner.queue("set", key, "pr=9")
+    runner.queue("requeue", key, "--conflict", "--note", "PR #9 conflicts with main in README.md")
+    runner()
+    assert claude_calls(runner) == []
+    assert "conflict round: merged main into PR #9 (clean), no Claude run" in runner.runs_log()
+    assert runner.status(key) == "done", runner.runs_log() + runner.out.stderr
+
+
+def test_conflict_round_without_a_result_stays_a_conflict_round(runner):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.pr_branch("agent-runner", conflict=True)
+    key = "agent-runner/x"
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner.queue("set", key, "pr=9")
+    runner.queue("requeue", key, "--conflict", "--note", "PR #9 conflicts with main in README.md")
+    runner(STUB_RESULT=" ")  # Claude writes no usable result: a failed attempt
+    assert runner.status(key) == "queued", runner.runs_log() + runner.out.stderr
+    assert runner.queue("get", key, "conflict").stdout.strip() == "1"
+    runner(STUB_MERGEABLE="CONFLICTING")
+    assert all("conflicts with origin/main" in c for c in claude_calls(runner))
+    assert len(claude_calls(runner)) == 2
+
+
+def test_no_checks_on_a_conflicting_pr_says_conflict(runner):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.queue("add", "x", "--repo", "agent-runner")
+    # UNKNOWN through the ready path's and merge_pr's polls; CONFLICTING once "no checks reported" re-checks.
+    runner(STUB_CHECKS="none", STUB_MERGEABLE=" ".join(["UNKNOWN"] * 12 + ["CONFLICTING"]))
+    assert runner.status("agent-runner/x") == "queued", runner.runs_log() + runner.out.stderr
+    notes = runner.queue("get", "agent-runner/x", "notes").stdout
+    assert "PR #9 conflicts with main" in notes and "no CI checks" not in notes
+    assert "no CI checks" not in runner.runs_log()
+    assert not any("ci-failed" in c for c in runner.calls())
+
+
+def test_preprod_approve_on_a_conflicting_pr_releases_and_requeues(runner):
+    key = on_preprod(runner)
+    runner.pr_branch("engineerfamily", conflict=True)
+    runner(STUB_PREPROD=preprod_verdict("approve"), STUB_MERGEABLE="CONFLICTING")
+    calls = runner.calls()
+    assert "preprod release engineerfamily" in calls
+    assert not any(c.startswith("gh pr merge") for c in calls)
+    assert runner.status(key) == "queued" and runner.queue("get", key, "conflict").stdout.strip() == "1"
+    assert runner.queue("get", key, "preprod_verdict").returncode == 1
 
 
 def test_strelitzia_rebases(runner):
