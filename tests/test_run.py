@@ -20,7 +20,7 @@ base = "{base}"
 merge = "{merge}"
 [validate]
 fast = "true"
-full = "true"
+full = "test ! -f .broken"
 [gate]
 high_risk = ["danger/*"]
 doc_or_test = ["*.md", "agents/*"]
@@ -69,7 +69,7 @@ def runner(tmp_path):
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file (or with $STUB_LIMIT, prints a usage-limit
-    # message instead) and prints a result line (session id, turns, tokens, cost); triage prints $STUB_TRIAGE.
+    # message instead) and prints a result line (session id, turns, tokens, cost); the resolver writes $STUB_RESOLVE.
     write_stub(bin_dir / "claude", "claude",
                'if [[ "$*" == *", preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
@@ -78,8 +78,11 @@ def runner(tmp_path):
                '  [ -n "${STUB_PREPROD:-}" ] && printf "%s" "$STUB_PREPROD" > "$AGENT_RESULT_FILE"\n'
                'elif [[ "$*" == *"You are the validator"* ]]; then\n'
                '  [ -n "${STUB_REVIEW:-}" ] && printf "%s" "$STUB_REVIEW" > "$AGENT_RESULT_FILE"\n'
-               'elif [[ "$*" == *"You are triaging"* ]]; then\n'
-               '  [ -n "${STUB_TRIAGE:-}" ] && echo "$STUB_TRIAGE"\n'
+               'elif [[ "$*" == *"You are the resolver"* ]]; then\n'
+               '  echo "$*" >> "$STUB_LOG.resolve"\n'
+               '  [ -n "${STUB_RESOLVE_LIMIT:-}" ] && echo "Claude usage limit reached"\n'
+               '  [ -n "${STUB_RESOLVE:-}" ] && printf "%s" "$STUB_RESOLVE" > "$AGENT_RESULT_FILE"\n'
+               '  [ -n "${STUB_RESOLVE_BREAK:-}" ] && touch .broken\n'
                'else\n'
                '  git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && echo merging >> "$STUB_LOG.merge"\n'
                '  ready=\'{"status": "ready", "pr": 9}\'\n'
@@ -293,7 +296,7 @@ def test_low_engineerfamily_merges_with_merge_commit(runner):
 def test_low_not_merged_blocks_with_notice(runner, env, why):
     runner.register("agent-runner", merge="squash", deploy=None)  # no [preprod], like agent-runner itself
     runner.queue("add", "x", "--repo", "agent-runner")
-    runner(**env)
+    runner(AGENT_RESOLVE="0", **env)
     calls = runner.calls()
     assert runner.status("agent-runner/x") == "blocked", runner.runs_log() + runner.out.stderr
     assert "gh pr edit 9 --repo o/agent-runner --add-label ci-failed" in calls
@@ -412,7 +415,7 @@ def test_failed_preprod_redeploy_notifies(runner):
 def test_ci_falls_back_to_actions_runs(runner, env, why):
     runner.register("agent-runner", merge="squash", deploy=None)
     runner.queue("add", "x", "--repo", "agent-runner")
-    runner(STUB_CHECKS="denied", **env)
+    runner(AGENT_RESOLVE="0", STUB_CHECKS="denied", **env)
     calls = runner.calls()
     assert "gh run list --repo o/agent-runner --commit abc123 --json databaseId -q .[].databaseId" in calls
     merged = "gh pr merge 9 --repo o/agent-runner --squash --delete-branch" in calls
@@ -446,7 +449,7 @@ def test_real_conflict_gets_conflict_rounds_then_blocks(runner, tmp_path):
     key = "agent-runner/x"
     runner.queue("add", "x", "--repo", "agent-runner")
     get = lambda field: runner.queue("get", key, field).stdout.strip()
-    runner(STUB_MERGEABLE="CONFLICTING")
+    runner(AGENT_RESOLVE="0", STUB_MERGEABLE="CONFLICTING")
     assert runner.status(key) == "queued", runner.runs_log() + runner.out.stderr
     assert (get("conflict"), get("conflict_rounds"), get("attempts")) == ("1", "1", "0")
     assert "Conflict (" in get("notes") and "PR #9 conflicts with main in README.md" in get("notes")
@@ -456,14 +459,14 @@ def test_real_conflict_gets_conflict_rounds_then_blocks(runner, tmp_path):
     assert "agent-runner/x: PR #9 conflicts with main in README.md" in runner.runs_log()
     assert not (runner.state / "worktrees/agent-runner/sync-9").exists()
     # Round 1: the runner started the merge, Claude gets the conflict prompt (not /implement).
-    runner(STUB_MERGEABLE="CONFLICTING")
+    runner(AGENT_RESOLVE="0", STUB_MERGEABLE="CONFLICTING")
     prompt = claude_calls(runner)[-1]
     assert "PR #9 for agents/plans/x.md conflicts with origin/main" in prompt and "conflict markers: README.md" in prompt
     assert "/implement agents/plans" not in prompt
     assert (Path(str(runner.state)).parent / "stub.log.merge").read_text() == "merging\n"
     assert runner.status(key) == "queued" and get("conflict_rounds") == "2" and get("attempts") == "0"
     # Round 2 also ends in a conflict: over the cap, blocked with a conflict notice.
-    runner(STUB_MERGEABLE="CONFLICTING")
+    runner(AGENT_RESOLVE="0", STUB_MERGEABLE="CONFLICTING")
     assert runner.status(key) == "blocked"
     assert runner.queue("get", key, "conflict").returncode == 1
     [notice] = [c for c in runner.calls() if c.startswith("inbox notify")]
@@ -660,7 +663,7 @@ def test_review_changes_requeues_with_note(runner):
 
 def test_review_changes_after_three_rounds_blocks(runner):
     key = awaiting_review(runner, fix_rounds=3)
-    runner(STUB_REVIEW=verdict("changes"))
+    runner(AGENT_RESOLVE="0", STUB_REVIEW=verdict("changes"))
     assert runner.status(key) == "blocked"
     assert runner.queue("get", key, "attempts").stdout.strip() == "1"
     assert any(c.startswith("inbox notify") and "still asks for changes after 3 rounds" in c for c in runner.calls())
@@ -669,10 +672,10 @@ def test_review_changes_after_three_rounds_blocks(runner):
 def test_review_changes_with_the_same_unresolved_findings_blocks(runner):
     key = awaiting_review(runner)
     stuck = json.dumps({"verdict": "changes", "summary": "s", "findings": [], "unresolved": ["a.py:1: bug"]})
-    runner(STUB_REVIEW=stuck)
+    runner(AGENT_RESOLVE="0", STUB_REVIEW=stuck)
     assert runner.status(key) == "queued"
     runner.queue("set", key, "status=awaiting-review")
-    runner(STUB_REVIEW=stuck)
+    runner(AGENT_RESOLVE="0", STUB_REVIEW=stuck)
     assert runner.status(key) == "blocked"
     [note] = [c for c in runner.calls() if c.startswith("inbox notify")]
     assert "the same findings came back unfixed" in note and "a.py:1: bug" in note
@@ -835,9 +838,9 @@ def test_review_without_a_verdict_keeps_the_reviewed_sha(runner, tmp_path):
 
 def test_review_missing_result_twice_blocks(runner):
     key = awaiting_review(runner)
-    runner()
+    runner(AGENT_RESOLVE="0")
     assert runner.status(key) == "awaiting-review"
-    runner()
+    runner(AGENT_RESOLVE="0")
     assert runner.status(key) == "blocked"
     assert any(c.startswith("inbox notify") and "validator failed 2 times" in c for c in runner.calls())
 
@@ -917,7 +920,7 @@ def test_preprod_changes_stays_and_requeues(runner):
 
 def test_preprod_changes_out_of_rounds_stays_and_notifies(runner):
     key = on_preprod(runner, attempts=2, fix_rounds=3)
-    runner(STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
+    runner(AGENT_RESOLVE="0", STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
     calls = runner.calls()
     assert not any(c.startswith("preprod release") for c in calls)
     assert runner.status(key) == "blocked"
@@ -927,7 +930,7 @@ def test_preprod_changes_out_of_rounds_stays_and_notifies(runner):
 
 def test_preprod_blocked_keeps_the_lock_and_notifies(runner):
     key = on_preprod(runner)
-    runner(STUB_PREPROD=preprod_verdict("blocked"))
+    runner(AGENT_RESOLVE="0", STUB_PREPROD=preprod_verdict("blocked"))
     calls = runner.calls()
     assert not any(c.startswith("preprod release") for c in calls)
     assert runner.status(key) == "blocked"
@@ -952,87 +955,183 @@ def test_pr_merged_or_closed_by_hand(runner, stage, state, status):
     assert summary == f"PR #9 {state.lower()} by hand"
 
 
-def triage_reply(action, cls, note="", diagnosis="") -> str:
-    """The `--output-format json` line of a triage run: its reply is the verdict object."""
-    reply = json.dumps({"action": action, "class": cls, "note": note, "diagnosis": diagnosis})
-    return json.dumps({"type": "result", "result": f"```json\n{reply}\n```"})
+def resolve_reply(action, cls, summary="s", diagnosis="") -> str:
+    return json.dumps({"action": action, "class": cls, "summary": summary, "diagnosis": diagnosis, "pr": 9})
 
 
 BLOCKED = '{"status": "blocked", "pr": 9, "summary": "CI flaked"}'  # a failed attempt; the second one blocks the item
 
 
-def test_triage_requeues_once_with_fresh_attempts(runner):
+def out_of_attempts(runner, **env) -> str:
+    """engineerfamily/x's last implementer attempt ends blocked: the item is held for the resolver."""
     runner.register("engineerfamily")
     key = "engineerfamily/x"
     runner.queue("add", key)
     runner.queue("set", key, "attempts=1")  # this run is the last attempt
-    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient", note="CI flaked, try again"))
-    assert runner.status(key) == "queued", runner.runs_log() + runner.out.stderr
+    runner(STUB_RESULT=BLOCKED, **env)
+    return key
+
+
+def notices(runner) -> list[str]:
+    return [c for c in runner.calls() if c.startswith("inbox notify")]
+
+
+def resolver_calls(runner) -> list[str]:
+    return [c for c in claude_calls(runner) if "You are the resolver" in c]
+
+
+def test_implementer_out_of_attempts_is_held_for_the_resolver(runner):
+    key = out_of_attempts(runner)
+    assert runner.status(key) == "awaiting-resolve", runner.runs_log() + runner.out.stderr
+    assert notices(runner) == [] and resolver_calls(runner) == []
+    get = lambda field: runner.queue("get", key, field).stdout.strip()
+    assert (get("block_stage"), get("block_title")) == ("implement", "blocked after 2 attempt(s)")
+    assert f"{key}: held for the resolver (blocked after 2 attempt(s))" in runner.runs_log()
+
+
+def test_resolver_fixed_on_a_low_item_merges(runner):
+    key = out_of_attempts(runner)
+    runner(STUB_RESOLVE=resolve_reply("fixed", "code-problem", "fixed the test"))
+    assert runner.status(key) == "done", runner.runs_log() + runner.out.stderr
+    [resolver] = resolver_calls(runner)
+    assert "--model claude-opus-5-5" in resolver and "--max-turns 120" in resolver
+    assert "--permission-mode auto --permission-prompts none" in resolver
+    assert "Item: engineerfamily/x" in resolver and "Stopped at stage: implement" in resolver and "pull/9" in resolver
+    assert "gh pr merge 9 --repo o/engineerfamily --merge --delete-branch" in runner.calls()
+    [notice] = notices(runner)
+    assert "merged PR #9" in notice
+    log = runner.runs_log()
+    assert f"{key}: resolver start for PR #9" in log and f"{key}: resolver fixed (code-problem): fixed the test" in log
+    assert runner.queue("get", key, "resolve_tried").stdout.strip() == "1"
+    assert not (runner.state / "worktrees/engineerfamily/x").exists()
+
+
+def test_resolver_fixed_on_a_review_item_goes_back_to_the_validator(runner):
+    key = awaiting_review(runner)
+    runner.pr_branch("engineerfamily", conflict=False)  # agent/x on origin, for the resolver's worktree
+    runner(STUB_REVIEW=verdict("blocked", "cannot check out"))
+    assert runner.status(key) == "awaiting-resolve" and notices(runner) == []
+    runner(STUB_RESOLVE=resolve_reply("fixed", "code-problem"))
+    assert runner.status(key) == "awaiting-review", runner.runs_log() + runner.out.stderr
+    assert "Stopped at stage: review" in resolver_calls(runner)[0]
+    assert runner.queue("get", key, "review_verdict").returncode == 1
+    assert not any(c.startswith("gh pr merge") for c in runner.calls()) and notices(runner) == []
+
+
+def test_resolver_requeue_gives_fresh_attempts(runner):
+    key = out_of_attempts(runner)
+    runner(STUB_RESOLVE=resolve_reply("requeue", "transient", "CI flaked, try again"))
+    assert runner.status(key) == "queued", runner.runs_log()
     assert runner.queue("get", key, "attempts").stdout.strip() == "0"
-    assert runner.queue("get", key, "triaged").stdout.strip() == "1"
     assert "CI flaked, try again" in runner.queue("get", key, "notes").stdout
-    assert runner.queue("get", key, "resume").returncode != 0
-    [triage] = [c for c in claude_calls(runner) if "You are triaging" in c]
-    assert "--model claude-sonnet-5-5" in triage and "settings/triage.json" in triage and "pull/9" in triage
-    [notice] = [c for c in runner.calls() if c.startswith("inbox notify")]
-    assert "re-queued after triage: transient" in notice and "CI flaked, try again" in notice
-    # A second block of the same item: no second triage, the plain notice.
+    assert notices(runner) == []
+
+
+def test_resolver_requeue_of_a_review_block_goes_back_to_the_validator(runner):
+    key = awaiting_review(runner)
+    runner.pr_branch("engineerfamily", conflict=False)
+    runner()
+    runner()  # the validator wrote no verdict twice: held for the resolver
+    assert runner.status(key) == "awaiting-resolve", runner.runs_log()
+    runner(STUB_RESOLVE=resolve_reply("requeue", "transient"))
+    assert runner.status(key) == "awaiting-review", runner.runs_log()
+    assert runner.queue("get", key, "review_attempts").returncode == 1
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1" and notices(runner) == []
+
+
+def test_resolver_give_up_blocks_with_one_notice_and_the_diagnosis(runner):
+    key = out_of_attempts(runner)
+    runner(STUB_RESOLVE=resolve_reply("give-up", "plan-problem", diagnosis="Task 2 contradicts Task 1"))
+    assert runner.status(key) == "blocked"
+    [notice] = notices(runner)
+    assert "blocked after 2 attempt(s)" in notice and "Task 2 contradicts Task 1" in notice
+    assert "Resolver (tried once, class `plan-problem`)" in notice and ".resolve.log" in notice
+
+
+def test_resolver_without_a_result_blocks(runner):
+    key = out_of_attempts(runner)
+    runner()
+    assert runner.status(key) == "blocked"
+    [notice] = notices(runner)
+    assert "The resolver wrote no result" in notice
+
+
+def test_resolver_fixed_but_validation_fails_blocks(runner):
+    key = out_of_attempts(runner)
+    runner(STUB_RESOLVE=resolve_reply("fixed", "code-problem"), STUB_RESOLVE_BREAK="1")
+    assert runner.status(key) == "blocked", runner.runs_log()
+    assert not any(c.startswith("gh pr merge") for c in runner.calls())
+    [notice] = notices(runner)
+    assert "The resolver said fixed, but `test ! -f .broken` fails" in notice
+
+
+def test_second_block_of_the_same_item_notifies_without_a_resolver_run(runner):
+    key = out_of_attempts(runner)
+    runner(STUB_RESOLVE=resolve_reply("requeue", "transient"))
     runner.queue("set", key, "attempts=1")
-    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient"))
+    runner(STUB_RESULT=BLOCKED, STUB_RESOLVE=resolve_reply("requeue", "transient"))
     assert runner.status(key) == "blocked"
-    assert len([c for c in claude_calls(runner) if "You are triaging" in c]) == 1
-    notice = [c for c in runner.calls() if c.startswith("inbox notify")][-1]
-    assert "blocked after 2 attempt(s)" in notice and "Triage" not in notice
+    assert len(resolver_calls(runner)) == 1
+    [notice] = notices(runner)
+    assert "blocked after 2 attempt(s)" in notice
 
 
-def test_triage_notify_puts_the_diagnosis_in_the_notice(runner):
+@pytest.mark.parametrize("off", [{"AGENT_RESOLVE": "0"}, {"AGENT_TRIAGE": "0"}])
+def test_resolver_turned_off_blocks_at_once(runner, off):
+    key = out_of_attempts(runner, **off)
+    assert runner.status(key) == "blocked"
+    assert "blocked after 2 attempt(s)" in notices(runner)[0]
+    assert resolver_calls(runner) == []
+
+
+def test_resolver_skipped_without_a_pr(runner):
     runner.register("engineerfamily")
     key = "engineerfamily/x"
     runner.queue("add", key)
-    runner.queue("set", key, "attempts=1")  # this run is the last attempt
-    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("notify", "plan-problem", diagnosis="Task 2 contradicts Task 1"))
-    assert runner.status(key) == "blocked"
-    [notice] = [c for c in runner.calls() if c.startswith("inbox notify")]
-    assert "blocked after 2 attempt(s)" in notice and "Task 2 contradicts Task 1" in notice and "plan-problem" in notice
+    runner.queue("set", key, "status=awaiting-resolve", "block_stage=implement", "block_title=blocked after 2 attempt(s)",
+                 "block_body=Log: x")
+    runner()
+    assert runner.status(key) == "blocked" and resolver_calls(runner) == []
+    [notice] = notices(runner)
+    assert "blocked after 2 attempt(s)" in notice and "Resolver (tried once" not in notice
 
 
-def test_triage_never_requeues_other_classes(runner):
-    runner.register("engineerfamily")
-    key = "engineerfamily/x"
-    runner.queue("add", key)
-    runner.queue("set", key, "attempts=1")  # this run is the last attempt
-    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "code-problem", diagnosis="the fix is wrong"))
-    assert runner.status(key) == "blocked"
-    assert "the fix is wrong" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+@pytest.mark.parametrize("setup, env, stage, title", [
+    ("review", {"STUB_REVIEW": json.dumps({"verdict": "changes", "summary": "s", "findings": []})}, "review",
+     "still asks for changes after 3 rounds"),
+    ("preprod", {"STUB_PREPROD": json.dumps({"verdict": "blocked", "summary": "s"})}, "preprod", "preprod validator blocked"),
+    ("low", {"STUB_CHECKS": "red"}, "merge", "PR #9 not merged: CI is red"),
+])
+def test_block_paths_are_held_for_the_resolver(runner, setup, env, stage, title):
+    if setup == "review":
+        key = awaiting_review(runner, fix_rounds=3)
+    elif setup == "preprod":
+        key = on_preprod(runner)
+    else:
+        runner.register("engineerfamily", deploy=None)
+        key = "engineerfamily/x"
+        runner.queue("add", key)
+    runner(**env)
+    assert runner.status(key) == "awaiting-resolve", runner.runs_log() + runner.out.stderr
+    assert notices(runner) == []
+    assert runner.queue("get", key, "block_stage").stdout.strip() == stage
+    assert title in runner.queue("get", key, "block_title").stdout
 
 
-def test_no_triage_when_turned_off(runner):
-    runner.register("engineerfamily")
-    key = "engineerfamily/x"
-    runner.queue("add", key)
-    runner.queue("set", key, "attempts=1")  # this run is the last attempt
-    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient"), AGENT_TRIAGE="0")
-    assert runner.status(key) == "blocked"
-    assert not any("You are triaging" in c for c in claude_calls(runner))
-    assert runner.queue("get", key, "triaged").returncode != 0
-    assert "blocked after 2 attempt(s)" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+def test_resolver_dry_run_changes_nothing(runner):
+    key = out_of_attempts(runner)
+    runner(AGENT_DRY_RUN="1")
+    assert f"dry run: would run the resolver for {key}" in runner.runs_log()
+    assert runner.status(key) == "awaiting-resolve" and resolver_calls(runner) == []
+    assert runner.queue("get", key, "resolve_tried").returncode == 1
 
 
-def test_no_triage_when_usage_gate_refuses(runner):
-    # usage.py check: the implementer's gate passes, the second check (triage's) is at the limit.
-    (runner.code / "usage.py").write_text("import os, sys\nsys.argv[1] == 'check' or sys.exit(0)\n"
-                                          "f = os.environ['STUB_LOG'] + '.usage'\n"
-                                          "n = len(open(f).read()) if os.path.exists(f) else 0\n"
-                                          "open(f, 'a').write('x')\nsys.exit(10 if n else 0)\n")
-    runner.register("engineerfamily")
-    key = "engineerfamily/x"
-    runner.queue("add", key)
-    runner.queue("set", key, "attempts=1")  # this run is the last attempt
-    runner(STUB_RESULT=BLOCKED, STUB_TRIAGE=triage_reply("requeue", "transient"))
-    assert runner.status(key) == "blocked"
-    assert not any("You are triaging" in c for c in claude_calls(runner))
-    assert runner.queue("get", key, "triaged").returncode != 0
-    assert "blocked after 2 attempt(s)" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+def test_resolver_usage_limit_gives_the_try_back(runner):
+    key = out_of_attempts(runner)
+    runner(STUB_RESOLVE_LIMIT="1")
+    assert runner.status(key) == "awaiting-resolve", runner.runs_log()
+    assert runner.queue("get", key, "resolve_tried").returncode == 1
+    assert "usage limit hit" in runner.runs_log() and notices(runner) == []
 
 
 def usage_stub(runner, code: int, out: str, then: tuple[int, str] | None = None) -> None:
@@ -1074,14 +1173,6 @@ def test_usage_gate_refusal_logs_rule_and_hours(runner):
     assert not claude_calls(runner)
     assert f"{key}: not started, weekly pacing: 52% > 46% allowed; queue paused 7.25h" in runner.runs_log()
     assert paused_hours(runner) == pytest.approx(7.25, abs=0.05)
-
-
-def test_validator_blocked_is_triaged(runner):
-    key = awaiting_review(runner)
-    runner(STUB_REVIEW=verdict("blocked", "cannot check out"), STUB_TRIAGE=triage_reply("requeue", "transient", note="retry"))
-    assert runner.status(key) == "awaiting-review", runner.runs_log()  # back to the validator: the PR is unchanged
-    assert runner.queue("get", key, "triaged").stdout.strip() == "1"
-    assert any("re-queued after triage: transient" in c for c in runner.calls())
 
 
 def test_fresh_attempts_requeue_clears_stage_counters(runner):
@@ -1128,7 +1219,7 @@ def test_preprod_approve_records_fields_and_edits_the_pr_body_once(runner, tmp_p
 
 def test_blocked_notice_url_is_recorded(runner):
     key = awaiting_review(runner, fix_rounds=3)
-    runner(STUB_REVIEW=verdict("changes"))
+    runner(AGENT_RESOLVE="0", STUB_REVIEW=verdict("changes"))
     assert runner.status(key) == "blocked"
     assert runner.queue("get", key, "notice").stdout.strip() == "https://github.com/o/inbox/issues/5"
     assert runner.queue("get", key, "issue").returncode == 1  # the agent-question field is left alone

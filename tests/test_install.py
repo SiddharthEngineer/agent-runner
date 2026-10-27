@@ -359,7 +359,7 @@ def test_release_install_hands_the_tag_to_install(release):
 
 def test_release_and_install_denied_to_agents():
     for f in ("agents/settings/implement.json", "agents/settings/validate.json", "settings/validate.json",
-              "settings/triage.json", "settings/health-diagnose.json"):
+              "settings/health-diagnose.json"):
         deny = json.loads((ROOT / f).read_text())["permissions"]["deny"]
         for cmd in ("agent-runner release", "agent-runner install", "release.sh"):
             assert f"Bash({cmd}:*)" in deny, (f, cmd)

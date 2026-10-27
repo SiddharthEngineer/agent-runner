@@ -297,8 +297,8 @@ def cmd_requeue(args: argparse.Namespace) -> int:
     data = load()
     it = item(data, args.slug)
     if args.fresh_attempts:
-        # A transient cause (the resolver, or the old triage): fresh attempts, and a fresh session (the old one went wrong).
-        it["notes"].append(f"Triage ({iso(now())}): {args.note}")
+        # A transient cause (the resolver): fresh attempts, and a fresh session (the old one went wrong).
+        it["notes"].append(f"Resolver ({iso(now())}): {args.note}")
         it.update(status="queued", attempts=0, resolve_tried=1, not_before=iso(now()), updated=iso(now()))
         for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts", "conflict", "conflict_rounds",
                       "fix_rounds", "fix_pending", "last_unresolved", "blocked_why"):

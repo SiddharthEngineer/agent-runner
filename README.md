@@ -129,16 +129,20 @@ until S2 deletes it.
   5h if the gate allows a start or can't tell), gives the attempt back, and the next run resumes that session (`resume=limit`).
 - A run that ends without a result file, or whose `ready` fails the repo's full validation, counts as a failed attempt. After 2
   failures the item is `blocked` and you get a notice.
-- **Triage** (once per item): when an item turns `blocked` (2 failed attempts, the review validator's `blocked` or no verdict
-  twice, or fix rounds used up or stuck), one read-only
-  Sonnet run (15 min at most, [prompts/triage.md](prompts/triage.md), [settings/triage.json](settings/triage.json): reading,
-  `tail`/`grep`/`ls`, `gh pr view/checks/diff`, `gh run view`; no writes) reads its last two logs, last result and PR, and
-  classifies the cause: `transient` | `fixed-elsewhere` | `plan-problem` | `code-problem` | `environment`. The first two
-  re-queue the item with fresh attempts and a note (a validator block goes back to the validator), and you get a short
-  "re-queued after triage" notice; anything else gives
-  the usual blocked notice with the diagnosis appended. It never edits code or merges. The item gets `triaged=1`, so a second
-  block always goes straight to you. If the usage gate says no, you get the plain notice. Turn it off with `AGENT_TRIAGE=0`
-  in `~/.config/agent-runner/env`. Its log is `logs/<time>-<repo>-<slug>.triage.log`.
+- **Resolver** (once per item): wherever an item would turn `blocked` with work to fix (2 failed attempts, a red or missing
+  CI or a failed merge, a conflict out of rounds, the review validator's `blocked` or no verdict twice, a failed preprod check,
+  fix rounds used up or stuck), it goes to `awaiting-resolve` instead (`buildqueue.py hold`), and you hear nothing yet. Each
+  tick, after the review stage and before new implementer work (same lock, same usage gate), the oldest one gets one Opus run
+  (60 min, 120 turns, [prompts/resolve.md](prompts/resolve.md), the repo's implementer settings) in its worktree
+  (`worktrees/<repo>/<slug>`, or `agent/<slug>` from origin), with its logs, last result and the failed CI log. It classifies
+  the cause (`transient` | `fixed-elsewhere` | `plan-problem` | `code-problem` | `environment`) and either fixes the PR
+  (a `Resolver:` commit, one PR comment), re-queues it, or gives up. `fixed` (and `validate.full` passes): a `low` item merges
+  after green CI; a `review` item, or one stopped at review or preprod, goes back to the validator. `requeue`: fresh attempts
+  and a note (a block at review or preprod goes back to the validator instead). Anything else (give-up, no result, a failed validation, the timeout, no PR): `blocked`, with one notice carrying
+  its diagnosis. The item gets `resolve_tried=1`, so a second block goes straight to you. Config blocks (repo not registered,
+  no or refused `runner.toml`, plan not on the base) skip it. Turn it off with `AGENT_RESOLVE=0` (the old `AGENT_TRIAGE=0`
+  still works) in `~/.config/agent-runner/env`. Its log is `logs/<time>-<repo>-<slug>.resolve.log`, its result
+  `results/<repo>/<slug>.resolve.json`, the CI log it read `results/<repo>/<slug>.ci-failed.log`.
 
 ## Preprod (`preprod.sh`)
 Preprod is one environment for every repo (the `engineerfamily-preprod` compose project also builds Strelitzia), so one PR from
@@ -176,7 +180,9 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
    can start this tick), your `/fix` PR comments (`prcomments.py scan`, see Day to day), tags for merged PRs
    (`versions.py sync`), pin bumps (`pins.py sync`, then `pins.py tick`, which merges green pin PRs; preprod follows each
    merge, see Pins), and the global preprod lock (`preprod.sh tick`).
-2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
+2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran). Then the
+   first stage with work runs, and the tick ends: the preprod stage (`on-preprod`), the review stage (`awaiting-review`),
+   the resolve stage (`awaiting-resolve`, see Limits, Resolver).
 3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the usage gate.
 4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
    `origin/<base>`; a missing plan, a missing config or one the prod guard refuses blocks the item with a notice.
@@ -186,7 +192,7 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
    (`rebase`, `merge` or `squash`, from the config). A `review` tier goes to `awaiting-review` for the validator; a `low` PR
    whose CI isn't green gets `awaiting-preprod` and waits for you.
 
-**Cost lines.** After every Claude run (implementer, review, re-review, preprod, triage) `usage.py cost` reads the last result
+**Cost lines.** After every Claude run (implementer, review, re-review, preprod, resolve) `usage.py cost` reads the last result
 line of that run's log (`--output-format json`) and adds one line to `runs.log`:
 `<time> cost <repo>/<slug> <role> <model> turns=N in=… cache_read=… cache_write=… out=… usd=0.00` (`usd` is the API-equivalent
 cost Claude reports, not a subscription charge; a run with no result line, e.g. killed by the timeout, adds none).
@@ -194,7 +200,8 @@ cost Claude reports, not a subscription charge; a run with no result line, e.g. 
 
 **Item lifecycle:** `queued → running → done` for `low` plans; `running → awaiting-review → (validator) → awaiting-preprod →
 on-preprod → done` for `review` plans (a repo with no `[preprod]` merges straight after the validator approves). Also
-`waiting-answer` (a question in the inbox), `blocked` and `cancelled`. A PR that conflicts with its base goes back to `queued`
+`waiting-answer` (a question in the inbox), `awaiting-resolve` (the resolver's one try, then back on track or `blocked`),
+`blocked` and `cancelled`. A PR that conflicts with its base goes back to `queued`
 for a conflict round, from any stage (see Limits, Conflicts).
 **Notices close themselves.** Each tick, an open `agent-notice` issue titled `[<key>] …` is closed (with a comment) once that
 item is `done` or `cancelled`. A "merged; N steps left for you" notice with steps stays open for you to close. Health notices
