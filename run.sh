@@ -37,10 +37,13 @@ mkdir -p "$STATE/logs" "$STATE/results" "$STATE/worktrees" "$STATE/configs"
 Q=(python3 "$HERE/buildqueue.py")
 stamp() { date -u +%FT%TZ; }
 say() { echo "$(stamp) $*" >> "$STATE/runs.log"; }
-# cost <log> <role> <model>: a `cost` line in runs.log for the last Claude run in <log> (turns, tokens, API-equivalent USD).
+# cost <log> <role> <model> <bytes>: a `cost` line in runs.log for the Claude run that wrote <log> past its first <bytes>
+# (`$(size <log>)` before the run; the logs are appended to): turns, tokens, API-equivalent USD. None if it wrote no result.
+size() { stat -c %s "$1" 2>/dev/null || echo 0; }
 cost() {
     local line
-    line=$(python3 "$HERE/usage.py" cost "$1" --role "$2" --key "$key" --model "$3" 2>/dev/null) && [ -n "$line" ] && say "$line"
+    line=$(python3 "$HERE/usage.py" cost "$1" --role "$2" --key "$key" --model "$3" --after "$4" 2>/dev/null) \
+        && [ -n "$line" ] && say "$line"
     return 0
 }
 dry() {  # dry <what>: in a dry run, log "would <what>" and stop here
@@ -223,7 +226,7 @@ result_json=sys.argv[4], pr_url=sys.argv[5], result_file=sys.argv[6]))' "$HERE/p
             --settings "$HERE/settings/triage.json" --permission-mode dontAsk --output-format json
     ) > "$tlog" 2>&1
     say "$key: triage exit $?"
-    cost "$tlog" triage claude-sonnet-5-5
+    cost "$tlog" triage claude-sonnet-5-5 0
     # The reply is the JSON object (the settings deny writes, so run.sh saves it). The last JSON line with one wins.
     python3 -c '
 import json, sys
@@ -437,7 +440,7 @@ closed_by_hand() {
 # 3a. Preprod stage (design D3): an approved `review` PR now on preprod gets its Human test steps run by the validator.
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
-    local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held
+    local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held pstart
     local comment left_count since deployed
     pr=$("${Q[@]}" get "$key" pr)
     url=$(cfg preprod.health | head -n1 | cut -f1)
@@ -477,6 +480,7 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
         "$HERE/prompts/preprod-check.md" "$GH_REPO" "$pr" "$(pr_plan "$pwt")" "$base_url" "$presult" "$signed" "${netrc:-/dev/null}")
     say "$key: validator (preprod) start for PR #$pr, signed_in=$signed (log $plog)"
     since=$(stamp)
+    pstart=$(size "$plog")
     (
         cd "$pwt" || exit 1
         PREPROD_NETRC=$netrc AGENT_SLUG=$key AGENT_RESULT_FILE=$presult timeout --kill-after=2m 45m claude -p "$vprompt" \
@@ -484,7 +488,7 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
             --permission-mode dontAsk --output-format json
     ) >> "$plog" 2>&1
     say "$key: validator (preprod) exit $?"
-    cost "$plog" preprod claude-sonnet-5-5
+    cost "$plog" preprod claude-sonnet-5-5 "$pstart"
     rm -rf "$tmpd"  # it holds the basic-auth password
     deployed=$(git -C "$pwt" rev-parse HEAD)
     git -C "$AGENT_REPO" worktree remove --force "$pwt"
@@ -578,7 +582,7 @@ if notes:
     print("\n".join(found or [body]))' 2>/dev/null
 }
 review_stage() {
-    local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit role
+    local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit role rstart
     pr=$("${Q[@]}" get "$key" pr)
     dry "run validator (review) for $key PR #$pr"
     usage_gate
@@ -617,13 +621,14 @@ findings=sys.argv[10]))' "$HERE/prompts/rereview-pr.md" "$GH_REPO" "$pr" "$(pr_p
 result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL")
     fi
     say "$key: validator ($mode) start for PR #$pr (log $rlog)"
+    rstart=$(size "$rlog")
     (
         cd "$rwt" || exit 1
         AGENT_SLUG=$key AGENT_RESULT_FILE=$rresult timeout --kill-after=2m "$limit" claude -p "$vprompt" --model "$model" \
             --settings "$vsettings" --permission-mode dontAsk --output-format json
     ) >> "$rlog" 2>&1
     say "$key: validator exit $?"
-    cost "$rlog" "$role" "$model"
+    cost "$rlog" "$role" "$model" "$rstart"
     git -C "$AGENT_REPO" worktree remove --force "$rwt"
     verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$rresult" 2>/dev/null)
     summary=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",""))' "$rresult" 2>/dev/null)
@@ -723,8 +728,9 @@ case $resume_why in 1|limit) resume_id=$("${Q[@]}" get "$key" session_id 2>/dev/
 
 # run_claude <prompt> [extra claude args]: one agent run in the worktree, appended to $log.
 run_claude() {
-    local p=$1
+    local p=$1 start
     shift
+    start=$(size "$log")
     (
         cd "$wt" || exit 1
         AGENT_SLUG=$key AGENT_RESULT_FILE=$result timeout --kill-after=2m "$MAX_RUNTIME" claude -p "$@" "$p" \
@@ -735,7 +741,7 @@ run_claude() {
             --output-format json
     ) >> "$log" 2>&1
     local code=$?
-    cost "$log" implement claude-opus-5-5
+    cost "$log" implement claude-opus-5-5 "$start"
     return $code
 }
 

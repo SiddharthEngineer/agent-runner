@@ -18,9 +18,9 @@ Usage:
                      exit 10: a rule refuses; stdout's first line names it, the last line is the hours to pause
                      exit 11: usage unknown (probe failed) or bad settings; skip this tick
   usage.py status    both windows, every rule's verdict and which one holds the queue
-  usage.py cost <log> --role R --key K --model M
-                     one `cost` line from the run's last `--output-format json` result (nothing if it has none);
-                     run.sh appends it to runs.log after each Claude run
+  usage.py cost <log> --role R --key K --model M [--after BYTES]
+                     one `cost` line from the last `--output-format json` result in the log, past its first BYTES
+                     (what the log held before this run; nothing if it has none); run.sh appends it to runs.log
   usage.py report [--days N]
                      the `cost` lines of runs.log over the last N days (7), summed by role and by repo: runs, turns, USD.
                      USD is the API-equivalent cost Claude reports, not a subscription charge.
@@ -386,10 +386,16 @@ def cost_line(lines: list[str], role: str, key: str, model: str) -> str | None:
 
 
 def cmd_cost(args: list[str]) -> int:
-    if len(args) != 7 or args[1::2] != ["--role", "--key", "--model"]:
+    if len(args) not in (7, 9) or args[1::2] != ["--role", "--key", "--model", "--after"][:len(args) // 2]:
         return _usage()
     try:
-        lines = Path(args[0]).read_text(errors="replace").splitlines()
+        after = int(args[8]) if len(args) == 9 else 0
+    except ValueError:
+        return _usage()
+    try:
+        with open(args[0], "rb") as f:
+            f.seek(max(after, 0))
+            lines = f.read().decode(errors="replace").splitlines()
     except OSError:
         return 0
     line = cost_line(lines, role=args[2], key=args[4], model=args[6])

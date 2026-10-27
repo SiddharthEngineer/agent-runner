@@ -265,8 +265,23 @@ def test_cost_without_a_result_prints_nothing(tmp_path, capsys, text):
     assert capsys.readouterr().out == ""
 
 
+def test_cost_after_skips_earlier_runs(tmp_path, capsys):
+    """An appended log: a run that wrote no result line must not report the previous run's cost again."""
+    log = tmp_path / "run.log"
+    log.write_text(RESULT + "\n")
+    start = log.stat().st_size
+    with log.open("a") as f:
+        f.write("killed by the timeout\n")
+    args = [str(log), "--role", "review", "--key", "a/b", "--model", "m"]
+    assert usage.cmd_cost([*args, "--after", str(start)]) == 0
+    assert capsys.readouterr().out == ""
+    assert usage.cmd_cost([*args, "--after", "0"]) == 0
+    assert "turns=7" in capsys.readouterr().out
+
+
 def test_cost_bad_args_exit_2():
     assert usage.cmd_cost(["log", "--role", "review"]) == 2
+    assert usage.cmd_cost(["log", "--role", "r", "--key", "k", "--model", "m", "--after", "x"]) == 2
 
 
 def test_report_sums_by_role_and_repo(env, tmp_path, monkeypatch, capsys):
