@@ -193,22 +193,34 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         else:
             stages[0] = [RUN, f"{steps}; re-run {'queued' if status == 'queued' else 'running'}, {attempt_txt}"]
             head = f"{RUN} Implementer re-run {'queued' if status == 'queued' else 'running'}, {attempt_txt}"
-    else:  # blocked, waiting-answer / question, or anything new: on hold at the stage it stopped
-        at = failed_stage()
+    else:  # awaiting-resolve, blocked, waiting-answer / question, or anything new: on hold at the stage it stopped
+        resolving = status == "awaiting-resolve"
+        # buildqueue `hold --stage` says where run.sh stopped it; older items fall back to guessing from the verdicts.
+        at = {"implement": 0, "review": 1, "preprod": 2 if item.get("deploy_failed") else 3,
+              "merge": 4}.get(item.get("block_stage", "")) if resolving else None
+        at = failed_stage() if at is None else at
         for i in range(1, at):
             if stages[i][0] == WAIT:
                 stages[i] = [DONE, "approved" if i == 1 else "on preprod" if i == 2 else "passed"]
-        if status in ("waiting-answer", "question"):
-            why = "waiting for your answer"
+        if resolving:
+            title = first_sentence(item.get("block_title") or summary)
+            stages[at] = [RUN, f"resolver is trying one fix: {title}"]
+            head = f"{RUN} Resolver is trying one fix: {title}"
         else:
-            why = {0: summary, 1: item.get("review_summary"), 2: item.get("deploy_failed"),
-                   3: item.get("preprod_summary") or (notes[-1] if rerun == "preprod" and notes else ""), 4: summary}[at]
-            blocked = {"rounds": f"blocked (rounds, {item.get('fix_rounds', 0)}/{buildqueue.MAX_FIX_ROUNDS} fix rounds used)",
-                       "stuck": "blocked (stuck, the same findings came back unfixed)"}.get(item.get("blocked_why", ""), "blocked")
-            why = f"{blocked}: {first_sentence(why)}" if why else blocked
-        detail = why + (f" ({issue})" if issue else "")
-        stages[at] = [HOLD, detail]
-        head = f"{HOLD} {NAMES[at]}: {detail}"
+            if status in ("waiting-answer", "question"):
+                why = "waiting for your answer"
+            else:
+                why = {0: summary, 1: item.get("review_summary"), 2: item.get("deploy_failed"),
+                       3: item.get("preprod_summary") or (notes[-1] if rerun == "preprod" and notes else ""), 4: summary}[at]
+                rounds = f"{item.get('fix_rounds', 0)}/{buildqueue.MAX_FIX_ROUNDS}"
+                blocked = {"rounds": f"blocked (rounds, {rounds} fix rounds used)",
+                           "stuck": "blocked (stuck, the same findings came back unfixed)"}.get(item.get("blocked_why", ""), "blocked")
+                why = f"{blocked}: {first_sentence(why)}" if why else blocked
+                if item.get("resolve_tried"):
+                    why += "; the resolver tried once"
+            detail = why + (f" ({issue})" if issue else "")
+            stages[at] = [HOLD, detail]
+            head = f"{HOLD} {NAMES[at]}: {detail}"
     lines = [START, f"**Runner status:** {head} · updated {now.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC"]
     for n, ((mark, detail), text) in enumerate(zip(stages, texts), 1):
         sep = ", " if n == 1 else ": "  # "opened the PR, 7 Human test steps"

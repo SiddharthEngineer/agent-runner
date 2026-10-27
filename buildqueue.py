@@ -27,15 +27,21 @@ Usage:
                                      running (`blocked_why=stuck`)
                                      --fix --stage user: the user's `/fix` PR comment (prcomments.py): no round, no
                                      attempt, no stuck check; works from `blocked` too
-                                     --fresh-attempts: attempts back to 0, a fresh session (triage's re-queue)
+                                     --fresh-attempts: attempts back to 0, a fresh session (the resolver's `transient`
+                                     re-queue); sets `resolve_tried=1`
                                      --conflict: a conflict round (run.sh, the PR conflicts with its base): sets `conflict=1`,
                                      gives the attempt back; over AGENT_MAX_CONFLICT_ROUNDS (default 2) → blocked
+  buildqueue.py hold <slug> --title T --body B --stage implement|merge|review|preprod
+                                     where run.sh used to block an item: `awaiting-resolve` (the resolver tries once) unless
+                                     `resolve_tried` is set or AGENT_RESOLVE=0 (or the old AGENT_TRIAGE=0), then `blocked`;
+                                     stores block_title, block_body, block_stage either way and prints the status
   buildqueue.py oldest <status> [--without KEY]   print the key of the least recently updated item with that status
                                      (and no KEY field), or exit 1
   buildqueue.py pause <hours>        stop starting runs (e.g. after a usage-limit exit)
   buildqueue.py get <slug> <key>
 
-Item statuses: queued → running → done | awaiting-review | awaiting-preprod | on-preprod | waiting-answer | blocked | cancelled.
+Item statuses: queued → running → done | awaiting-review | awaiting-preprod | on-preprod | waiting-answer |
+awaiting-resolve | blocked | cancelled.
 run.sh stores the agent's `session_id` after each run; `resume=1` (set by `answer`) or `resume=limit` (set by run.sh after a
 usage-limit stop) makes the next run resume that session.
 Standard library only.
@@ -291,9 +297,9 @@ def cmd_requeue(args: argparse.Namespace) -> int:
     data = load()
     it = item(data, args.slug)
     if args.fresh_attempts:
-        # Triage found a transient cause: one fresh set of attempts, and a fresh session (the old one is what went wrong).
+        # A transient cause (the resolver, or the old triage): fresh attempts, and a fresh session (the old one went wrong).
         it["notes"].append(f"Triage ({iso(now())}): {args.note}")
-        it.update(status="queued", attempts=0, not_before=iso(now()), updated=iso(now()))
+        it.update(status="queued", attempts=0, resolve_tried=1, not_before=iso(now()), updated=iso(now()))
         for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts", "conflict", "conflict_rounds",
                       "fix_rounds", "fix_pending", "last_unresolved", "blocked_why"):
             it.pop(stale, None)
@@ -378,6 +384,21 @@ def unresolved_list(text: str) -> list:
     return value
 
 
+def resolver_enabled() -> bool:
+    return os.environ.get("AGENT_RESOLVE", "1") != "0" and os.environ.get("AGENT_TRIAGE", "1") != "0"
+
+
+def cmd_hold(args: argparse.Namespace) -> int:
+    """Where run.sh used to block an item: the resolver gets one try first (once per item), then the user hears."""
+    data = load()
+    it = item(data, args.slug)
+    status = "awaiting-resolve" if not it.get("resolve_tried") and resolver_enabled() else "blocked"
+    it.update(status=status, block_title=args.title, block_body=args.body, block_stage=args.stage, updated=iso(now()))
+    save(data)
+    print(status)
+    return 0
+
+
 def cmd_oldest(args: argparse.Namespace) -> int:
     items = load()["items"]
     found = sorted((it["updated"], key) for key, it in items.items()
@@ -451,6 +472,12 @@ def main() -> int:
     p.add_argument("--stage", choices=("review", "preprod", "user"))
     p.add_argument("--unresolved", type=unresolved_list, default=[], help="JSON list: the validator's unresolved findings")
     p.set_defaults(fn=cmd_requeue)
+    p = sub.add_parser("hold")
+    p.add_argument("slug")
+    p.add_argument("--title", required=True)
+    p.add_argument("--body", required=True)
+    p.add_argument("--stage", required=True, choices=("implement", "merge", "review", "preprod"))
+    p.set_defaults(fn=cmd_hold)
     p = sub.add_parser("oldest")
     p.add_argument("status")
     p.add_argument("--without", help="skip items that have this field set")

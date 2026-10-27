@@ -339,3 +339,24 @@ def test_release_repo_block_is_final_once_tagged(cli):
     assert cli("update", "engineerfamily/x", merge_commit=sha).returncode == 0
     assert "Merged; released in v1.4.4 (pre-release v1.4)" in cli.body()
     assert cli.items()["engineerfamily/x"]["pr_status_final"] == 1
+
+
+@pytest.mark.parametrize("stage, at", [("implement", 2), ("review", 3), ("preprod", 5), ("merge", 6)])
+def test_awaiting_resolve_marks_the_stage_it_stopped_at(stage, at):
+    out = lines(block(status="awaiting-resolve", tier="review", block_stage=stage, block_title="CI is red. Details.",
+                      last_result={"summary": "PR #9 not merged"}))
+    assert out[1].startswith("**Runner status:** 🔁 Resolver is trying one fix: CI is red ·"), out[1]
+    assert out[at].startswith(f"{at - 1}. 🔁"), out[at]
+    assert out[at].endswith("resolver is trying one fix: CI is red")
+    assert all(line[3] == "✅" for line in out[2:at])
+    assert all(line[3] == "⏳" for line in out[at + 1:7])
+    assert "⏸" not in "\n".join(out)
+
+
+def test_blocked_after_the_resolver_says_it_tried():
+    out = lines(block(status="blocked", tier="low", resolve_tried=1, notice="https://github.com/o/inbox/issues/5",
+                      last_result={"summary": "PR #9 not merged: CI is red"}))
+    assert out[1].startswith("**Runner status:** ⏸ Merge: blocked: PR #9 not merged: CI is red; the resolver tried once "
+                             "(https://github.com/o/inbox/issues/5)"), out[1]
+    plain = lines(block(status="blocked", tier="low", last_result={"summary": "PR #9 not merged: CI is red"}))
+    assert "resolver" not in plain[1]
