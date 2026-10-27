@@ -21,7 +21,8 @@ conversation can implement and validate on its own, unattended.
   when the user tags and installs). Use it for everything else, and whenever you're unsure.
 - `agent-runner gate --config agents/runner.toml` re-checks a `low` plan after the code is written and downgrades it to `review` if the diff
   touches high-risk paths (`[gate] high_risk` in `agents/runner.toml`), goes over the size budget, or weakens tests. Tell the user this.
-- After writing the plan (step 4), run `agent-runner gate agents/plans/<slug>.md --plan --config agents/runner.toml`. If a `low` plan
+- After writing the plan (step 4), run `agent-runner gate agents/plans/<slug>.md --plan --config agents/runner.toml`. If `agent-runner`
+  isn't on PATH (a Claude cloud session), skip it but keep to the step 3 budget by hand: intake re-checks it and refuses an oversize plan. If a `low` plan
   comes back `review`, tell the user which files caused it (the `touches high-risk path` reasons), then either change
   the risk to `review` or narrow the files. If `"split"` isn't empty, go back to step 3 and split it.
 - Mark a task `Runs: interactive` if it needs the user, the real VPS state (`~/.config/agent-runner`, `~/.local/state`, the crontab),
@@ -47,6 +48,7 @@ took 19–73 turns; plans touching 22–49 files took 100–180 turns and most o
 **Risk:** low | review (one-line reason)
 **Issue:** #n (optional)
 **Depends on:** <slug> (optional; an earlier part of a split plan)
+**Queue:** yes | no [at <ISO time with Z>] [after <repo>/<slug>] (optional; repos with `[intake] enabled` queue it on push)
 
 ## Goal
 One paragraph: the user-facing outcome.
@@ -83,5 +85,8 @@ testable unit. Never put personal data (resume text, contact details, DB rows) i
    When a plan is finished, `/implement` moves it to `agents/plans/done/` and repoints the row (open plans stay in `agents/plans/`).
 2. Show the user the plan summary, then commit both files on `main` and push (`git push origin main`), because the unattended
    runner only builds plans that are on `origin/main`.
-3. Ask the user: implement now in this session (`/implement agents/plans/<slug>.md`), or schedule it
+3. In a repo with `[intake] enabled = true` in `agents/runner.toml`, pushing the plan with `**Queue:** yes` queues it on the
+   runner's next tick (no `/schedule-build` needed, and it works from a cloud session). Give split parts `**Queue:** yes after <slug>-1-<part>`.
+   `**Queue:** no` (or no line) leaves it for the user. Otherwise:
+4. Ask the user: implement now in this session (`/implement agents/plans/<slug>.md`), or schedule it
    (`/schedule-build <slug> [time]`)? Queue split parts in order with `after`: `/schedule-build <slug>-2-<part> after <slug>-1-<part>`.

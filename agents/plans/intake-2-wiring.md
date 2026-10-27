@@ -35,7 +35,7 @@ Step 5: in a repo with `[intake] enabled`, pushing the plan with `**Queue:** yes
 use `after`. `/schedule-build` says it is still the way to queue on the VPS directly, and for repos without intake.
 **Validate:** `agent-runner check-commands agent-runner` (or `python3 commands_diff.py agent-runner`) runs without error;
 `grep -n "Queue:" .claude/commands/plan.md` shows the template line.
-**Status:** ❌
+**Status:** ✅ (2026-10-27)
 
 ### Task 3: Docs
 **Runs:** unattended
