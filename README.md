@@ -40,7 +40,7 @@ Agents never push tags or run `install.sh`.
 | `gate` | `gate.py` | Risk gate: the plan's `**Risk:**` line plus diff checks decide auto-merge vs review; `--plan` checks a plan's size budget; `--config` takes a repo's `runner.toml` |
 | `inbox` | `inbox.py` | Questions and notices as issues in this repo, plus an ntfy push; `sweep` closes notices of finished items |
 | `intake` | `intake.py` | `scan [--repo N] [--dry-run]`: queue plans pushed with `**Queue:** yes` (see Queue from anywhere) |
-| `usage` | `usage.py` | Claude session-usage gate |
+| `usage` | `usage.py` | Claude usage gate and status |
 | `config` | `config.py` | `check`/`get` a repo's `agents/runner.toml` (refuses prod commands) |
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
 | `preprod` | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
@@ -70,10 +70,28 @@ until S2 deletes it.
 ## Limits (so it can't run away)
 - Claude starts only if an item is due, the queue isn't paused, and the item has used fewer than 2 attempts (`AGENT_MAX_ATTEMPTS`).
   There's no daily run cap by default (`AGENT_MAX_RUNS_PER_DAY=0`; set a number to bring one back).
-- Session-usage gate: before each run, `usage.py` sends one tiny Haiku prompt and reads the "Current session" (5-hour window)
-  usage from its `rate_limit_event`. At or above `AGENT_MAX_SESSION_USAGE` (default `70`, percent; `0` turns it off) the run
-  doesn't start and the queue pauses until the window resets. If the usage can't be read, that tick is skipped.
-  It only gates starts: a run already going finishes even if it pushes usage past the limit.
+- Usage gate: before each run, `usage.py` sends one tiny Haiku prompt and reads both usage windows (5-hour and 7-day) from
+  its `rate_limit_event`. Four rules, each set in `~/.config/agent-runner/env` (percents; a cap of `0` turns its rule off):
+
+  | Rule | Setting (default) | Refuses when | Pauses until |
+  |---|---|---|---|
+  | Session cap | `AGENT_MAX_SESSION_USAGE` (70; `0` turns the whole gate off) | 5-hour use ≥ cap | the 5-hour reset |
+  | Daytime reserve | `AGENT_DAY_HOURS` (empty = off, e.g. `08-22`), `AGENT_DAY_SESSION_USAGE` (40) | inside day hours (VPS local time; `22-06` wraps past midnight) and 5-hour use ≥ day cap | the earlier of the 5-hour reset and the end of day hours |
+  | Weekly cap | `AGENT_MAX_WEEKLY_USAGE` (90) | 7-day use ≥ cap | the 7-day reset |
+  | Weekly pacing | `AGENT_WEEKLY_PACE` (`even`; or `off`), `AGENT_PACE_SLACK` (10) | 7-day use > cap × (fraction of the week gone) + slack | the time that allowance catches up with use (never after the 7-day reset) |
+
+  ```
+  AGENT_MAX_SESSION_USAGE=70
+  AGENT_DAY_HOURS=08-22
+  AGENT_DAY_SESSION_USAGE=40
+  AGENT_MAX_WEEKLY_USAGE=90
+  AGENT_WEEKLY_PACE=even
+  AGENT_PACE_SLACK=10
+  ```
+  When a rule refuses, the run doesn't start and the queue pauses for the longest pause among the refusing rules; the log
+  line names them. A probe with no 7-day window skips the weekly rules; if the usage can't be read, or a setting is bad, that
+  tick is skipped. `agent-runner usage status` shows both windows, every rule's verdict and which one holds the queue,
+  with the same env file cron reads. The gate only gates starts: a run already going finishes even if it pushes usage past a limit.
 - Merging: `low` plans that pass `gate.py` merge after green CI; the rest get a validator review, then preprod checks
   if the repo has `[preprod]`. A `low` PR whose CI is red or times out, whose repo reports no CI checks at all, or whose
   merge fails stays open, labelled `ci-failed`; the item is `blocked` and you get a notice with the PR link. Nothing
@@ -103,7 +121,8 @@ until S2 deletes it.
 - After each run the Docker build cache is pruned down to `AGENT_BUILD_CACHE_KEEP` (default `3GB`), so a long chain can't fill the disk.
 - Each run is killed after `AGENT_MAX_RUNTIME` (3h). A `flock` allows one Claude run at a time, whatever the repo or role.
 - Context cap: runs auto-compact at 200k tokens (`CLAUDE_CODE_AUTO_COMPACT_WINDOW`; override with `AGENT_COMPACT_WINDOW`).
-- A usage-limit exit pauses the queue for 5h, gives the attempt back, and the next run resumes that session (`resume=limit`).
+- A usage-limit exit pauses the queue for as long as the usage gate says (a weekly-limit stop waits for the weekly reset;
+  5h if the gate allows a start or can't tell), gives the attempt back, and the next run resumes that session (`resume=limit`).
 - A run that ends without a result file, or whose `ready` fails the repo's full validation, counts as a failed attempt. After 2
   failures the item is `blocked` and you get a notice.
 - **Triage** (once per item): when an item turns `blocked` (2 failed attempts, or the review validator's `blocked` or no verdict twice), one read-only
@@ -151,7 +170,7 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
    (`inbox.py sweep`), queue intake for opted-in repos (`intake.py scan`, before the next-item pick so a plan pushed now
    can start this tick), and the global preprod lock (`preprod.sh tick`).
 2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
-3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the session-usage gate.
+3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the usage gate.
 4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
    `origin/<base>`; a missing plan, a missing config or one the prod guard refuses blocks the item with a notice.
 5. **Implementer:** `/implement <plans>/<slug>.md --unattended` in `worktrees/<repo>/<slug>` on `agent/<slug>`, with the worktree's
@@ -369,7 +388,7 @@ signals or stops a process.
 `--permission-mode dontAsk` with [settings/health-diagnose.json](settings/health-diagnose.json)) looks around with `df`, `du`, `free`,
 `ps`, `ls` and `docker system df/ps/images`, and writes what uses the space or memory and the commands you could run. It can't
 edit, delete, kill or sudo. It is skipped (the notice goes out without it) when there is no `CLAUDE_CODE_OAUTH_TOKEN`, the
-session-usage gate is over its limit, a build run holds a run lock, the last diagnosis was under 6 hours ago, or disk is at 95% or more.
+usage gate refuses, a build run holds a run lock, the last diagnosis was under 6 hours ago, or disk is at 95% or more.
 The prompt is [prompts/health-diagnose.md](prompts/health-diagnose.md).
 
 **Cron (you, ROADMAP AM2):** `*/15 * * * * $HOME/.local/bin/agent-runner health tick`, separate from the build runner's line so

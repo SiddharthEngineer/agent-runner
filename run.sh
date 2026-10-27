@@ -6,8 +6,8 @@
 # 1. Upkeep: pick up your inbox replies, close notices of finished items, tag merged PRs (versions.py), release/advance the global preprod lock (preprod.sh tick).
 # 2. Health gate: while disk is critical (health.py gate), no Claude run starts; upkeep above still ran.
 # 3. `buildqueue.py next` picks a due `<repo>/<slug>` (honours pause, optional daily cap, attempt limit) or we exit.
-#    Then usage.py checks the Claude "Current session" usage (one tiny Haiku probe): at or above
-#    AGENT_MAX_SESSION_USAGE (default 70%) the queue pauses until the 5-hour window resets.
+#    Then usage.py checks Claude usage (one tiny Haiku probe; 5-hour and 7-day windows) against the session cap, daytime
+#    reserve, weekly cap and weekly pacing (`agent-runner usage status`); when one refuses, the queue pauses as long as it says.
 # 4. The repo comes from ~/.config/agent-runner/repos/<repo>.env (AGENT_REPO = its dev clone). Its agents/runner.toml and
 #    the plan are read from origin/<base>, never from a branch, and the config must pass config.py's checks.
 # 5. The agent runs `/implement <plans>/<slug>.md --unattended` in worktrees/<repo>/<slug> on branch agent/<slug>, with the
@@ -138,7 +138,7 @@ usage_gate() {  # exits unless a Claude run may start now
     case $? in
         0) ;;
         10) "${Q[@]}" pause "$(echo "$gate" | tail -n1)" >> "$STATE/runs.log"
-            say "$key: not started, $(echo "$gate" | head -n1); queue paused until the window resets"
+            say "$key: not started, $(echo "$gate" | head -n1); queue paused $(echo "$gate" | tail -n1)h"
             exit 0 ;;
         *) say "$key: not started, $(echo "$gate" | head -n1)"
            exit 0 ;;
@@ -749,14 +749,22 @@ if [ -n "$conflict_round" ] && python3 -c 'import json,sys; sys.exit(not json.lo
     "${Q[@]}" unset "$key" conflict
 fi
 
-# A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue.
+# A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue, for as long as the usage gate
+# says (a weekly-limit stop waits for the weekly reset), or 5 h if the gate allows a start or can't tell.
 if [ ! -f "$result" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$log"; then
     attempts=$("${Q[@]}" get "$key" attempts)
     "${Q[@]}" set "$key" status=queued "attempts=$((attempts - 1))"
     # Resume this session next time instead of redoing its work. An answer resume keeps `resume=1` (same session either way).
     [ -n "$session_id" ] && [ "$resume_why" != 1 ] && "${Q[@]}" set "$key" resume=limit
-    "${Q[@]}" pause 5 >> "$STATE/runs.log"
-    say "$key: usage limit hit, queue paused 5h"
+    gate=$(python3 "$HERE/usage.py" check 2>&1)
+    if [ $? = 10 ]; then
+        hours=$(echo "$gate" | tail -n1)
+        "${Q[@]}" pause "$hours" >> "$STATE/runs.log"
+        say "$key: usage limit hit, $(echo "$gate" | head -n1); queue paused ${hours}h"
+    else
+        "${Q[@]}" pause 5 >> "$STATE/runs.log"
+        say "$key: usage limit hit, queue paused 5h (usage gate: $(echo "$gate" | head -n1))"
+    fi
     exit 0
 fi
 "${Q[@]}" unset "$key" resume

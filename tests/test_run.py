@@ -3,6 +3,7 @@ preprod.sh stubbed; claude, gh and docker are stubs on PATH. Never the real stat
 
 import json
 import os
+from datetime import datetime, timezone
 import shutil
 import subprocess
 from pathlib import Path
@@ -64,7 +65,8 @@ def runner(tmp_path):
                                                 PY_STUB.format(name="versions", exit_env="STUB_VERSIONS_EXIT").splitlines()))
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
-    # claude: writes $STUB_RESULT (default ready, PR 9) to the result file and prints a session id; triage prints $STUB_TRIAGE.
+    # claude: writes $STUB_RESULT (default ready, PR 9) to the result file (or with $STUB_LIMIT, prints a usage-limit
+    # message instead) and prints a session id; triage prints $STUB_TRIAGE.
     write_stub(bin_dir / "claude", "claude",
                'if [[ "$*" == *", preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
@@ -78,7 +80,8 @@ def runner(tmp_path):
                'else\n'
                '  git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1 && echo merging >> "$STUB_LOG.merge"\n'
                '  ready=\'{"status": "ready", "pr": 9}\'\n'
-               '  printf "%s" "${STUB_RESULT:-$ready}" > "$AGENT_RESULT_FILE"\n'
+               '  if [ -n "${STUB_LIMIT:-}" ]; then echo "Claude usage limit reached"\n'
+               '  else printf "%s" "${STUB_RESULT:-$ready}" > "$AGENT_RESULT_FILE"; fi\n'
                'fi\n'
                'echo \'{"session_id": "s1"}\'\n')
     # gh: `pr checks` fails with $STUB_CHECKS (red; none: "no checks reported"; denied: no access to the check rollup);
@@ -799,6 +802,45 @@ def test_no_triage_when_usage_gate_refuses(runner):
     assert not any("You are triaging" in c for c in claude_calls(runner))
     assert runner.queue("get", key, "triaged").returncode != 0
     assert "blocked after 2 attempt(s)" in [c for c in runner.calls() if c.startswith("inbox notify")][0]
+
+
+def usage_stub(runner, code: int, out: str, then: tuple[int, str] | None = None) -> None:
+    """usage.py check: prints `out` and exits `code`; with `then`, only the first call does, and later calls use `then`."""
+    later = then or (code, out)
+    (runner.code / "usage.py").write_text(
+        "import os, sys\nf = os.environ['STUB_LOG'] + '.usage'\nn = os.path.exists(f)\nopen(f, 'a').write('x')\n"
+        f"code, out = {later!r} if n else {(code, out)!r}\nprint(out)\nsys.exit(code)\n")
+
+
+def paused_hours(runner) -> float:
+    until = json.loads((runner.state / "queue.json").read_text())["paused_until"]
+    return (datetime.fromisoformat(until) - datetime.now(timezone.utc)).total_seconds() / 3600
+
+
+@pytest.mark.parametrize(("code", "out", "hours", "says"), [
+    (10, "weekly cap: 95% ≥ 90%\n30.5", 30.5, "usage limit hit, weekly cap: 95% ≥ 90%; queue paused 30.5h"),
+    (11, "usage unknown: probe failed", 5, "usage limit hit, queue paused 5h (usage gate: usage unknown: probe failed)"),
+])
+def test_usage_limit_exit_pauses_for_the_gate(runner, code, out, hours, says):
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    usage_stub(runner, 0, "usage ok", then=(code, out))  # the implementer starts; the limit exit asks again
+    runner(STUB_LIMIT="1")
+    assert runner.status(key) == "queued", runner.runs_log()
+    assert paused_hours(runner) == pytest.approx(hours, abs=0.05)
+    assert says in runner.runs_log()
+
+
+def test_usage_gate_refusal_logs_rule_and_hours(runner):
+    runner.register("engineerfamily")
+    key = "engineerfamily/x"
+    runner.queue("add", key)
+    usage_stub(runner, 10, "weekly pacing: 52% > 46% allowed\n7.25")
+    runner()
+    assert not claude_calls(runner)
+    assert f"{key}: not started, weekly pacing: 52% > 46% allowed; queue paused 7.25h" in runner.runs_log()
+    assert paused_hours(runner) == pytest.approx(7.25, abs=0.05)
 
 
 def test_validator_blocked_is_triaged(runner):

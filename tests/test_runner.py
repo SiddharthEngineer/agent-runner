@@ -302,6 +302,7 @@ def test_planned_files_strips_suffixes_across_tasks(tmp_path):
 def _usage():
     spec = importlib.util.spec_from_file_location("agent_usage", AGENT / "usage.py")
     mod = importlib.util.module_from_spec(spec)
+    sys.modules["agent_usage"] = mod  # dataclasses look their module up
     spec.loader.exec_module(mod)
     return mod
 
@@ -325,6 +326,8 @@ def test_usage_missing_event_is_unknown():
 @pytest.mark.parametrize(("utilization", "code"), [(0.29, 0), (0.30, 10), (0.95, 10)])
 def test_usage_check_against_limit(monkeypatch, capsys, utilization, code):
     usage = _usage()
+    monkeypatch.setenv("AGENT_MAX_WEEKLY_USAGE", "0")  # the session cap alone; tests/test_usage.py has the rest
+    monkeypatch.setenv("AGENT_WEEKLY_PACE", "off")
     monkeypatch.setenv("AGENT_MAX_SESSION_USAGE", "30")
     monkeypatch.setattr(usage, "probe", lambda: [_rate_event(utilization)])
     assert usage.cmd_check() == code
@@ -335,6 +338,8 @@ def test_usage_check_against_limit(monkeypatch, capsys, utilization, code):
 @pytest.mark.parametrize(("utilization", "code"), [(0.69, 0), (0.70, 10)])
 def test_usage_check_default_limit_is_70(monkeypatch, utilization, code):
     usage = _usage()
+    monkeypatch.setenv("AGENT_MAX_WEEKLY_USAGE", "0")  # the session cap alone; tests/test_usage.py has the rest
+    monkeypatch.setenv("AGENT_WEEKLY_PACE", "off")
     monkeypatch.delenv("AGENT_MAX_SESSION_USAGE", raising=False)
     monkeypatch.setattr(usage, "probe", lambda: [_rate_event(utilization)])
     assert usage.cmd_check() == code
