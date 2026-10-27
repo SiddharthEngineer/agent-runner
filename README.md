@@ -39,6 +39,7 @@ Agents never push tags or run `install.sh`.
 | `queue` | `buildqueue.py` | Queue state, attempts, pause |
 | `gate` | `gate.py` | Risk gate: the plan's `**Risk:**` line plus diff checks decide auto-merge vs review; `--plan` checks a plan's size budget; `--config` takes a repo's `runner.toml` |
 | `inbox` | `inbox.py` | Questions and notices as issues in this repo, plus an ntfy push; `sweep` closes notices of finished items |
+| `intake` | `intake.py` | `scan [--repo N] [--dry-run]`: queue plans pushed with `**Queue:** yes` (see Queue from anywhere) |
 | `usage` | `usage.py` | Claude session-usage gate |
 | `config` | `config.py` | `check`/`get` a repo's `agents/runner.toml` (refuses prod commands) |
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
@@ -137,7 +138,8 @@ nothing when preprod is free or still held; `agent-runner preprod status` still 
 ## How a tick works (`run.sh`)
 Every 5 minutes, for every registered repo, with at most one Claude run at a time (a `flock` on `run.lock`):
 1. **Upkeep:** inbox replies (`inbox.py poll`), closing the notices of items that are `done` or `cancelled`
-   (`inbox.py sweep`), and the global preprod lock (`preprod.sh tick`).
+   (`inbox.py sweep`), queue intake for opted-in repos (`intake.py scan`, before the next-item pick so a plan pushed now
+   can start this tick), and the global preprod lock (`preprod.sh tick`).
 2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
 3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the session-usage gate.
 4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
@@ -267,8 +269,22 @@ GitHub Releases show what is on prod and preprod, for a repo whose `agents/runne
   shows the newest tag, the open pre-release and the newest full release. `--dry-run` works on `sync` and `promote`.
 - Only this runner code pushes tags or edits releases. Claude sessions never do.
 
+## Queue from anywhere (`intake.py`)
+A plan pushed to a repo's base branch (from a Claude cloud session, the GitHub web editor, anywhere) can queue itself:
+- **Opt in:** the repo's `agents/runner.toml` on the base branch has `[intake]` with `enabled = true` (your step, per repo).
+- **The line:** in the plan's header, `**Queue:** yes | no [at <ISO time with Z or an offset>] [after <repo>/<slug>]`,
+  e.g. `**Queue:** yes at 2026-10-27T02:00Z after agent-runner/x-1-config`. A bare `after` slug means the same repo.
+- **Every tick** runs `intake.py scan`: it fetches each registered repo and reads only `origin/<base>`, never a branch
+  or the working tree. `agent-runner intake scan [--repo N] [--dry-run]` runs it by hand.
+- **Intake once, local wins:** a plan is queued once, as `<repo>/<slug>` (`source: intake`). An existing item with that key,
+  queued by hand or earlier, is never touched, except that `**Queue:** no` cancels an intake item that hasn't started.
+- **Refusals are notices:** a plan over the size budget, without a `**Risk:**` line or unattended task, with an unreadable
+  line, or with an `after` that isn't queued gets one inbox notice per pushed version (`not queued: …`) and `intake: refused`
+  in `runs.log`. Fix and push it again, or queue it by hand.
+
 ## Day to day
-- Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`).
+- Plan with Claude (`/plan`), then queue it (`/schedule-build <slug> [at 02:00] [after <slug>]`), or, in a repo with intake,
+  push it with `**Queue:** yes`.
 - **Queue keys.** One queue serves every repo. Items are keyed `<repo>/<slug>` (`strelitzia/site-sso-3-proxy-mode`,
   `engineerfamily/ef-agents-layout`): `agent-runner queue add <slug> --repo engineerfamily` (`--repo` is required
   unless the slug is a full `<repo>/<slug>` key). `--after` takes `repo/slug`, so a plan can wait for a merge in another repo; a bare slug means the same repo.

@@ -43,7 +43,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A20 | Stage checklist at the top of every runner PR's description, refreshed each tick (all repos) | [runner-14-pr-checklist](plans/done/runner-14-pr-checklist.md) | agent-runner | ✅ #98 | - |
 | A21 | Runner tags every merge (patch) and keeps a `vX.Y` pre-release; `versions promote` on prod deploy (repos with `[release]`) | [runner-15-versions](plans/done/runner-15-versions.md) | agent-runner | ✅ #100 | A20 |
 | A22 | Queue intake, part 1: `[intake]` in runner.toml and `intake.py scan` (a pushed plan with `**Queue:** yes` gets queued) | [intake-1-scan](plans/done/intake-1-scan.md) | agent-runner | ✅ | - |
-| A23 | Queue intake, part 2: every tick runs it, `agent-runner intake`, `/plan` writes the line and works in cloud sessions | [intake-2-wiring](plans/intake-2-wiring.md) | agent-runner | ⏳ | A22 |
+| A23 | Queue intake, part 2: every tick runs it, `agent-runner intake`, `/plan` writes the line and works in cloud sessions | [intake-2-wiring](plans/done/intake-2-wiring.md) | agent-runner | ✅ | A22 |
 | A24 | Validator loop, part 1: up to 3 fix rounds per item that don't use attempts; blocked when rounds run out or findings come back unfixed | [validator-loop-1-rounds](plans/validator-loop-1-rounds.md) | agent-runner | ⏳ | A23 |
 | A25 | Validator loop, part 2: re-reviews on Sonnet, scoped to the previous findings and the fix diff (first review stays Opus) | [validator-loop-2-rereview](plans/validator-loop-2-rereview.md) | agent-runner | ⏳ | A24 |
 | A26 | Validator loop, part 3: a cost line per Claude run in `runs.log`, `agent-runner usage report`, text-first preprod checks | [validator-loop-3-costs](plans/validator-loop-3-costs.md) | agent-runner | ⏳ | A25 |
@@ -69,7 +69,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM7 | After A19 merges: `agent-runner release --install`, so the runner uses it (engineerfamily E3's validation benefits; E3 doesn't need it to pass). Done: A19 shipped in v0.2.5; v0.2.8 is installed. | ☑ |
 | AM8 | After A20 and A21 merge: `agent-runner release --install`. Until then PRs show no status block and nothing is tagged. Done: A20 and A21 shipped in v0.2.6; v0.2.8 is installed. | ☑ |
 | AM9 | Once, after AM8 and engineerfamily E11 merge: `agent-runner versions promote engineerfamily v1.3.3` (what prod runs). The next tick tags main `v1.4.0` and opens the `v1.4` pre-release. Done 2026-10-23: `v1.4` is the Latest release (on v1.4.3), and the `v1.5` pre-release opened 2026-10-26. | ☑ |
-| AM10 | After A23 merges: `agent-runner release --install`, then opt each repo in by adding `[intake]` with `enabled = true` to its `agents/runner.toml` on the base branch (agent-runner first, for the Human test steps in [intake-2-wiring](plans/intake-2-wiring.md); then engineerfamily and Strelitzia). | ☐ |
+| AM10 | After A23 merges: `agent-runner release --install`, then opt each repo in by adding `[intake]` with `enabled = true` to its `agents/runner.toml` on the base branch (agent-runner first, for the Human test steps in [intake-2-wiring](plans/done/intake-2-wiring.md); then engineerfamily and Strelitzia). | ☐ |
 
 ## Decisions (current)
 - 2026-10-22 (user): status visible without Claude or the VPS: a stage checklist on every runner PR (A20), and per-merge patch tags with a `vX.Y` pre-release promoted to a full release on each prod deploy (A21, engineerfamily E11). The runner tags; prod stays manual (`make prod-release`).

@@ -1,5 +1,5 @@
 # Plan: Queue intake from GitHub, part 2: every tick runs it, CLI and docs
-**Status:** ❌ Not started
+**Status:** ✅ Complete (2026-10-27)
 **Risk:** low (one upkeep line in run.sh, the CLI and docs; intake stays off until a repo's runner.toml opts in; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** intake-1-scan
 
@@ -24,7 +24,7 @@ hand. `/plan` writes the `**Queue:**` line and works in a cloud session with no 
 **What:** the upkeep line above (never fails the tick); `agent-runner intake scan [--repo N] [--dry-run]`.
 **Validate:** `uv run --with pytest pytest tests/test_run.py -q` → passes, with a new test: a repo with `[intake] enabled = true` and a
 plan with `**Queue:** yes` on origin → after one `run.sh` tick, `queue.json` has the item and `runs.log` has `intake: queued`.
-**Status:** ❌
+**Status:** ✅ (2026-10-27, 4b88d8f)
 
 ### Task 2: `/plan` and `/schedule-build`
 **Runs:** unattended
@@ -35,7 +35,7 @@ Step 5: in a repo with `[intake] enabled`, pushing the plan with `**Queue:** yes
 use `after`. `/schedule-build` says it is still the way to queue on the VPS directly, and for repos without intake.
 **Validate:** `agent-runner check-commands agent-runner` (or `python3 commands_diff.py agent-runner`) runs without error;
 `grep -n "Queue:" .claude/commands/plan.md` shows the template line.
-**Status:** ❌
+**Status:** ✅ (2026-10-27, 8d04f66)
 
 ### Task 3: Docs
 **Runs:** unattended
@@ -43,7 +43,7 @@ use `after`. `/schedule-build` says it is still the way to queue on the VPS dire
 **What:** README: `intake` row in the CLI table; tick step 1 mentions intake; a short "Queue from anywhere" section (the `**Queue:**`
 grammar, `[intake] enabled`, intake once / local wins, refusals as notices, only `origin/<base>` is read). AGENTS.md: `intake.py` row in the Map.
 **Validate:** `grep -c "intake" README.md AGENTS.md` → both non-zero; `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ (2026-10-27, ccc7ad4)
 
 ## Validation
 - `scripts/validate.sh` passes.

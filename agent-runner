@@ -13,6 +13,7 @@ usage: agent-runner <command> [args...]
   queue    buildqueue.py   queue state, attempts, pause
   gate     gate.py         risk gate; --plan checks a plan's size budget
   inbox    inbox.py        inbox issues and ntfy
+  intake   intake.py       queue plans pushed with **Queue:** yes: intake scan [--repo NAME] [--dry-run]
   usage    usage.py        Claude session-usage gate
   config   config.py       runner.toml check/get
   health   health.py       VPS health check and cleanup
@@ -31,7 +32,7 @@ USAGE
 cmd=$1; shift
 case $cmd in
     queue) exec python3 "$HERE/buildqueue.py" "$@" ;;
-    gate|inbox|usage|config|health|versions) exec python3 "$HERE/$cmd.py" "$@" ;;
+    gate|inbox|intake|usage|config|health|versions) exec python3 "$HERE/$cmd.py" "$@" ;;
     preprod|run|release|install) exec "$HERE/$cmd.sh" "$@" ;;
     check-commands) exec python3 "$HERE/commands_diff.py" "$@" ;;
     version)

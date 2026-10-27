@@ -8,6 +8,10 @@ Cron runs `agent-runner run` every 5 minutes. It
 starts Claude only when an item is due, there's no pause, the item has used fewer than 2 attempts, and the Claude
 "Current session" usage is below `AGENT_MAX_SESSION_USAGE` (default 70%; above it the queue pauses until the window resets).
 
+A repo with `[intake] enabled = true` in its `agents/runner.toml` also queues a plan pushed to its base branch with
+`**Queue:** yes` (`agent-runner intake scan`, every tick; see `/plan` step 5). This command is still the way to queue on the VPS
+directly, to queue a plan without a `**Queue:**` line, and for repos without intake. An item queued here wins over intake.
+
 Arguments: `$ARGUMENTS`
 
 - **`list`** (or no arguments): `agent-runner queue list`, plus `agent-runner preprod status`. Summarize it for the user.
