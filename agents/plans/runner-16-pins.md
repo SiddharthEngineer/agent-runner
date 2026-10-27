@@ -50,7 +50,7 @@ for each `merged` line, `versions_sync <parent>` and the `preprod_follow` logic 
 repo name; the lock rule is unchanged). Every failure is one `runs.log` line and never stops the tick.
 **Validate:** `uv run --with pytest pytest tests/test_pins.py tests/test_run.py -q`: green → merged and the parent's preprod
 redeployed; red → one notice; a PR that also edits another file → not merged; a dry run calls neither.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 (8ccb481)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -59,7 +59,7 @@ redeployed; red → one notice; a PR that also edits another file → not merged
 no review, `hold`, only forward to the newest tag, preprod follows); the tick list in "How a tick works" gains the step;
 the CLI table gets `pins`. AGENTS.md Map row. ROADMAP: A29 row.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
