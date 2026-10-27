@@ -688,6 +688,18 @@ def test_review_after_a_user_fix_is_a_scoped_rereview_of_the_ask(runner, tmp_pat
     assert "validator (re-review, the user's /fix comment, sonnet) start for PR #9" in runner.runs_log()
 
 
+def test_rereview_of_a_round_with_a_user_ask_checks_both(runner, tmp_path):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("changes", "fix the bug"))
+    runner.queue("requeue", key, "--fix", "--stage", "user", "--note", "sort by email")
+    runner.queue("set", key, "status=awaiting-review")
+    push_pr_head(tmp_path)
+    runner(STUB_REVIEW=verdict("approve"))
+    rereview = [c for c in claude_calls(runner) if "You are the validator" in c][-1]
+    assert "Re-review (round 1 of 3)" in rereview
+    assert "a.py:1: bug" in rereview and "The user asked on the PR: sort by email" in rereview
+
+
 def push_pr_head(tmp_path, amend=False, name="engineerfamily"):
     """A new head for PR #9: a fix commit on top (the implementer's fix round), or with amend, a rewritten one (a force-push)."""
     work, origin = tmp_path / f"{name}-work", tmp_path / f"{name}.git"

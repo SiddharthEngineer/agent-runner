@@ -328,11 +328,7 @@ def cmd_requeue(args: argparse.Namespace) -> int:
 def fix_round(data: dict, it: dict, args: argparse.Namespace) -> int:
     """The validator (or the user, `--stage user`) asked for changes: one more fix round, or blocked when the rounds ran out or the findings are stuck."""
     if args.stage == "user":
-        # The user decided it: no round or attempt used, and the rounds and stuck checks don't apply.
-        it["notes"].append(f"User /fix ({iso(now())}): {args.note}")
-        it.update(status="queued", fix_pending=1, resume=1, not_before=iso(now()), updated=iso(now()))
-        for stale in ("last_unresolved", "blocked_why", "rerun", "preprod_verdict", "preprod_attempts", "review_attempts"):
-            it.pop(stale, None)
+        user_fix(it, args.note)
         save(data)
         print(it["status"])
         return 0
@@ -352,6 +348,24 @@ def fix_round(data: dict, it: dict, args: argparse.Namespace) -> int:
     save(data)
     print(it["status"])
     return 0
+
+
+USER_ALSO = "\nAlso, the user asked on the PR: "  # run.sh's last_round splits on it
+
+
+def user_fix(it: dict, note: str) -> None:
+    """The user's `/fix` PR comment (prcomments.py): no round or attempt used, and the rounds and stuck checks don't apply."""
+    last = it["notes"][-1] if it["notes"] else ""
+    if it.get("status") == "queued" and it.get("fix_pending") and re.match(r"(Review|Preprod) validator, round ", last):
+        # A validator round that hasn't run yet: the fix run does both, and the re-review checks both.
+        it["notes"][-1] = f"{last}{USER_ALSO}{note}"
+    else:
+        it["notes"].append(f"User /fix ({iso(now())}): {note}")
+        # A conflict round would only merge the base and skip the ask; the gate finds a conflict that's still there.
+        for stale in ("last_unresolved", "blocked_why", "rerun", "conflict", "preprod_verdict", "preprod_attempts",
+                      "review_attempts"):
+            it.pop(stale, None)
+    it.update(status="queued", fix_pending=1, resume=1, not_before=iso(now()), updated=iso(now()))
 
 
 def unresolved_list(text: str) -> list:

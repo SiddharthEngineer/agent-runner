@@ -507,9 +507,10 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
         summary="The preprod validator wrote no verdict $tries times. Log: $plog (on the VPS)."
     fi
     "${Q[@]}" set "$key" "preprod_verdict=$verdict"
-    # The validator's checklist comment: the newest comment by the runner's account since the validator started.
+    # The validator's checklist comment: the newest comment by the runner's account since the validator started (not the
+    # user's `/fix` or prcomments.py's reply: the user posts as the same account).
     comment=$(gh pr view "$pr" --repo "$GH_REPO" --json comments \
-        -q "[.comments[] | select(.viewerDidAuthor and .createdAt >= \"$since\")] | last | .url // empty" 2>/dev/null)
+        -q "[.comments[] | select(.viewerDidAuthor and .createdAt >= \"$since\" and (.body | test(\"^(/fix|Queued: )\") | not))] | last | .url // empty" 2>/dev/null)
     "${Q[@]}" unset "$key" preprod_comment
     [ -n "$comment" ] && "${Q[@]}" set "$key" "preprod_comment=$comment"
     "${Q[@]}" set "$key" "preprod_summary=$summary"
@@ -568,6 +569,7 @@ fi
 last_round() {
     "${Q[@]}" get "$key" notes 2>/dev/null | python3 -c '
 import json, re, sys
+ALSO = "\nAlso, the user asked on the PR: "
 notes = [n for n in json.load(sys.stdin) if re.match(r"(Review|Preprod) validator, round \d+/\d+|User /fix \(", n)]
 if notes and notes[-1].startswith("User /fix ("):
     print("user", "-", notes[-1].split("): ", 1)[-1], sep="\n")
@@ -576,6 +578,7 @@ elif notes:
     m = re.match(r"(Review|Preprod) validator, round (\d+)/(\d+) \([^)]*\): ", note)
     body = note[m.end():] if m else note
     found = []
+    body, _, asked = body.partition(ALSO)  # a user `/fix` made while this round was still queued (buildqueue.py)
     if "\nFindings: " in body:
         try:
             found = [str(x) for x in json.loads(body.split("\nFindings: ", 1)[1])]
@@ -583,6 +586,8 @@ elif notes:
             pass
     elif "\nFailed steps:\n" in body:
         found = [line.removeprefix("- ") for line in body.split("\nFailed steps:\n", 1)[1].splitlines() if line.strip()]
+    if asked:
+        found = (found or [body]) + [f"The user asked on the PR: {asked}"]
     r = re.match(r"\S+ validator, round (\d+)/(\d+)", note)
     print(r[1], r[2], sep="\n")
     print("\n".join(found or [body]))' 2>/dev/null

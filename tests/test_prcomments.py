@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -119,6 +120,18 @@ def test_running_done_and_prless_items_are_skipped(cli):
     cli("scan", comments=[comment("/fix x")])
     assert cli.calls() == []
     assert cli.items()["engineerfamily/r"]["status"] == "running"
+
+
+def test_a_fix_made_during_a_run_that_merged_gets_the_reply(cli):
+    recent = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    cli.queue({"engineerfamily/x": item(status="done", updated=recent),
+               "engineerfamily/o": item(status="cancelled", updated=recent, pr=10)})
+    cli("scan", comments=[comment("/fix x")], state_="MERGED")
+    assert "gh pr comment 9 --repo o/engineerfamily --body This PR is merged; plan a follow-up instead." in replies(cli)
+    assert cli.items()["engineerfamily/x"]["status"] == "done"
+    cli.queue({"engineerfamily/o": item(status="cancelled", updated=recent, pr=10)})
+    cli("scan", comments=[comment("/fix x")])  # a cancelled item whose PR is still open: nothing to send back
+    assert len(replies(cli)) == 2 and cli.items()["engineerfamily/o"]["status"] == "cancelled"
 
 
 def test_gh_failure_logs_one_line_and_leaves_the_item(cli):

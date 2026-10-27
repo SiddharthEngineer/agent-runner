@@ -947,3 +947,21 @@ def test_user_fix_uses_no_round_or_attempt_and_unblocks(q, monkeypatch):
     q("start", "plan-a")
     assert q("get", "plan-a", "run_kind").stdout.strip() == "fix"
     assert q("get", "plan-a", "attempts").stdout.strip() == "1"
+
+
+def test_user_fix_on_a_pending_validator_round_joins_its_note(q):
+    _ready_for_review(q)
+    q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "Validator review asks for changes: s\nFindings: [\"a.py:1\"]")
+    q("requeue", "plan-a", "--fix", "--stage", "user", "--note", "sort by email")
+    notes = json.loads(q("get", "plan-a", "notes").stdout)
+    assert len(notes) == 1 and notes[0].startswith("Review validator, round 1/3 (")
+    assert notes[0].endswith('Findings: ["a.py:1"]\nAlso, the user asked on the PR: sort by email')
+    assert q("get", "plan-a", "fix_rounds").stdout.strip() == "1"
+
+
+def test_user_fix_replaces_a_pending_conflict_round(q):
+    _ready_for_review(q)
+    q("requeue", "plan-a", "--conflict", "--note", "conflicts")
+    assert q("requeue", "plan-a", "--fix", "--stage", "user", "--note", "x").stdout.strip() == "queued"
+    assert q("get", "plan-a", "conflict").returncode == 1
+    assert q("get", "plan-a", "fix_pending").stdout.strip() == "1"

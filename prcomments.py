@@ -8,22 +8,19 @@ A comment counts when the runner's own account wrote it (`viewerDidAuthor`: the 
 starts with `/fix` at column 0 (validators post as the same account and never start a comment that way). New ones (after the
 item's `fix_comment_at`, default its `added`) re-queue the item as a user fix round (`buildqueue.py requeue --fix --stage
 user`: no round, no attempt), with the text after `/fix` as the note, and get a "Queued" reply. On a merged or closed PR they
-get one reply saying to plan a follow-up. A `gh` failure logs one line and leaves the item alone.
+get one reply saying to plan a follow-up (also for a day after an item is done or cancelled: a /fix made during its run). A `gh` failure logs one line and leaves the item alone.
 Standard library only.
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
-import io
 import json
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import buildqueue  # noqa: E402
@@ -32,17 +29,15 @@ import prstatus  # noqa: E402
 
 # Not `running`: a /fix written during a run is picked up once the run has finished (its time is after `fix_comment_at`).
 STATUSES = ("awaiting-review", "awaiting-preprod", "on-preprod", "blocked", "queued")
+# A run can also end in a merge: for a day after, a /fix on a finished item still gets its "plan a follow-up" reply.
+FINISHED_STATUSES = ("done", "cancelled")
 FIX = re.compile(r"/fix(?:\s|$)")
 QUEUED = "Queued: the implementer picks this up on the next free tick."
-FINISHED = "This PR is {state}; plan a follow-up instead."
+FINISHED_REPLY = "This PR is {state}; plan a follow-up instead."
 
 
 def log(msg: str) -> None:
     print(f"prcomments: {msg}")
-
-
-def gh(*args: str) -> str:
-    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, timeout=30).stdout
 
 
 def when(stamp: str) -> datetime:
@@ -63,7 +58,7 @@ def scan_item(key: str, it: dict, *, dry_run: bool) -> None:
         return  # prstatus.py sync logs this every tick already
     pr, gh_repo = str(it["pr"]), cfg.repo.github
     try:
-        view = json.loads(gh("pr", "view", pr, "--repo", gh_repo, "--json", "state,comments"))
+        view = json.loads(prstatus.gh("pr", "view", pr, "--repo", gh_repo, "--json", "state,comments"))
         fixes = new_fixes(view.get("comments") or [], it.get("fix_comment_at") or it["added"])
     except (subprocess.SubprocessError, OSError, ValueError, KeyError, TypeError) as exc:
         log(f"{key}: gh pr view {gh_repo}#{pr} failed: {str(exc).splitlines()[0] if str(exc) else type(exc).__name__}")
@@ -73,13 +68,15 @@ def scan_item(key: str, it: dict, *, dry_run: bool) -> None:
     newest = fixes[-1]["createdAt"]
     state = view.get("state", "")
     if state in ("MERGED", "CLOSED"):
-        reply = FINISHED.format(state=state.lower())
+        reply = FINISHED_REPLY.format(state=state.lower())
         if dry_run:
             log(f"{key}: would reply on {gh_repo}#{pr}: {reply}")
             return
         set_fields(key, fix_comment_at=newest)
         comment(key, gh_repo, pr, reply)
         return
+    if it.get("status") not in STATUSES:
+        return  # a finished item whose PR is still open: nothing to send back
     note = "\n\n".join(FIX.sub("", c["body"], count=1).strip() or "(no text)" for c in fixes)
     if dry_run:
         log(f"{key}: would re-queue for {len(fixes)} /fix comment(s) on {gh_repo}#{pr}: {note.splitlines()[0][:140]}")
@@ -91,13 +88,12 @@ def scan_item(key: str, it: dict, *, dry_run: bool) -> None:
         return
     was = it["status"]
     it["fix_comment_at"] = newest
-    quiet = SimpleNamespace(stage="user", note=note, unresolved=[])
-    with contextlib.redirect_stdout(io.StringIO()):
-        buildqueue.fix_round(data, it, quiet)  # saves; prints the new status
+    buildqueue.user_fix(it, note)
+    buildqueue.save(data)
     log(f"{key}: /fix on {gh_repo}#{pr}, re-queued from {was}")
     if was == "awaiting-preprod":
         try:
-            gh("pr", "edit", pr, "--repo", gh_repo, "--remove-label", "awaiting-preprod")
+            prstatus.gh("pr", "edit", pr, "--repo", gh_repo, "--remove-label", "awaiting-preprod")
         except (subprocess.SubprocessError, OSError):
             pass  # only the label: preprod.sh deploys by queue status
     comment(key, gh_repo, pr, QUEUED)
@@ -111,14 +107,22 @@ def set_fields(key: str, **fields: str) -> None:
 
 def comment(key: str, gh_repo: str, pr: str, body: str) -> None:
     try:
-        gh("pr", "comment", pr, "--repo", gh_repo, "--body", body)
+        prstatus.gh("pr", "comment", pr, "--repo", gh_repo, "--body", body)
     except (subprocess.SubprocessError, OSError) as exc:
         log(f"{key}: gh pr comment {gh_repo}#{pr} failed: {type(exc).__name__}")
 
 
+def due(it: dict) -> bool:
+    if not it.get("pr"):
+        return False
+    if it.get("status") in FINISHED_STATUSES:
+        return when(it["updated"]) > buildqueue.now() - timedelta(days=1)
+    return it.get("status") in STATUSES
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     for key, it in sorted(buildqueue.load()["items"].items()):
-        if not it.get("pr") or it.get("status") not in STATUSES:
+        if not due(it):
             continue
         try:
             scan_item(key, it, dry_run=args.dry_run)
