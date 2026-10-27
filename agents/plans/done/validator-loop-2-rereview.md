@@ -1,5 +1,5 @@
 # Plan: Validator loop, part 2: a scoped Sonnet re-review after each fix
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (a new prompt and run.sh wiring; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** validator-loop-1-rounds
 
@@ -33,7 +33,7 @@ code the fix didn't touch, unless validation fails. Post one `gh pr review --com
 {max_rounds})`. Result: `{{"verdict", "summary", "findings": [new or still-open, file:line], "unresolved": [previous findings
 not fixed]}}`. `approve` only when every previous finding is fixed, validation passes and the fix adds no defect.
 **Validate:** `uv run --with pytest pytest tests/test_review.py -q` passes, with a placeholder test for the new prompt.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (f4ae162)
 
 ### Task 2: run.sh picks the prompt and model
 **Runs:** unattended
@@ -45,7 +45,7 @@ round note. Otherwise (first review, a force-push, no sha): today's prompt on Op
 `requeue --fix --unresolved`. `runs.log` says `validator (re-review, round N/M, sonnet)` or `validator (review, opus)`.
 **Validate:** `scripts/validate.sh` passes; new tests: the first review runs Opus with review-pr.md; after a `changes` and a fix,
 the next review runs Sonnet with `Re-review (round 1 of 3)` and the `since_sha`; a head that isn't a descendant falls back to Opus.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (95066ec)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -53,7 +53,7 @@ the next review runs Sonnet with `Re-review (round 1 of 3)` and the `since_sha`;
 **What:** README "Validator, review stage": first review Opus + `/code-review`; re-reviews Sonnet, scoped to the previous
 findings and the fix diff; `AGENT_REREVIEW_MODEL` overrides. AGENTS.md Map: the new prompt. ROADMAP: A25 ✅ with the PR.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (e8c0522)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
