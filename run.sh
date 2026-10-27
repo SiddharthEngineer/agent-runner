@@ -138,7 +138,7 @@ usage_gate() {  # exits unless a Claude run may start now
     case $? in
         0) ;;
         10) "${Q[@]}" pause "$(echo "$gate" | tail -n1)" >> "$STATE/runs.log"
-            say "$key: not started, $(echo "$gate" | head -n1); queue paused until the window resets"
+            say "$key: not started, $(echo "$gate" | head -n1); queue paused $(echo "$gate" | tail -n1)h"
             exit 0 ;;
         *) say "$key: not started, $(echo "$gate" | head -n1)"
            exit 0 ;;
@@ -749,14 +749,22 @@ if [ -n "$conflict_round" ] && python3 -c 'import json,sys; sys.exit(not json.lo
     "${Q[@]}" unset "$key" conflict
 fi
 
-# A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue.
+# A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue, for as long as the usage gate
+# says (a weekly-limit stop waits for the weekly reset), or 5 h if the gate allows a start or can't tell.
 if [ ! -f "$result" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$log"; then
     attempts=$("${Q[@]}" get "$key" attempts)
     "${Q[@]}" set "$key" status=queued "attempts=$((attempts - 1))"
     # Resume this session next time instead of redoing its work. An answer resume keeps `resume=1` (same session either way).
     [ -n "$session_id" ] && [ "$resume_why" != 1 ] && "${Q[@]}" set "$key" resume=limit
-    "${Q[@]}" pause 5 >> "$STATE/runs.log"
-    say "$key: usage limit hit, queue paused 5h"
+    gate=$(python3 "$HERE/usage.py" check 2>&1)
+    if [ $? = 10 ]; then
+        hours=$(echo "$gate" | tail -n1)
+        "${Q[@]}" pause "$hours" >> "$STATE/runs.log"
+        say "$key: usage limit hit, $(echo "$gate" | head -n1); queue paused ${hours}h"
+    else
+        "${Q[@]}" pause 5 >> "$STATE/runs.log"
+        say "$key: usage limit hit, queue paused 5h (usage gate: $(echo "$gate" | head -n1))"
+    fi
     exit 0
 fi
 "${Q[@]}" unset "$key" resume

@@ -83,7 +83,7 @@ or `Held by weekly pacing until ~2026-10-27 08:00 UTC.` The `agent-runner` help 
 **Validate:** `uv run --with pytest pytest tests/test_usage.py -q` → passes; a test sets `HOME` to a temp dir with
 `.config/agent-runner/env` holding `AGENT_MAX_WEEKLY_USAGE=20` and a stubbed probe at 7-day 0.32, and asserts `status`
 prints the weekly cap as ❌ and the holding rule.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 (645e7df)
 
 ### Task 3: `run.sh` pause messages and usage-limit exits
 **Runs:** unattended
@@ -93,7 +93,7 @@ After a usage-limit exit (`run.sh:618-627`), run `usage.py check`: on exit 10 pa
 pauses until the weekly reset, not 5 h), otherwise pause 5 h as today; log which.
 **Validate:** `uv run --with pytest pytest tests/test_run.py -q` → passes, with tests: a stubbed `usage.py` returning exit 10 and
 `30.5` after a usage-limit exit pauses the queue ~30.5 h; one returning 11 pauses 5 h.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ### Task 4: Docs
 **Runs:** unattended
