@@ -36,7 +36,8 @@ UPDATED_RE = re.compile(r" · updated [^\n]*")
 FINAL_DAYS = 14
 DONE, RUN, WAIT, FAIL, HOLD, SKIP = "✅", "🔁", "⏳", "❌", "⏸", "➖"
 NAMES = ("Implementer", "Validator review", "Preprod deploy", "Preprod checks", "Merge")
-NOTE_PREFIX = re.compile(r"^(Validator \([^)]*\): )?(Validator review|Preprod checks) of PR #\d+ [^:]*: ")
+NOTE_PREFIX = re.compile(r"^(Validator \([^)]*\): |(Review|Preprod) validator, [^(]*\([^)]*\): )?"
+                         r"(Validator review|Preprod checks) of PR #\d+ [^:]*: ")
 
 
 def first_sentence(text: str | None, limit: int = 140) -> str:
@@ -78,6 +79,9 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         else "low" if status == "done" else None)
     attempt = item.get("attempts", 0) + (status == "queued")
     attempt_txt = f"attempt {attempt}/{max_attempts}"
+    # A validator's `changes` re-run is a fix round (buildqueue `requeue --fix`), counted apart from attempts.
+    rerun_txt = (f"fix round {item['fix_rounds']}/{buildqueue.MAX_FIX_ROUNDS}" if rerun and item.get("fix_rounds")
+                 else attempt_txt)
     # A question links its agent-question issue (`issue`, inbox.py ask); a block links the newest notice (`notice`, run.sh).
     issue = issue_link(item.get("issue") if status in ("waiting-answer", "question") else item.get("notice"))
 
@@ -180,12 +184,12 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
     elif status in ("queued", "running"):
         doing = "re-run queued" if status == "queued" else "fixing it now"
         if rerun == "review":
-            stages[1] = [RUN, f"asked for changes: {rerun_note}; implementer {doing}, {attempt_txt}"]
-            head = f"{RUN} Validator review: asked for changes ({rerun_note}); implementer {doing}, {attempt_txt}"
+            stages[1] = [RUN, f"asked for changes: {rerun_note}; implementer {doing}, {rerun_txt}"]
+            head = f"{RUN} Validator review: asked for changes ({rerun_note}); implementer {doing}, {rerun_txt}"
         elif rerun == "preprod":
             deployed()
-            stages[3] = [RUN, f"checks failed: {rerun_note}; implementer {doing}, {attempt_txt}"]
-            head = f"{RUN} Preprod checks failed ({rerun_note}); implementer {doing}, {attempt_txt}"
+            stages[3] = [RUN, f"checks failed: {rerun_note}; implementer {doing}, {rerun_txt}"]
+            head = f"{RUN} Preprod checks failed ({rerun_note}); implementer {doing}, {rerun_txt}"
         else:
             stages[0] = [RUN, f"{steps}; re-run {'queued' if status == 'queued' else 'running'}, {attempt_txt}"]
             head = f"{RUN} Implementer re-run {'queued' if status == 'queued' else 'running'}, {attempt_txt}"
@@ -199,7 +203,9 @@ def render(item: dict, *, has_preprod: bool, human_steps: int, now: datetime, ba
         else:
             why = {0: summary, 1: item.get("review_summary"), 2: item.get("deploy_failed"),
                    3: item.get("preprod_summary") or (notes[-1] if rerun == "preprod" and notes else ""), 4: summary}[at]
-            why = f"blocked: {first_sentence(why)}" if why else "blocked"
+            blocked = {"rounds": f"blocked (rounds, {item.get('fix_rounds', 0)}/{buildqueue.MAX_FIX_ROUNDS} fix rounds used)",
+                       "stuck": "blocked (stuck, the same findings came back unfixed)"}.get(item.get("blocked_why", ""), "blocked")
+            why = f"{blocked}: {first_sentence(why)}" if why else blocked
         detail = why + (f" ({issue})" if issue else "")
         stages[at] = [HOLD, detail]
         head = f"{HOLD} {NAMES[at]}: {detail}"

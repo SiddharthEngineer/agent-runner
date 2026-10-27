@@ -66,7 +66,7 @@ fourth `changes` blocks with the rounds notice; a resume after `changes` prompts
 **What:** when `rerun` is set, the stage line and first line say `fix round N/M` (from `fix_rounds`, `buildqueue.MAX_FIX_ROUNDS`)
 instead of `attempt N/2`. A rounds/stuck block shows ⏸ with `blocked_why`. Other text unchanged.
 **Validate:** `uv run --with pytest pytest tests/test_prstatus.py -q` passes; `test_review_changes_rerun` expects "fix round 1/3".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 4: docs and tracking
 **Runs:** unattended
