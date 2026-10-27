@@ -59,16 +59,38 @@ def test_low_tier_not_merged_holds_at_merge():
 
 
 def test_review_changes_rerun():
-    item = dict(status="queued", tier="review", rerun="review", review_verdict="changes",
+    item = dict(status="queued", tier="review", rerun="review", review_verdict="changes", attempts=1, fix_rounds=1,
                 review_summary="Task 3 permissions are too wide. Also a nit.",
-                notes=["Validator (x): Validator review of PR #9 asks for changes: Task 3 permissions are too wide. Also"])
+                notes=["Review validator, round 1/3 (x): Validator review of PR #9 asks for changes: Task 3 permissions"])
     out = lines(block(**item))
     assert out[1].startswith("**Runner status:** 🔁 Validator review: asked for changes (Task 3 permissions are too wide); "
-                             "implementer re-run queued, attempt 2/2")
+                             "implementer re-run queued, fix round 1/3")
     assert out[2].startswith("1. ✅")
     assert out[3].startswith("2. 🔁 Validator reviews the code: asked for changes: Task 3 permissions are too wide;")
-    running = lines(block(**{**item, "status": "running", "attempts": 2}))
-    assert "implementer fixing it now, attempt 2/2" in running[1]
+    assert out[3].endswith("fix round 1/3")
+    running = lines(block(**{**item, "status": "running"}))
+    assert "implementer fixing it now, fix round 1/3" in running[1]
+
+
+def test_fix_rounds_block_at_preprod_strips_the_note_prefix():
+    out = lines(block(status="blocked", tier="review", review_verdict="approve", rerun="preprod", fix_rounds=3,
+                      blocked_why="rounds",
+                      notes=["Preprod validator, blocked, rounds (x): Preprod checks of PR #9 failed: the page is blank."]))
+    assert out[1].startswith("**Runner status:** ⏸ Preprod checks: blocked (rounds, 3/3 fix rounds used): the page is blank")
+
+
+def test_rerun_without_fix_rounds_shows_the_attempt():
+    out = lines(block(status="queued", rerun="review", review_summary="x", attempts=1))
+    assert "re-run queued, attempt 2/2" in out[1]
+
+
+@pytest.mark.parametrize("why, text", [("rounds", "blocked (rounds, 3/3 fix rounds used): Task 3 is wrong"),
+                                       ("stuck", "blocked (stuck, the same findings came back unfixed): Task 3 is wrong")])
+def test_fix_rounds_block_holds_at_the_review(why, text):
+    out = lines(block(status="blocked", tier="review", rerun="review", review_verdict="changes", fix_rounds=3,
+                      blocked_why=why, review_summary="Task 3 is wrong. More."))
+    assert out[1].startswith(f"**Runner status:** ⏸ Validator review: {text}")
+    assert out[3].startswith(f"2. ⏸ Validator reviews the code: {text}")
 
 
 def test_rerun_note_is_cut_to_140():
@@ -95,10 +117,11 @@ def test_preprod_approved_not_merged():
 
 
 def test_preprod_changes_rerun():
-    out = lines(block(status="queued", tier="review", review_verdict="approve", rerun="preprod",
-                      notes=["Validator (x): Preprod checks of PR #9 failed: the page is blank.\nFailed steps:\n- 3"]))
+    out = lines(block(status="queued", tier="review", review_verdict="approve", rerun="preprod", attempts=1, fix_rounds=2,
+                      notes=["Preprod validator, round 2/3 (x): Preprod checks of PR #9 failed: the page is blank.\n"
+                             "Failed steps:\n- 3"]))
     assert out[1].startswith("**Runner status:** 🔁 Preprod checks failed (the page is blank); implementer re-run queued,"
-                             " attempt 2/2")
+                             " fix round 2/3")
     assert out[3].startswith("2. ✅") and out[4].startswith("3. ✅") and out[5].startswith("4. 🔁")
 
 

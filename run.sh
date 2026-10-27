@@ -257,6 +257,21 @@ $diagnosis"
     fi
 }
 
+# fix_blocked <pr> <text> [<result file>]: `requeue --fix` blocked the item (fix rounds used up, or the same findings came back unfixed).
+fix_blocked() {
+    local why unresolved title
+    why=$("${Q[@]}" get "$key" blocked_why 2>/dev/null)
+    unresolved=$("${Q[@]}" get "$key" last_unresolved 2>/dev/null)
+    if [ "$why" = stuck ]; then
+        title="blocked: the same findings came back unfixed"
+    else
+        title="blocked: validator still asks for changes after $("${Q[@]}" get "$key" fix_rounds 2>/dev/null || echo 0) rounds"
+    fi
+    say "$key: $title (PR #$1)"
+    notify_blocked "$title" "PR https://github.com/$GH_REPO/pull/$1. $2
+Unresolved: ${unresolved:-[]}" "${3:-}"
+}
+
 # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed,
 # 4 = conflicts with $BASE (files in $conflict_files). GitHub runs no CI on a conflicting PR, so that comes first: the base
 # is merged into the PR when it merges cleanly, and the CI wait is then on the new head.
@@ -508,14 +523,15 @@ ${left:-nothing left}"
                 notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
             fi ;;
         changes)
-            "${Q[@]}" requeue "$key" --note "Preprod checks of PR #$pr failed: $summary
-Failed steps:
-$(field failed)" >/dev/null
             "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
             "${Q[@]}" set "$key" rerun=preprod
-            say "$key: preprod checks failed, back to the implementer"
-            [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: preprod checks still failing" \
-                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary $held" ;;
+            if [ "$("${Q[@]}" requeue "$key" --fix --stage preprod --note "Preprod checks of PR #$pr failed: $summary
+Failed steps:
+$(field failed)")" = blocked ]; then
+                fix_blocked "$pr" "$summary $held"
+            else
+                say "$key: preprod checks failed, back to the implementer (fix round)"
+            fi ;;
         *)
             "${Q[@]}" set "$key" status=blocked
             notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr $held" ;;
@@ -556,6 +572,8 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
     git -C "$AGENT_REPO" worktree remove --force "$rwt"
     verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$rresult" 2>/dev/null)
     summary=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",""))' "$rresult" 2>/dev/null)
+    # A list field of the review result as JSON ([] when missing, empty or not a list).
+    rfield() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print(json.dumps(v if isinstance(v, list) else []))' "$rresult" "$1" 2>/dev/null || echo '[]'; }
     case $verdict in
         changes|approve|blocked) "${Q[@]}" set "$key" "review_verdict=$verdict" "review_summary=$summary" ;;
     esac
@@ -564,10 +582,10 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
         changes)
             "${Q[@]}" set "$key" rerun=review
             say "$key: validator asks for changes on PR #$pr"
-            "${Q[@]}" requeue "$key" --note "Validator review of PR #$pr asks for changes: $summary
-Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("findings",[])))' "$rresult")" >/dev/null
-            [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: validator still asks for changes" \
-                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary" ;;
+            if [ "$("${Q[@]}" requeue "$key" --fix --stage review --note "Validator review of PR #$pr asks for changes: $summary
+Findings: $(rfield findings)" --unresolved "$(rfield unresolved)")" = blocked ]; then
+                fix_blocked "$pr" "$summary" "$rresult"
+            fi ;;
         approve)
             if [ -n "$(cfg preprod.deploy)" ]; then
                 "${Q[@]}" set "$key" status=awaiting-preprod
@@ -706,7 +724,19 @@ elif [ -n "$resume_id" ]; then
     if [ "$resume_why" = limit ]; then
         opener="Your previous run was stopped by the Claude usage limit. The work you committed or left in the worktree is still there."
     else
-        opener="The user answered your question. $(echo "$notes" | python3 -c 'import json,sys; n=json.load(sys.stdin); print(n[-1] if n else "")' 2>/dev/null)"
+        # A fix round (`requeue --fix` wrote the newest note) or the user's answer.
+        trailer="Continue the plan ($plan, --unattended) from where you stopped."
+        opener=$(echo "$notes" | python3 -c '
+import json, re, sys
+notes = json.load(sys.stdin)
+last = notes[-1] if notes else ""
+m = re.match(r"(Review|Preprod) validator, round (\d+)/(\d+)", last)
+if m:
+    print(f"A validator asked for changes (round {m[2]} of {m[3]}). Fix exactly these findings on the same branch, re-run "
+          f"validation, push, and write the result file with status ready. Don\x27t redo finished work. {last}")
+else:
+    print(f"The user answered your question. {last}")' 2>/dev/null)
+        case $opener in "A validator asked"*) trailer="Then finish as /implement does for $plan (--unattended): validate, push, result file." ;; esac
     fi
     say "$key: run start, resuming session $resume_id ($resume_why) (log $log)"
     echo "claude -p --resume $resume_id" >> "$log"
@@ -714,7 +744,7 @@ elif [ -n "$resume_id" ]; then
 
 Result file: $result
 All queue notes: $notes
-Continue the plan ($plan, --unattended) from where you stopped." --resume "$resume_id"
+${trailer:-Continue the plan ($plan, --unattended) from where you stopped.}" --resume "$resume_id"
     code=$?
     if [ "$code" -ne 0 ] && [ ! -f "$result" ] && grep -qi 'no conversation found' "$log"; then
         # Keep the failed resume's output apart, so the usage-limit check and session_id below see only the fresh run.
@@ -752,8 +782,12 @@ fi
 # A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue, for as long as the usage gate
 # says (a weekly-limit stop waits for the weekly reset), or 5 h if the gate allows a start or can't tell.
 if [ ! -f "$result" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$log"; then
-    attempts=$("${Q[@]}" get "$key" attempts)
-    "${Q[@]}" set "$key" status=queued "attempts=$((attempts - 1))"
+    if [ "$("${Q[@]}" get "$key" run_kind 2>/dev/null)" = fix ]; then
+        "${Q[@]}" set "$key" status=queued fix_pending=1  # a fix run cost no attempt; the next run is the same fix round
+    else
+        attempts=$("${Q[@]}" get "$key" attempts)
+        "${Q[@]}" set "$key" status=queued "attempts=$((attempts - 1))"
+    fi
     # Resume this session next time instead of redoing its work. An answer resume keeps `resume=1` (same session either way).
     [ -n "$session_id" ] && [ "$resume_why" != 1 ] && "${Q[@]}" set "$key" resume=limit
     gate=$(python3 "$HERE/usage.py" check 2>&1)

@@ -1,5 +1,5 @@
 # Plan: Validator loop, part 1: fix rounds don't use up attempts
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** low (queue bookkeeping and run.sh wiring; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** intake-2-wiring (both edit run.sh and tests/test_run.py)
 
@@ -43,7 +43,7 @@ the attempt then (a crashed fix still counts), and if that reaches `MAX_ATTEMPTS
 **Validate:** `uv run --with pytest pytest tests/test_runner.py -q` passes, with new tests: three `--fix` re-queues each leave
 `attempts` unchanged across start/finish(ready); a fourth blocks with `rounds`; a non-empty `--unresolved` twice in a row blocks
 with `stuck`; a crashed fix run adds an attempt.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: run.sh: both stages use rounds; the fix run knows it's a fix
 **Runs:** unattended
@@ -58,7 +58,7 @@ re-run validation, push, and write the result file with status ready. Don't redo
 Otherwise the current openers. README env table gets `AGENT_MAX_FIX_ROUNDS`.
 **Validate:** `scripts/validate.sh` passes. Update the existing changes tests to expect `--fix` and unchanged attempts; new: the
 fourth `changes` blocks with the rounds notice; a resume after `changes` prompts with "round 1 of 3", not "The user answered".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: PR status block shows rounds
 **Runs:** unattended
@@ -66,7 +66,7 @@ fourth `changes` blocks with the rounds notice; a resume after `changes` prompts
 **What:** when `rerun` is set, the stage line and first line say `fix round N/M` (from `fix_rounds`, `buildqueue.MAX_FIX_ROUNDS`)
 instead of `attempt N/2`. A rounds/stuck block shows ⏸ with `blocked_why`. Other text unchanged.
 **Validate:** `uv run --with pytest pytest tests/test_prstatus.py -q` passes; `test_review_changes_rerun` expects "fix round 1/3".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 4: docs and tracking
 **Runs:** unattended
@@ -74,7 +74,7 @@ instead of `attempt N/2`. A rounds/stuck block shows ⏸ with `blocked_why`. Oth
 **What:** README "Limits" and both "Validator" sections: `changes` starts a fix round (3 per item, shared by both stages, no attempt
 used), blocked when rounds run out or findings come back unfixed twice; attempts count failed runs only. ROADMAP: A24 ✅ with the PR.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.

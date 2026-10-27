@@ -177,6 +177,92 @@ def test_requeue_conflict_and_fresh_attempts_is_a_usage_error(q):
     assert "not allowed with" in r.stderr
 
 
+def _ready_for_review(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    q("start", "plan-a")
+    q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12}))
+
+
+def test_fix_rounds_use_no_attempts_then_block(q):
+    _ready_for_review(q)
+    for rnd in (1, 2, 3):
+        assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "fix x").stdout.strip() == "queued"
+        assert q("get", "plan-a", "resume").stdout.strip() == "1"
+        assert q("next").stdout.strip() == "strelitzia/plan-a"
+        q("start", "plan-a")
+        assert q("get", "plan-a", "run_kind").stdout.strip() == "fix"
+        assert q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12})).stdout.strip() == "awaiting-review"
+        assert q("get", "plan-a", "attempts").stdout.strip() == "1"
+        assert q("get", "plan-a", "fix_rounds").stdout.strip() == str(rnd)
+        assert f"Review validator, round {rnd}/3 (" in q("get", "plan-a", "notes").stdout
+    assert "rounds=3/3" in q("list").stdout
+    assert q("requeue", "plan-a", "--fix", "--stage", "preprod", "--note", "fix y").stdout.strip() == "blocked"
+    assert q("get", "plan-a", "blocked_why").stdout.strip() == "rounds"
+    assert q("next").returncode == 1
+
+
+def test_fix_round_runs_even_when_attempts_are_used_up(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    q("start", "plan-a")
+    q("finish", "plan-a", "/nonexistent")
+    q("start", "plan-a")
+    q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12}))
+    assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x").stdout.strip() == "queued"
+    assert q("next").stdout.strip() == "strelitzia/plan-a"
+    q("start", "plan-a")
+    assert q("get", "plan-a", "attempts").stdout.strip() == "2"
+    assert q("get", "plan-a", "run_kind").stdout.strip() == "fix"
+
+
+def test_unresolved_findings_twice_in_a_row_block_as_stuck(q):
+    _ready_for_review(q)
+    assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", "[]").stdout.strip() == "queued"
+    q("start", "plan-a")
+    q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12}))
+    out = q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", '["a.py:3 bug"]')
+    assert out.stdout.strip() == "queued"
+    q("start", "plan-a")
+    q("finish", "plan-a", q.result({"status": "needs-review", "pr": 12}))
+    out = q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", '["a.py:3 bug"]')
+    assert out.stdout.strip() == "blocked"
+    assert q("get", "plan-a", "blocked_why").stdout.strip() == "stuck"
+    q("set", "plan-a", "status=queued")
+    q("start", "plan-a")
+    assert q("get", "plan-a", "blocked_why").returncode == 1  # a new run clears it
+    assert q("get", "plan-a", "fix_rounds").stdout.strip() == "2"
+
+
+def test_crashed_fix_run_costs_an_attempt(q):
+    _ready_for_review(q)
+    q("set", "plan-a", "session_id=abc")
+    q("requeue", "plan-a", "--fix", "--stage", "preprod", "--note", "step 2 failed")
+    assert "Preprod validator, round 1/3 (" in q("get", "plan-a", "notes").stdout
+    q("start", "plan-a")
+    assert q("finish", "plan-a", "/nonexistent").stdout.strip() == "blocked"
+    assert q("get", "plan-a", "attempts").stdout.strip() == "2"
+
+
+def test_fresh_attempts_requeue_resets_fix_rounds(q):
+    _ready_for_review(q)
+    q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", '["a"]')
+    q("requeue", "plan-a", "--fresh-attempts", "--note", "triage")
+    for gone in ("fix_rounds", "fix_pending", "last_unresolved"):
+        assert q("get", "plan-a", gone).returncode == 1
+
+
+def test_requeue_fix_needs_a_stage_and_a_json_list(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    assert q("requeue", "plan-a", "--fix", "--note", "x").returncode == 2
+    assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", "nope").returncode == 2
+
+
+def test_fix_round_cap_from_env(q, monkeypatch):
+    monkeypatch.setenv("AGENT_MAX_FIX_ROUNDS", "1")
+    _ready_for_review(q)
+    assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x").stdout.strip() == "queued"
+    assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x").stdout.strip() == "blocked"
+
+
 def test_after_waits_until_the_dependency_merged(q):
     q("add", "first", "--repo", "strelitzia")
     q("add", "second", "--after", "first", "--repo", "strelitzia")
