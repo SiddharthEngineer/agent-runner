@@ -226,6 +226,9 @@ def test_unresolved_findings_twice_in_a_row_block_as_stuck(q):
     out = q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", '["a.py:3 bug"]')
     assert out.stdout.strip() == "blocked"
     assert q("get", "plan-a", "blocked_why").stdout.strip() == "stuck"
+    q("set", "plan-a", "status=queued")
+    q("start", "plan-a")
+    assert q("get", "plan-a", "blocked_why").returncode == 1  # a new run clears it
     assert q("get", "plan-a", "fix_rounds").stdout.strip() == "2"
 
 

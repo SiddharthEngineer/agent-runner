@@ -204,6 +204,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     data = load()
     key = resolve(data, args.slug)
     it = data["items"][key]
+    it.pop("blocked_why", None)  # a new run: an earlier rounds/stuck block no longer applies
     if it.pop("fix_pending", None):
         # A fix round costs no attempt up front; finish charges one if the run fails.
         it.update(status="running", run_kind="fix", updated=iso(now()))
@@ -328,7 +329,7 @@ def fix_round(data: dict, it: dict, args: argparse.Namespace) -> int:
     rounds = int(it.get("fix_rounds", 0))
     why = "rounds" if rounds >= MAX_FIX_ROUNDS else "stuck" if args.unresolved and it.get("last_unresolved") else ""
     if why:
-        it["notes"].append(f"{stage} validator, blocked ({why}) ({iso(now())}): {args.note}")
+        it["notes"].append(f"{stage} validator, blocked, {why} ({iso(now())}): {args.note}")
         it.update(status="blocked", blocked_why=why, last_unresolved=args.unresolved, updated=iso(now()))
         it.pop("fix_pending", None)
     else:

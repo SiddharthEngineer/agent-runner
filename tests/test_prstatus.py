@@ -72,6 +72,13 @@ def test_review_changes_rerun():
     assert "implementer fixing it now, fix round 1/3" in running[1]
 
 
+def test_fix_rounds_block_at_preprod_strips_the_note_prefix():
+    out = lines(block(status="blocked", tier="review", review_verdict="approve", rerun="preprod", fix_rounds=3,
+                      blocked_why="rounds",
+                      notes=["Preprod validator, blocked, rounds (x): Preprod checks of PR #9 failed: the page is blank."]))
+    assert out[1].startswith("**Runner status:** ⏸ Preprod checks: blocked (rounds, 3/3 fix rounds used): the page is blank")
+
+
 def test_rerun_without_fix_rounds_shows_the_attempt():
     out = lines(block(status="queued", rerun="review", review_summary="x", attempts=1))
     assert "re-run queued, attempt 2/2" in out[1]

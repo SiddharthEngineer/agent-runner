@@ -622,6 +622,24 @@ def test_review_changes_with_the_same_unresolved_findings_blocks(runner):
     assert "the same findings came back unfixed" in note and "a.py:1: bug" in note
 
 
+def test_usage_limit_on_a_fix_run_keeps_attempts_and_the_round(runner):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("changes", "fix the bug"))
+    runner.queue("set", key, "session_id=abc")
+    runner(STUB_LIMIT="1")
+    assert runner.status(key) == "queued"
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1"
+    assert runner.queue("get", key, "fix_pending").stdout.strip() == "1"
+    assert runner.queue("get", key, "resume").stdout.strip() == "1"
+
+
+def test_review_changes_with_a_bad_unresolved_field_still_requeues(runner):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=json.dumps({"verdict": "changes", "summary": "s", "findings": [], "unresolved": {"a": 1}}))
+    assert runner.status(key) == "queued"
+    assert runner.queue("get", key, "fix_rounds").stdout.strip() == "1"
+
+
 def test_resume_after_changes_is_a_fix_round(runner):
     key = awaiting_review(runner)
     runner(STUB_REVIEW=verdict("changes", "fix the bug"))
@@ -630,7 +648,7 @@ def test_resume_after_changes_is_a_fix_round(runner):
     implementer = [c for c in claude_calls(runner) if "--resume abc" in c]
     assert implementer, claude_calls(runner)
     assert "A validator asked for changes (round 1 of 3)" in implementer[0] and "fix the bug" in implementer[0]
-    assert "The user answered" not in implementer[0]
+    assert "The user answered" not in implementer[0] and "Continue the plan" not in implementer[0]
     assert runner.queue("get", key, "attempts").stdout.strip() == "1"
 
 
