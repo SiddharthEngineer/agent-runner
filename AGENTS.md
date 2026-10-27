@@ -17,7 +17,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
 | `inbox.py` | Inbox issues in this repo, plus an ntfy push |
 | `intake.py` | `scan`: queue plans pushed to an opted-in repo's `origin/<base>` with `**Queue:** yes` (every tick; refusals as notices) |
-| `usage.py` | Claude session-usage gate |
+| `usage.py` | Claude usage gate (session and weekly caps, weekly pacing, daytime reserve) and `status` |
 | `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
 | `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis, idle Claude sessions on memory notices), `gate`, `sessions` |
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |

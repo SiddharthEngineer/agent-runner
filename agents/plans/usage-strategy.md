@@ -93,7 +93,7 @@ After a usage-limit exit (`run.sh:618-627`), run `usage.py check`: on exit 10 pa
 pauses until the weekly reset, not 5 h), otherwise pause 5 h as today; log which.
 **Validate:** `uv run --with pytest pytest tests/test_run.py -q` → passes, with tests: a stubbed `usage.py` returning exit 10 and
 `30.5` after a usage-limit exit pauses the queue ~30.5 h; one returning 11 pauses 5 h.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 (f28b982)
 
 ### Task 4: Docs
 **Runs:** unattended
@@ -102,7 +102,7 @@ pauses until the weekly reset, not 5 h), otherwise pause 5 h as today; log which
 `agent-runner usage status`; the usage-limit bullet says it pauses for the gate's time. CLI table: `usage` → "Claude usage gate
 and status". AGENTS.md map line for `usage.py`. ROADMAP A28 → ✅ with the PR.
 **Validate:** `scripts/validate.sh` → all PASS; `grep -n "AGENT_WEEKLY_PACE" README.md` → at least one line.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes.
