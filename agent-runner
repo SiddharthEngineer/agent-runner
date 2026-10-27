@@ -19,6 +19,7 @@ usage: agent-runner <command> [args...]
   health   health.py       VPS health check and cleanup
   preprod  preprod.sh      preprod lock: deploy, status, release
   versions versions.py     tags and releases (repos with [release]): sync|promote|status <repo>
+  pins     pins.py         components.toml pin PRs: sync|tick [--repo PARENT] [--dry-run]
   run      run.sh          the cron entry (manager)
   check-commands commands_diff.py   how the repos' PIV commands differ: check-commands <repo> <repo>...
   version                  the installed tag
@@ -32,7 +33,7 @@ USAGE
 cmd=$1; shift
 case $cmd in
     queue) exec python3 "$HERE/buildqueue.py" "$@" ;;
-    gate|inbox|intake|usage|config|health|versions) exec python3 "$HERE/$cmd.py" "$@" ;;
+    gate|inbox|intake|usage|config|health|versions|pins) exec python3 "$HERE/$cmd.py" "$@" ;;
     preprod|run|release|install) exec "$HERE/$cmd.sh" "$@" ;;
     check-commands) exec python3 "$HERE/commands_diff.py" "$@" ;;
     version)

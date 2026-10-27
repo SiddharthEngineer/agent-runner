@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Component pins: a parent repo's components.toml pins each child repo at a tag; the runner moves the pins forward.
+
+Usage:
+  pins.py sync [--dry-run]   open or update a "Pin <name> <tag>" PR per component whose child has a newer tag
+  pins.py tick [--dry-run]   merge the open pin-bump PRs on green CI (prints `merged <parent>#<n> <name> <tag>`)
+
+Rules (plan runner-16-pins):
+- A parent is a registered repo with components.toml at the root of origin/<base> (no runner.toml opt-in). Each table
+  with a `tag` is a component; its name is the child's registered repo name. An unregistered name is skipped.
+- Sync only ever moves a pin forward, to the child's newest vX.Y.Z tag on origin. The PR is on branch `pin/<name>`,
+  labelled `pin-bump`, one commit on origin/<base> changing only that component's `tag` line (comments and order kept).
+  An open PR at an older tag is updated in place (force-push to `pin/<name>` only); a pin that is already newest closes it.
+- `hold = "reason"` on a component stops its bumps (an open PR is closed); runs.log says so once.
+- Tick merges with the parent's merge method, with no review, only a PR whose diff is nothing but `tag` lines in
+  components.toml. Red CI or a refused diff sends one notice per PR (and a refused PR gets one comment); pending waits.
+- Stateless from origin's tags and the open PRs, so hand merges and missed ticks catch up. Standard library only.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import tomllib
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import config  # noqa: E402
+import versions  # noqa: E402
+from versions import Fail, Repo, gh  # noqa: E402
+
+COMPONENTS = "components.toml"
+LABEL = "pin-bump"
+HEADER_RE = re.compile(r'^\s*\[\s*("?)([A-Za-z0-9_-]+)\1\s*\]\s*(#.*)?$')
+TABLE_RE = re.compile(r"^\s*\[")
+TAG_LINE_RE = re.compile(r'^(\s*tag\s*=\s*)"([^"]*)"(.*)$')
+
+
+def git(repo: Repo, *args: str, check: bool = True, env: dict | None = None) -> subprocess.CompletedProcess:
+    if env is None:
+        return versions.git(repo, *args, check=check)
+    out = subprocess.run(["git", "-C", str(repo.dir), *args], capture_output=True, text=True, timeout=120,
+                         env={**os.environ, **env})
+    if check and out.returncode != 0:
+        err = (out.stderr or out.stdout).strip().splitlines()
+        raise Fail(f"git {args[0]} failed: {err[-1] if err else f'exit {out.returncode}'}")
+    return out
+
+
+def set_pin(text: str, name: str, tag: str) -> str:
+    """<text> with only the `tag = "…"` line of table [<name>] changed to <tag>."""
+    lines = text.splitlines(keepends=True)
+    start = next((i for i, line in enumerate(lines) if (m := HEADER_RE.match(line)) and m[2] == name), None)
+    if start is None:
+        raise Fail(f"no [{name}] table in {COMPONENTS}")
+    for i in range(start + 1, len(lines)):
+        if TABLE_RE.match(lines[i]):
+            break
+        if m := TAG_LINE_RE.match(lines[i].rstrip("\r\n")):
+            lines[i] = f'{m[1]}"{tag}"{m[3]}' + lines[i][len(lines[i].rstrip("\r\n")):]
+            new = "".join(lines)
+            old_data, new_data = tomllib.loads(text), tomllib.loads(new)
+            old_data[name]["tag"] = tag
+            if new_data != old_data:
+                raise Fail(f"editing [{name}] tag in {COMPONENTS} changed more than the tag")
+            return new
+    raise Fail(f'no tag = "…" line in [{name}] of {COMPONENTS}')
+
+
+def components(data: dict) -> list[tuple[str, dict]]:
+    return [(k, v) for k, v in data.items() if isinstance(v, dict) and isinstance(v.get("tag"), str)]
+
+
+def open_parent(name: str) -> tuple[Repo, str] | None:
+    """The registered repo and its components.toml text on origin/<base>, or None if it isn't a parent."""
+    try:
+        repo = versions.open_repo(name)
+    except Fail as exc:
+        if exc.code == versions.OFF:
+            return None
+        raise
+    shown = git(repo, "show", f"origin/{repo.base}:{COMPONENTS}", check=False)
+    if shown.returncode != 0:
+        return None
+    return repo, shown.stdout
+
+
+def parents(only: str | None = None) -> list[str]:
+    names = sorted(p.stem for p in (config.config_dir() / "repos").glob("*.env"))
+    return [n for n in names if config.NAME_RE.match(n) and (only is None or n == only)]
+
+
+class Skip(Exception):
+    pass
+
+
+def open_child(name: str) -> tuple[Repo, list[str]]:
+    """The child's clone (tags fetched) and its vX.Y.Z tags on origin, oldest first. Skip if it isn't registered."""
+    if not config.NAME_RE.match(name) or not config.repo_env(name).get("AGENT_REPO"):
+        raise Skip("not a registered repo")
+    try:
+        repo = versions.open_repo(name)
+    except Fail as exc:
+        if exc.code == versions.OFF:
+            raise Skip(str(exc)) from exc
+        raise
+    if repo.remote is None:  # no [release]: open_repo didn't list origin's tags
+        repo.remote = {line.rpartition("refs/tags/")[2] for line in
+                       git(repo, "ls-remote", "--tags", "--refs", "origin", "v*").stdout.splitlines()}
+    return repo, versions.tags(repo)
+
+
+def changes(child: Repo, tags: list[str], pin: str, newest: str) -> list[str]:
+    """One line per child tag after <pin> up to <newest>, newest first, with the PRs from its tag message."""
+    out = []
+    for tag in reversed(tags):
+        if versions.version(pin) < versions.version(tag) <= versions.version(newest):
+            prs = [re.sub(r"^#", f"{child.github}#", line) if child.github else line
+                   for line in versions.tag_info(child, tag)[1]]
+            out.append(f"- {tag}" + (f" · {', '.join(prs)}" if prs else ""))
+    return out
+
+
+class State:
+    """Things said once (holds, skips, notices), in $AGENT_RUNNER_STATE/pins.json, so a quiet tick stays quiet."""
+
+    def __init__(self, dry_run: bool):
+        self.path = config.state_dir() / "pins.json"
+        self.dry_run = dry_run
+        try:
+            self.data = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            self.data = {}
+        self.data.setdefault("notes", {})
+        self.data.setdefault("notices", {})
+
+    def note(self, key: str, text: str | None) -> None:
+        """Print <text> when it differs from what was printed for <key> last time; None forgets <key>."""
+        if text is None:
+            self.data["notes"].pop(key, None)
+            return
+        if self.dry_run or self.data["notes"].get(key) != text:
+            print(text)
+        self.data["notes"][key] = text
+
+    def save(self) -> None:
+        if self.dry_run:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(self.data, indent=1, sort_keys=True) + "\n")
+
+
+def say(dry_run: bool, text: str) -> None:
+    print(("would " if dry_run else "") + text)
+
+
+def pin_prs(repo: Repo) -> dict[str, dict]:
+    """Open PRs to the base on a pin/<name> branch, by branch."""
+    prs = json.loads(gh("pr", "list", "--repo", repo.github, "--state", "open", "--base", repo.base, "--limit", "100",
+                        "--json", "number,headRefName,title,labels") or "[]")
+    return {pr["headRefName"]: pr for pr in prs if pr.get("headRefName", "").startswith("pin/")}
+
+
+def pin_commit_tree(repo: Repo, text: str) -> str:
+    """The tree of origin/<base> with components.toml replaced by <text>."""
+    base = f"origin/{repo.base}"
+    mode = git(repo, "ls-tree", base, COMPONENTS).stdout.split()[0]
+    blob = subprocess.run(["git", "-C", str(repo.dir), "hash-object", "-w", "--stdin"], input=text,
+                          capture_output=True, text=True, check=True).stdout.strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {"GIT_INDEX_FILE": str(Path(tmp) / "index")}
+        git(repo, "read-tree", base, env=env)
+        git(repo, "update-index", "--cacheinfo", f"{mode},{blob},{COMPONENTS}", env=env)
+        return git(repo, "write-tree", env=env).stdout.strip()
+
+
+def branch_current(repo: Repo, branch: str, tree: str) -> bool:
+    """origin/<branch> is one commit on origin/<base> whose tree is <tree>."""
+    ref = f"origin/{branch}"
+    shown = git(repo, "rev-list", "--parents", "-n", "1", ref, check=False).stdout.split()
+    base = git(repo, "rev-parse", f"origin/{repo.base}").stdout.strip()
+    return (len(shown) == 2 and shown[1] == base
+            and git(repo, "rev-parse", f"{ref}^{{tree}}", check=False).stdout.strip() == tree)
+
+
+def sync_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
+    """Bump PRs for one parent. False if any component failed (the others still ran)."""
+    try:
+        data = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as exc:
+        raise Fail(f"{repo.name}: {COMPONENTS} on origin/{repo.base} doesn't parse: {exc}") from exc
+    prs = pin_prs(repo)
+    ok, labelled = True, False
+    for name, table in components(data):
+        key, branch = f"{repo.name}/{name}", f"pin/{name}"
+        pr = prs.get(branch)
+        try:
+            if isinstance(table.get("hold"), str):
+                state.note(key, f"{name}: held in {repo.name} ({table['hold']}), no bumps")
+                if pr:
+                    close(repo, pr, f"{name} is held in {COMPONENTS}: {table['hold']}", dry_run)
+                continue
+            try:
+                child, tags = open_child(name)
+            except Skip as exc:
+                state.note(key, f"{name}: skipped in {repo.name}: {exc}")
+                continue
+            pin = table["tag"]
+            if not versions.TAG_RE.match(pin):
+                state.note(key, f"{name}: pin {pin!r} in {repo.name} isn't a vX.Y.Z tag, skipped")
+                continue
+            state.note(key, None)
+            newest = tags[-1] if tags else None
+            if newest is None or versions.version(newest) <= versions.version(pin):
+                if dry_run:
+                    print(f"{name}: {pin} is newest, nothing to do")
+                if pr:
+                    close(repo, pr, f"{repo.name} already pins {name} at {pin}, its newest tag.", dry_run)
+                continue
+            title = f"Pin {name} {newest}"
+            body = "\n".join([f"Moves {name} from {pin} to {newest} in `{COMPONENTS}`:", "",
+                              *changes(child, tags, pin, newest)])
+            tree = pin_commit_tree(repo, set_pin(text, name, newest))
+            current = branch_current(repo, branch, tree)
+            if pr and current and pr["title"] == title:
+                continue
+            if dry_run:
+                say(True, f"{'update' if pr else 'open'} {repo.name} PR {title} on {branch}")
+                continue
+            if not current:
+                sha = git(repo, "commit-tree", tree, "-p", f"origin/{repo.base}", "-m", title, "-m", body).stdout.strip()
+                git(repo, "push", "-q", "--force", "origin", f"{sha}:refs/heads/{branch}")
+            pr_body = body + "\n\nOpened by `agent-runner pins sync`; the runner merges it on green CI, with no review."
+            if not labelled:
+                gh("label", "create", LABEL, "--repo", repo.github, "--color", "0E8A16", "--force",
+                   "--description", "A components.toml pin moved by agent-runner (merges on green CI)")
+                labelled = True
+            if pr:
+                gh("pr", "edit", str(pr["number"]), "--repo", repo.github, "--title", title, "--body", pr_body,
+                   "--add-label", LABEL)
+                print(f"updated {repo.name}#{pr['number']}: {title}")
+            else:
+                url = gh("pr", "create", "--repo", repo.github, "--base", repo.base, "--head", branch,
+                         "--title", title, "--body", pr_body, "--label", LABEL).strip().splitlines()[-1]
+                print(f"opened {repo.name}#{url.rstrip('/').rpartition('/')[2]}: {title}")
+        except (Fail, subprocess.CalledProcessError, ValueError, KeyError) as exc:
+            print(f"{repo.name} {name}: {exc}")
+            ok = False
+    return ok
+
+
+def close(repo: Repo, pr: dict, why: str, dry_run: bool) -> None:
+    say(dry_run, f"close {repo.name}#{pr['number']} ({pr['title']}): {why}")
+    if not dry_run:
+        gh("pr", "close", str(pr["number"]), "--repo", repo.github, "--comment", f"Closed: {why}", "--delete-branch")
+
+
+def sync(only: str | None, dry_run: bool) -> int:
+    state, ok = State(dry_run), True
+    for name in parents(only):
+        try:
+            found = open_parent(name)
+            if found is not None:
+                ok = sync_parent(*found, state, dry_run) and ok
+        except Fail as exc:
+            print(f"{exc}")
+            ok = False
+    state.save()
+    return 0 if ok else 1
+
+
+def main(argv: list[str]) -> int:
+    p = argparse.ArgumentParser(prog="pins.py", description=__doc__.split("\n\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for cmd in ("sync",):
+        s = sub.add_parser(cmd)
+        s.add_argument("--repo", help="only this parent")
+        s.add_argument("--dry-run", action="store_true")
+    args = p.parse_args(argv)
+    config.load_env()
+    return sync(args.repo, args.dry_run)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

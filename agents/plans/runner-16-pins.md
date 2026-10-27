@@ -37,7 +37,7 @@ that branch at an older tag is updated in place (force-push, new title). Pin alr
 PR with a comment. `hold` → one `runs.log` line per tick change, no PR. `pins.py tick` (Task 2) does merges.
 **Validate:** `uv run --with pytest pytest tests/test_pins.py -q`: new tag → PR created with exactly one changed line;
 older open PR → updated; up to date → no call; `hold` → no PR; unregistered component → skipped; comments in the file kept.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ### Task 2: merge on green CI, then preprod follows
 **Runs:** unattended
