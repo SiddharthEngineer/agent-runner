@@ -77,7 +77,17 @@ until S2 deletes it.
 - Merging: `low` plans that pass `gate.py` merge after green CI; the rest get a validator review, then preprod checks
   if the repo has `[preprod]`. A `low` PR whose CI is red or times out, whose repo reports no CI checks at all, or whose
   merge fails stays open, labelled `ci-failed`; the item is `blocked` and you get a notice with the PR link. Nothing
-  merges without checks.
+  merges without checks. A PR that conflicts with its base is never reported as "no CI checks" (GitHub runs no CI on it):
+  the notice and PR comment say "conflicts with main in <files>" (see Conflicts).
+- Conflicts: before the gate, and before every CI wait, the runner asks GitHub whether the PR conflicts with its base
+  (`gh pr view --json mergeable`; `UNKNOWN` is polled for a minute, then treated as not conflicting). If it does, the runner
+  merges `origin/<base>` into the PR branch (a merge, never a rebase or a forced push); a clean merge is pushed and CI runs on the
+  new head. Real conflicts send the item back to `queued` for a **conflict round** (`requeue --conflict`, a "Conflict" queue
+  note with the files): the next run starts `git merge origin/<base>` in the item's worktree and Claude gets a short prompt to
+  resolve just those files, validate, commit and push (no `/implement`); if the base now merges cleanly, it's pushed with no
+  Claude run. The PR then goes through the gate (and review) again. A conflict round uses no attempt, but an item gets at most
+  2 (`AGENT_MAX_CONFLICT_ROUNDS`); the next conflict blocks it with a notice. No `ci-failed` label for a conflict, and a PR
+  sent back from preprod releases the preprod lock.
 - CI fallback: green CI is `gh pr checks --watch` first (it also sees non-Actions checks). When the token can't read the
   check rollup ("Resource not accessible", as on agent-runner), the runner watches the Actions runs of the PR head instead
   (`gh run list --commit <sha>`, then `gh run watch --exit-status` each): all green merges, one red is "CI is red", and no
@@ -152,7 +162,8 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
 
 **Item lifecycle:** `queued → running → done` for `low` plans; `running → awaiting-review → (validator) → awaiting-preprod →
 on-preprod → done` for `review` plans (a repo with no `[preprod]` merges straight after the validator approves). Also
-`waiting-answer` (a question in the inbox), `blocked` and `cancelled`.
+`waiting-answer` (a question in the inbox), `blocked` and `cancelled`. A PR that conflicts with its base goes back to `queued`
+for a conflict round, from any stage (see Limits, Conflicts).
 **Notices close themselves.** Each tick, an open `agent-notice` issue titled `[<key>] …` is closed (with a comment) once that
 item is `done` or `cancelled`. A "merged; N steps left for you" notice with steps stays open for you to close. Health notices
 (`[vps]`) are closed by `health.py` on recovery. If you finish a blocked item by hand, `agent-runner queue set <key> status=done`

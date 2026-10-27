@@ -75,7 +75,7 @@ main in …" in the notice; "no checks reported" on a conflicting PR says confli
 **What:** "Limits": a "Conflicts" bullet (what the runner merges, conflict rounds, the cap, `AGENT_MAX_CONFLICT_ROUNDS`). "Merging": a
 conflict is never reported as "no CI checks". Item lifecycle: a conflict round goes back to `queued`.
 **Validate:** `grep -n "AGENT_MAX_CONFLICT_ROUNDS" README.md` → one or more lines; `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ## Validation
 - `scripts/validate.sh` passes.
