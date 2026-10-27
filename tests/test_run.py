@@ -519,11 +519,12 @@ def test_health_gate_stops_runs_not_upkeep(runner):
     assert runner.status("engineerfamily/x") == "queued"
 
 
-def awaiting_review(runner, name="engineerfamily", attempts=1, **register):
+def awaiting_review(runner, name="engineerfamily", attempts=1, fix_rounds=0, **register):
     runner.register(name, plan="review", **register)
     key = f"{name}/x"
     runner.queue("add", key)
-    runner.queue("set", key, "status=awaiting-review", "pr=9", f"attempts={attempts}")
+    runner.queue("set", key, "status=awaiting-review", "pr=9", f"attempts={attempts}",
+                 *([f"fix_rounds={fix_rounds}"] if fix_rounds else []))
     return key
 
 
@@ -591,18 +592,46 @@ def test_review_approve_without_preprod_merges(runner):
 
 
 def test_review_changes_requeues_with_note(runner):
-    key = awaiting_review(runner, attempts=1)
+    key = awaiting_review(runner, attempts=2)  # a fix round needs no attempt left
     runner(STUB_REVIEW=verdict("changes", "fix the bug"))
     assert runner.status(key) == "queued"
     assert runner.queue("get", key, "resume").stdout.strip() == "1"
-    assert "fix the bug" in runner.queue("get", key, "notes").stdout
+    assert runner.queue("get", key, "attempts").stdout.strip() == "2"
+    assert runner.queue("get", key, "fix_rounds").stdout.strip() == "1"
+    notes = runner.queue("get", key, "notes").stdout
+    assert "Review validator, round 1/3" in notes and "fix the bug" in notes and "a.py:1: bug" in notes
 
 
-def test_review_changes_out_of_attempts_blocks(runner):
-    key = awaiting_review(runner, attempts=2)
+def test_review_changes_after_three_rounds_blocks(runner):
+    key = awaiting_review(runner, fix_rounds=3)
     runner(STUB_REVIEW=verdict("changes"))
     assert runner.status(key) == "blocked"
-    assert any(c.startswith("inbox notify") and "still asks for changes" in c for c in runner.calls())
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1"
+    assert any(c.startswith("inbox notify") and "still asks for changes after 3 rounds" in c for c in runner.calls())
+
+
+def test_review_changes_with_the_same_unresolved_findings_blocks(runner):
+    key = awaiting_review(runner)
+    stuck = json.dumps({"verdict": "changes", "summary": "s", "findings": [], "unresolved": ["a.py:1: bug"]})
+    runner(STUB_REVIEW=stuck)
+    assert runner.status(key) == "queued"
+    runner.queue("set", key, "status=awaiting-review")
+    runner(STUB_REVIEW=stuck)
+    assert runner.status(key) == "blocked"
+    [note] = [c for c in runner.calls() if c.startswith("inbox notify")]
+    assert "the same findings came back unfixed" in note and "a.py:1: bug" in note
+
+
+def test_resume_after_changes_is_a_fix_round(runner):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("changes", "fix the bug"))
+    runner.queue("set", key, "session_id=abc")
+    runner()
+    implementer = [c for c in claude_calls(runner) if "--resume abc" in c]
+    assert implementer, claude_calls(runner)
+    assert "A validator asked for changes (round 1 of 3)" in implementer[0] and "fix the bug" in implementer[0]
+    assert "The user answered" not in implementer[0]
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1"
 
 
 def test_review_missing_result_twice_blocks(runner):
@@ -681,18 +710,20 @@ def test_preprod_changes_stays_and_requeues(runner):
     assert not any(c.startswith("preprod release") for c in calls)  # the PR stays on preprod for the user to look at
     assert not any(c.startswith("gh pr merge") for c in calls)
     assert runner.status(key) == "queued"
-    assert "the page is blank" in runner.queue("get", key, "notes").stdout
+    notes = runner.queue("get", key, "notes").stdout
+    assert "the page is blank" in notes and "Preprod validator, round 1/3" in notes
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1"
     assert runner.queue("get", key, "preprod_verdict").returncode == 1  # cleared for the next round
 
 
-def test_preprod_changes_out_of_attempts_stays_and_notifies(runner):
-    key = on_preprod(runner, attempts=2)
+def test_preprod_changes_out_of_rounds_stays_and_notifies(runner):
+    key = on_preprod(runner, attempts=2, fix_rounds=3)
     runner(STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
     calls = runner.calls()
     assert not any(c.startswith("preprod release") for c in calls)
     assert runner.status(key) == "blocked"
     [note] = [c for c in calls if c.startswith("inbox notify")]
-    assert "preprod checks still failing" in note and "agent-runner preprod release engineerfamily" in note
+    assert "still asks for changes after 3 rounds" in note and "agent-runner preprod release engineerfamily" in note
 
 
 def test_preprod_blocked_keeps_the_lock_and_notifies(runner):
@@ -874,7 +905,7 @@ def test_review_changes_records_fields_and_edits_the_pr_body_once(runner, tmp_pa
     edits, body = body_edits(runner, tmp_path)
     assert len(edits) == 1, runner.calls()
     assert "**Runner status:** 🔁 Validator review: asked for changes (Task 3 permissions are too wide); " \
-           "implementer re-run queued, attempt 2/2" in body
+           "implementer re-run queued, fix round 1/3" in body
     assert body.rstrip().endswith("## Human test steps\n1. a\n2. b")
 
 
@@ -894,7 +925,7 @@ def test_preprod_approve_records_fields_and_edits_the_pr_body_once(runner, tmp_p
 
 
 def test_blocked_notice_url_is_recorded(runner):
-    key = awaiting_review(runner, attempts=2)
+    key = awaiting_review(runner, fix_rounds=3)
     runner(STUB_REVIEW=verdict("changes"))
     assert runner.status(key) == "blocked"
     assert runner.queue("get", key, "notice").stdout.strip() == "https://github.com/o/inbox/issues/5"

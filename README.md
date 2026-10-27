@@ -70,6 +70,9 @@ until S2 deletes it.
 ## Limits (so it can't run away)
 - Claude starts only if an item is due, the queue isn't paused, and the item has used fewer than 2 attempts (`AGENT_MAX_ATTEMPTS`).
   There's no daily run cap by default (`AGENT_MAX_RUNS_PER_DAY=0`; set a number to bring one back).
+- Fix rounds: a validator's `changes` (review or preprod stage) starts a **fix round**, not an attempt: up to 3 per item
+  (`AGENT_MAX_FIX_ROUNDS`), shared by both stages. Attempts count only runs that crash, time out, write no result or fail
+  validation (a failed fix run too).
 - Usage gate: before each run, `usage.py` sends one tiny Haiku prompt and reads both usage windows (5-hour and 7-day) from
   its `rate_limit_event`. Four rules, each set in `~/.config/agent-runner/env` (percents; a cap of `0` turns its rule off):
 

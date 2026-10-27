@@ -257,6 +257,21 @@ $diagnosis"
     fi
 }
 
+# fix_blocked <pr> <text>: `requeue --fix` blocked the item (fix rounds used up, or the same findings came back unfixed).
+fix_blocked() {
+    local why unresolved title
+    why=$("${Q[@]}" get "$key" blocked_why 2>/dev/null)
+    unresolved=$("${Q[@]}" get "$key" last_unresolved 2>/dev/null)
+    if [ "$why" = stuck ]; then
+        title="blocked: the same findings came back unfixed"
+    else
+        title="blocked: validator still asks for changes after $("${Q[@]}" get "$key" fix_rounds 2>/dev/null || echo 0) rounds"
+    fi
+    say "$key: $title (PR #$1)"
+    notify_blocked "$title" "PR https://github.com/$GH_REPO/pull/$1. $2
+Unresolved: ${unresolved:-[]}"
+}
+
 # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed,
 # 4 = conflicts with $BASE (files in $conflict_files). GitHub runs no CI on a conflicting PR, so that comes first: the base
 # is merged into the PR when it merges cleanly, and the CI wait is then on the new head.
@@ -508,14 +523,15 @@ ${left:-nothing left}"
                 notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
             fi ;;
         changes)
-            "${Q[@]}" requeue "$key" --note "Preprod checks of PR #$pr failed: $summary
-Failed steps:
-$(field failed)" >/dev/null
             "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
             "${Q[@]}" set "$key" rerun=preprod
-            say "$key: preprod checks failed, back to the implementer"
-            [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: preprod checks still failing" \
-                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary $held" ;;
+            if [ "$("${Q[@]}" requeue "$key" --fix --stage preprod --note "Preprod checks of PR #$pr failed: $summary
+Failed steps:
+$(field failed)")" = blocked ]; then
+                fix_blocked "$pr" "$summary $held"
+            else
+                say "$key: preprod checks failed, back to the implementer (fix round)"
+            fi ;;
         *)
             "${Q[@]}" set "$key" status=blocked
             notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr $held" ;;
@@ -556,6 +572,8 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
     git -C "$AGENT_REPO" worktree remove --force "$rwt"
     verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$rresult" 2>/dev/null)
     summary=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",""))' "$rresult" 2>/dev/null)
+    # A list field of the review result as JSON ([] when missing or empty).
+    rfield() { python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get(sys.argv[2]) or []))' "$rresult" "$1" 2>/dev/null || echo '[]'; }
     case $verdict in
         changes|approve|blocked) "${Q[@]}" set "$key" "review_verdict=$verdict" "review_summary=$summary" ;;
     esac
@@ -564,10 +582,10 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
         changes)
             "${Q[@]}" set "$key" rerun=review
             say "$key: validator asks for changes on PR #$pr"
-            "${Q[@]}" requeue "$key" --note "Validator review of PR #$pr asks for changes: $summary
-Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get("findings",[])))' "$rresult")" >/dev/null
-            [ "$("${Q[@]}" get "$key" status)" = blocked ] && notify "blocked: validator still asks for changes" \
-                "PR https://github.com/$GH_REPO/pull/$pr, out of attempts. $summary" ;;
+            if [ "$("${Q[@]}" requeue "$key" --fix --stage review --note "Validator review of PR #$pr asks for changes: $summary
+Findings: $(rfield findings)" --unresolved "$(rfield unresolved)")" = blocked ]; then
+                fix_blocked "$pr" "$summary"
+            fi ;;
         approve)
             if [ -n "$(cfg preprod.deploy)" ]; then
                 "${Q[@]}" set "$key" status=awaiting-preprod
@@ -706,7 +724,17 @@ elif [ -n "$resume_id" ]; then
     if [ "$resume_why" = limit ]; then
         opener="Your previous run was stopped by the Claude usage limit. The work you committed or left in the worktree is still there."
     else
-        opener="The user answered your question. $(echo "$notes" | python3 -c 'import json,sys; n=json.load(sys.stdin); print(n[-1] if n else "")' 2>/dev/null)"
+        # A fix round (`requeue --fix` wrote the newest note) or the user's answer.
+        opener=$(echo "$notes" | python3 -c '
+import json, re, sys
+notes = json.load(sys.stdin)
+last = notes[-1] if notes else ""
+m = re.match(r"(Review|Preprod) validator, round (\d+)/(\d+)", last)
+if m:
+    print(f"A validator asked for changes (round {m[2]} of {m[3]}). Fix exactly these findings on the same branch, re-run "
+          f"validation, push, and write the result file with status ready. Don\x27t redo finished work. {last}")
+else:
+    print(f"The user answered your question. {last}")' 2>/dev/null)
     fi
     say "$key: run start, resuming session $resume_id ($resume_why) (log $log)"
     echo "claude -p --resume $resume_id" >> "$log"

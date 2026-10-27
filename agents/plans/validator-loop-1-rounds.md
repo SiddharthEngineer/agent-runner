@@ -58,7 +58,7 @@ re-run validation, push, and write the result file with status ready. Don't redo
 Otherwise the current openers. README env table gets `AGENT_MAX_FIX_ROUNDS`.
 **Validate:** `scripts/validate.sh` passes. Update the existing changes tests to expect `--fix` and unchanged attempts; new: the
 fourth `changes` blocks with the rounds notice; a resume after `changes` prompts with "round 1 of 3", not "The user answered".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: PR status block shows rounds
 **Runs:** unattended
