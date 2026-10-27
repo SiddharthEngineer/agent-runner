@@ -47,7 +47,7 @@ re-queues once and a second scan does nothing; a comment that doesn't start with
 **What:** the upkeep line and the `User /fix` opener from Context; the "never start a comment with `/fix`" line in the three prompts.
 **Validate:** `scripts/validate.sh` passes; a run test: a tick with a `/fix` comment on an `awaiting-preprod` item re-queues it, and
 the next implementer run's prompt contains "The user asked for this change".
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 3: docs and tracking
 **Runs:** unattended

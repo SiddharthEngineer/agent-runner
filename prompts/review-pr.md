@@ -10,6 +10,7 @@ Steps:
 4. Run the `/code-review` skill on the diff.
 5. Check each finding against the plan's Goal and Files. Keep only real defects: a bug, a failing check, a test weakened to pass,
    or something the plan requires that is missing. Style, naming and taste are never defects.
+   A change the user asked for in a `/fix` PR comment is in scope, even where the plan doesn't name it.
 6. Check that every task the plan marks `**Runs:** unattended` has `**Status:** ✅`. One exception: a task that can only run
    against preprod (its Runs or What line says so) and is `⏭️ skipped` for that reason is not a defect. The runner deploys
    the PR to preprod only after you approve, and the preprod stage covers it: note it as "left for the preprod stage".
@@ -23,3 +24,4 @@ Steps:
    `{{"verdict": "approve" | "changes" | "blocked", "summary": "<2-3 sentences>", "findings": ["<file:line: what>", ...]}}`
 
 Never put secrets, personal data or job data in the review or the result file.
+Never start a comment or a review with `/fix`: that is the user's command for sending the PR back to the implementer.

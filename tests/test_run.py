@@ -90,7 +90,8 @@ def runner(tmp_path):
     # $STUB_RUNS_RED; `pr view --json state` prints $STUB_PR_STATE (default OPEN). prstatus.py's `pr view --json body,state`
     # gets an open PR with two Human test steps, `pr edit --body-file` is logged with the body, and the comments query
     # prints the validator's comment URL. `pr view --json mergeable` prints the next word of $STUB_MERGEABLE on each call
-    # (the last one repeats; default MERGEABLE), and `--json headRefName` prints agent/x.
+    # (the last one repeats; default MERGEABLE), and `--json headRefName` prints agent/x. prcomments.py's
+    # `--json state,comments` gets an open PR with the comments in $STUB_COMMENTS (default none).
     write_stub(bin_dir / "gh", "gh",
                'if [[ "$*" == "pr checks"* ]]; then\n'
                '  [ "${STUB_CHECKS:-}" = red ] && { echo "build  fail  1m  https://ci.example/1"; exit 1; }\n'
@@ -102,6 +103,8 @@ def runner(tmp_path):
                '  set -- ${STUB_MERGEABLE:-MERGEABLE}; [ "$n" -gt $# ] && n=$#; echo "${!n}"\n'
                'elif [[ "$*" == "pr view"*headRefName* ]]; then\n'
                '  echo agent/x\n'
+               'elif [[ "$*" == "pr view"*state,comments* ]]; then\n'
+               '  echo "{\\"state\\": \\"OPEN\\", \\"comments\\": ${STUB_COMMENTS:-[]}}"\n'
                'elif [[ "$*" == "pr merge"* ]]; then\n'
                '  exit "${STUB_MERGE_EXIT:-0}"\n'
                'elif [[ "$*" == "pr view"*body,state* ]]; then\n'
@@ -653,6 +656,36 @@ def test_resume_after_changes_is_a_fix_round(runner):
     assert "A validator asked for changes (round 1 of 3)" in implementer[0] and "fix the bug" in implementer[0]
     assert "The user answered" not in implementer[0] and "Continue the plan" not in implementer[0]
     assert runner.queue("get", key, "attempts").stdout.strip() == "1"
+
+
+def test_fix_comment_on_awaiting_preprod_requeues_and_resumes(runner, tmp_path):
+    key = awaiting_review(runner)
+    runner.queue("set", key, "status=awaiting-preprod", "session_id=abc")
+    (runner.state / "configs").mkdir(parents=True, exist_ok=True)  # load_item writes it on a real tick
+    shutil.copy(tmp_path / "engineerfamily-work/agents/runner.toml", runner.state / "configs/engineerfamily.toml")
+    fix = [{"body": "/fix sort the Users table by email", "createdAt": "2099-01-01T00:00:00Z", "viewerDidAuthor": True}]
+    runner(STUB_COMMENTS=json.dumps(fix))
+    assert "engineerfamily/x: /fix on o/engineerfamily#9, re-queued from awaiting-preprod" in runner.runs_log()
+    assert any(c.startswith("gh pr comment 9 --repo o/engineerfamily --body Queued:") for c in runner.calls())
+    implementer = [c for c in claude_calls(runner) if "--resume abc" in c]
+    assert implementer, claude_calls(runner)
+    assert "The user asked for this change on the PR: sort the Users table by email" in implementer[0]
+    assert "The user answered" not in implementer[0]
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1"
+    assert runner.queue("get", key, "fix_rounds").returncode == 1
+
+
+def test_review_after_a_user_fix_is_a_scoped_rereview_of_the_ask(runner, tmp_path):
+    key = awaiting_review(runner)
+    runner.queue("set", key, f"reviewed_sha={pr_head_sha(tmp_path)}")
+    runner.queue("requeue", key, "--fix", "--stage", "user", "--note", "sort by email")
+    runner.queue("set", key, "status=awaiting-review")
+    push_pr_head(tmp_path)
+    runner(STUB_REVIEW=verdict("approve"))
+    rereview = [c for c in claude_calls(runner) if "You are the validator" in c][0]
+    assert "--model claude-sonnet-5-5" in rereview and "Re-review (the user\'s /fix comment)" in rereview
+    assert "sort by email" in rereview
+    assert "validator (re-review, the user's /fix comment, sonnet) start for PR #9" in runner.runs_log()
 
 
 def push_pr_head(tmp_path, amend=False, name="engineerfamily"):

@@ -97,9 +97,9 @@ def test_triage_settings_are_read_only():
 def test_rereview_prompt_formats():
     template = (ROOT / "prompts/rereview-pr.md").read_text()
     names = set(re.findall(r"(?<!\{)\{(\w+)\}(?!\})", template))
-    assert names == {"repo", "pr", "plan_path", "result_file", "validate_full", "since_sha", "round", "max_rounds", "findings"}
+    assert names == {"repo", "pr", "plan_path", "result_file", "validate_full", "since_sha", "label", "findings"}
     text = template.format(repo="o/r", pr=9, plan_path="p.md", result_file="/s/x.review.json",
-                           validate_full="scripts/validate.sh --full", since_sha="abc123", round=1, max_rounds=3,
+                           validate_full="scripts/validate.sh --full", since_sha="abc123", label="round 1 of 3",
                            findings="a.py:3: off by one\nb.py:7: missing test")
     assert "git diff abc123..HEAD" in text and "Re-review (round 1 of 3)" in text and "b.py:7: missing test" in text
     assert "gh pr review 9 --repo o/r --comment" in text and "/s/x.review.json" in text and "scripts/validate.sh --full" in text

@@ -95,11 +95,14 @@ Merged PRs are tagged on the next tick after this is fixed. \`agent-runner versi
 if [ -n "$DRY" ]; then
     say "dry run: would poll the inbox, sync versions and tick preprod"
     python3 "$HERE/intake.py" scan --dry-run >> "$STATE/runs.log" 2>&1 || true  # writes nothing
+    python3 "$HERE/prcomments.py" scan --dry-run >> "$STATE/runs.log" 2>&1 || true
 else
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" poll >> "$STATE/runs.log" 2>&1
     [ -n "${AGENT_INBOX_REPO:-}" ] && python3 "$HERE/inbox.py" sweep >> "$STATE/runs.log" 2>&1
     # Plans pushed with `**Queue:** yes` (opted-in repos), before the next-item pick so they can start this tick.
     python3 "$HERE/intake.py" scan >> "$STATE/runs.log" 2>&1 || true
+    # The user's `/fix` PR comments send a PR back to the implementer, before preprod.sh tick and the next-item pick.
+    python3 "$HERE/prcomments.py" scan >> "$STATE/runs.log" 2>&1 || true
     # Tags for PRs merged outside the runner too (by hand in the GitHub app), before prstatus.py shows them.
     for repo_file in "$HOME"/.config/agent-runner/repos/*.env; do
         [ -e "$repo_file" ] && versions_sync "$(basename "$repo_file" .env)"
@@ -560,12 +563,15 @@ fi
 
 # 3b. Review stage (design D3): a `review` PR the implementer called ready gets a fresh-context validator run first.
 # last_round: the newest fix-round note of the item: its round, its max rounds, then its findings one per line
-# (a review round's findings list, or a preprod round's failed steps). Nothing when there is no round note.
+# (a review round's findings list, or a preprod round's failed steps). A user `/fix` note: `user`, `-`, then its text.
+# Nothing when there is no round note.
 last_round() {
     "${Q[@]}" get "$key" notes 2>/dev/null | python3 -c '
 import json, re, sys
-notes = [n for n in json.load(sys.stdin) if re.match(r"(Review|Preprod) validator, round \d+/\d+", n)]
-if notes:
+notes = [n for n in json.load(sys.stdin) if re.match(r"(Review|Preprod) validator, round \d+/\d+|User /fix \(", n)]
+if notes and notes[-1].startswith("User /fix ("):
+    print("user", "-", notes[-1].split("): ", 1)[-1], sep="\n")
+elif notes:
     note = notes[-1]
     m = re.match(r"(Review|Preprod) validator, round (\d+)/(\d+) \([^)]*\): ", note)
     body = note[m.end():] if m else note
@@ -583,6 +589,7 @@ if notes:
 }
 review_stage() {
     local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit role rstart
+    local label
     pr=$("${Q[@]}" get "$key" pr)
     dry "run validator (review) for $key PR #$pr"
     usage_gate
@@ -601,17 +608,20 @@ review_stage() {
     { read -r n; read -r max; findings=$(cat); } <<< "$round"
     # After a fix round, a scoped re-review (on Sonnet) of the fix since the reviewed sha, with the newest round's findings;
     # else (the first review, a force-push, no sha) the full review on Opus.
-    if [ "$("${Q[@]}" get "$key" fix_rounds 2>/dev/null || echo 0)" -gt 0 ] && [ -n "$since" ] && [ -n "$round" ] \
-        && git -C "$rwt" merge-base --is-ancestor "$since" HEAD 2>/dev/null; then
+    # A user `/fix` (no round) gets the same scoped re-review of their ask.
+    if { [ "$("${Q[@]}" get "$key" fix_rounds 2>/dev/null || echo 0)" -gt 0 ] || [ "$n" = user ]; } && [ -n "$since" ] \
+        && [ -n "$round" ] && git -C "$rwt" merge-base --is-ancestor "$since" HEAD 2>/dev/null; then
         model=${AGENT_REREVIEW_MODEL:-claude-sonnet-5-5}
         model_name=${model#claude-}
-        mode="re-review, round $n/$max, ${model_name%%-[0-9]*}"
+        label="round $n of $max"
+        [ "$n" = user ] && label="the user's /fix comment"
+        mode="re-review, ${label/ of /\/}, ${model_name%%-[0-9]*}"
         role=rereview
         limit=30m
         vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
-result_file=sys.argv[5], validate_full=sys.argv[6], since_sha=sys.argv[7], round=sys.argv[8], max_rounds=sys.argv[9],
-findings=sys.argv[10]))' "$HERE/prompts/rereview-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL" \
-            "$since" "$n" "$max" "$findings")
+result_file=sys.argv[5], validate_full=sys.argv[6], since_sha=sys.argv[7], label=sys.argv[8], findings=sys.argv[9]))' \
+            "$HERE/prompts/rereview-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL" "$since" "$label" \
+            "$findings")
     else
         model=claude-opus-5-5
         mode="review, opus"
@@ -789,7 +799,7 @@ elif [ -n "$resume_id" ]; then
     if [ "$resume_why" = limit ]; then
         opener="Your previous run was stopped by the Claude usage limit. The work you committed or left in the worktree is still there."
     else
-        # A fix round (`requeue --fix` wrote the newest note) or the user's answer.
+        # A fix round (`requeue --fix` wrote the newest note: a validator's or the user's `/fix`) or the user's answer.
         trailer="Continue the plan ($plan, --unattended) from where you stopped."
         opener=$(echo "$notes" | python3 -c '
 import json, re, sys
@@ -799,9 +809,13 @@ m = re.match(r"(Review|Preprod) validator, round (\d+)/(\d+)", last)
 if m:
     print(f"A validator asked for changes (round {m[2]} of {m[3]}). Fix exactly these findings on the same branch, re-run "
           f"validation, push, and write the result file with status ready. Don\x27t redo finished work. {last}")
+elif last.startswith("User /fix"):
+    ask = last.split(": ", 1)[-1]
+    print(f"The user asked for this change on the PR: {ask}\nMake it on the same branch, re-run "
+          f"validation, push, and write the result file with status ready. Don\x27t redo finished work.")
 else:
     print(f"The user answered your question. {last}")' 2>/dev/null)
-        case $opener in "A validator asked"*) trailer="Then finish as /implement does for $plan (--unattended): validate, push, result file." ;; esac
+        case $opener in "A validator asked"*|"The user asked"*) trailer="Then finish as /implement does for $plan (--unattended): validate, push, result file." ;; esac
     fi
     say "$key: run start, resuming session $resume_id ($resume_why) (log $log)"
     echo "claude -p --resume $resume_id" >> "$log"
