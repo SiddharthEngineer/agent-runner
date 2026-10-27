@@ -1,5 +1,5 @@
 # Plan: Usage strategy: weekly cap, weekly pacing, daytime reserve
-**Status:** ❌ Not started
+**Status:** 🔄 In progress
 **Risk:** low (the usage gate and its docs; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 
 ## Goal
@@ -62,7 +62,7 @@ rules (minimum 1/12 h); bad settings → exit 11 with the ValueError's message; 
 allowing and refusing at its edge; pause hours for each rule (pacing catch-up time computed and capped at the weekly reset);
 day hours inside/outside and wrapping `22-06`; the largest pause wins when two rules refuse; no `seven_day` window skips
 weekly rules; bad `AGENT_WEEKLY_PACE=fast` / `AGENT_DAY_HOURS=8` → exit 11 naming the variable; the old default (70) still holds.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ### Task 2: `usage.py status`, env file, CLI help
 **Runs:** unattended
