@@ -849,7 +849,13 @@ After the fix: $(merge_failure "$rc")."
                 git -C "$AGENT_REPO" worktree remove --force "$rwt"
             fi ;;
         requeue)
-            "${Q[@]}" requeue "$key" --fresh-attempts --note "${summary:-re-queued by the resolver (${class:-transient})}" >/dev/null
+            if [ "$stage" = review ] || [ "$stage" = preprod ]; then
+                # The PR is unchanged, so the validator tries again (a fresh review; preprod follows an approval).
+                "${Q[@]}" unset "$key" review_attempts review_verdict review_summary preprod_verdict preprod_attempts
+                "${Q[@]}" set "$key" status=awaiting-review
+            else
+                "${Q[@]}" requeue "$key" --fresh-attempts --note "${summary:-re-queued by the resolver (${class:-transient})}" >/dev/null
+            fi
             say "$key: resolver requeue (${class:-no class}): $summary" ;;
         *)
             say "$key: resolver give-up (${class:-no class})${summary:+: $summary}"

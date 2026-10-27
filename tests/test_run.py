@@ -1027,6 +1027,18 @@ def test_resolver_requeue_gives_fresh_attempts(runner):
     assert notices(runner) == []
 
 
+def test_resolver_requeue_of_a_review_block_goes_back_to_the_validator(runner):
+    key = awaiting_review(runner)
+    runner.pr_branch("engineerfamily", conflict=False)
+    runner()
+    runner()  # the validator wrote no verdict twice: held for the resolver
+    assert runner.status(key) == "awaiting-resolve", runner.runs_log()
+    runner(STUB_RESOLVE=resolve_reply("requeue", "transient"))
+    assert runner.status(key) == "awaiting-review", runner.runs_log()
+    assert runner.queue("get", key, "review_attempts").returncode == 1
+    assert runner.queue("get", key, "attempts").stdout.strip() == "1" and notices(runner) == []
+
+
 def test_resolver_give_up_blocks_with_one_notice_and_the_diagnosis(runner):
     key = out_of_attempts(runner)
     runner(STUB_RESOLVE=resolve_reply("give-up", "plan-problem", diagnosis="Task 2 contradicts Task 1"))

@@ -1,5 +1,5 @@
 # Plan: Resolver, part 2: every block goes to the resolver first; triage goes away
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** review (an unattended agent pushes fixes to PRs and every block path changes; the gate also flags `settings/*`)
 **Depends on:** resolver-1-agent
 
@@ -56,7 +56,7 @@ do, once per item, `AGENT_RESOLVE=0`, logs and result paths); tick list gains th
 AGENTS.md: the prompts row lists `resolve.md` instead of `triage.md`.
 **Validate:** `grep -rn "triage" README.md AGENTS.md run.sh` → only a mention that `AGENT_TRIAGE=0` still turns the resolver off;
 `scripts/validate.sh` passes.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 76d3940
 
 ## Validation
 - `scripts/validate.sh` passes.

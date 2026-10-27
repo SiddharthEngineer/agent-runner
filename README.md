@@ -138,7 +138,7 @@ until S2 deletes it.
   the cause (`transient` | `fixed-elsewhere` | `plan-problem` | `code-problem` | `environment`) and either fixes the PR
   (a `Resolver:` commit, one PR comment), re-queues it, or gives up. `fixed` (and `validate.full` passes): a `low` item merges
   after green CI; a `review` item, or one stopped at review or preprod, goes back to the validator. `requeue`: fresh attempts
-  and a note. Anything else (give-up, no result, a failed validation, the timeout, no PR): `blocked`, with one notice carrying
+  and a note (a block at review or preprod goes back to the validator instead). Anything else (give-up, no result, a failed validation, the timeout, no PR): `blocked`, with one notice carrying
   its diagnosis. The item gets `resolve_tried=1`, so a second block goes straight to you. Config blocks (repo not registered,
   no or refused `runner.toml`, plan not on the base) skip it. Turn it off with `AGENT_RESOLVE=0` (the old `AGENT_TRIAGE=0`
   still works) in `~/.config/agent-runner/env`. Its log is `logs/<time>-<repo>-<slug>.resolve.log`, its result
