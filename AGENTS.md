@@ -21,7 +21,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `config.py` | `agents/runner.toml` loader and prod guard; config/state dirs |
 | `health.py` | VPS health: `check` (disk, memory, swap, load) and `clean` (fixed routine/pressure rules, root-guarded), `tick` (alerts, diagnosis, idle Claude sessions on memory notices), `gate`, `sessions` |
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
-| `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, review stage), `preprod-check.md` (validator, preprod stage) |
+| `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, first review), `rereview-pr.md` (validator, re-review after a fix round), `preprod-check.md` (validator, preprod stage) |
 | `versions.py` | Repos with `[release]`: `sync` gives each merged PR the next patch tag and keeps a `vX.Y` pre-release; `promote` (the user's, on prod deploy) makes it full; `status` |
 | `prstatus.py` | The status block at the top of every runner PR: `update <key>` after a transition, `sync` each tick |
 | `mcp_config.py` | Per-run Playwright MCP config for the preprod stage (basic auth, storage state; 0600, deleted after) |

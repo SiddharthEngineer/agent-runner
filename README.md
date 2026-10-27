@@ -203,6 +203,13 @@ approve its own PR) and writes `results/<repo>/<slug>.review.json` (`approve | c
   item gets 3 fix rounds (`AGENT_MAX_FIX_ROUNDS`), shared with the preprod stage; after that, or when the validator's
   `unresolved` list (previous findings still not fixed) is non-empty two rounds running, it is `blocked` and you get a notice.
 - `blocked`, or no verdict twice → `blocked`, with a notice.
+After a fix round (from either stage) the next review is a **re-review**: a Sonnet run (30 min at most; `AGENT_REREVIEW_MODEL`
+overrides the model) with [prompts/rereview-pr.md](prompts/rereview-pr.md), scoped to the newest round's findings (or the
+preprod stage's failed steps) and the fix diff since the sha the last verdict was about (`reviewed_sha`). It runs the full
+validation but not `/code-review`, says for each previous finding whether it is fixed, raises nothing on code the fix didn't
+touch (unless validation fails), posts one "Re-review (round N of 3)" review and reports the unfixed ones as `unresolved`.
+The first review, a force-pushed head (no longer a descendant of `reviewed_sha`) and a conflict round get the full Opus
+review. `runs.log` says `validator (review, opus)` or `validator (re-review, round N/3, sonnet)`.
 Every `**Runs:** unattended` task must be `✅`, except one that can only run against preprod and is `⏭️ skipped` for that
 reason: the PR reaches preprod only after this review approves, so the review notes it as "left for the preprod stage". Plans
 put such checks in their Human test steps, which the preprod validator runs.
