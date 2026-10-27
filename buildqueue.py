@@ -25,6 +25,8 @@ Usage:
                                      `changes`): costs no attempt; over AGENT_MAX_FIX_ROUNDS (default 3, shared by both
                                      stages) → blocked (`blocked_why=rounds`), and so are unresolved findings two rounds
                                      running (`blocked_why=stuck`)
+                                     --fix --stage user: the user's `/fix` PR comment (prcomments.py): no round, no
+                                     attempt, no stuck check; works from `blocked` too
                                      --fresh-attempts: attempts back to 0, a fresh session (triage's re-queue)
                                      --conflict: a conflict round (run.sh, the PR conflicts with its base): sets `conflict=1`,
                                      gives the attempt back; over AGENT_MAX_CONFLICT_ROUNDS (default 2) → blocked
@@ -324,7 +326,16 @@ def cmd_requeue(args: argparse.Namespace) -> int:
 
 
 def fix_round(data: dict, it: dict, args: argparse.Namespace) -> int:
-    """The validator asked for changes: one more fix round, or blocked when the rounds ran out or the findings are stuck."""
+    """The validator (or the user, `--stage user`) asked for changes: one more fix round, or blocked when the rounds ran out or the findings are stuck."""
+    if args.stage == "user":
+        # The user decided it: no round or attempt used, and the rounds and stuck checks don't apply.
+        it["notes"].append(f"User /fix ({iso(now())}): {args.note}")
+        it.update(status="queued", fix_pending=1, resume=1, not_before=iso(now()), updated=iso(now()))
+        for stale in ("last_unresolved", "blocked_why", "rerun", "preprod_verdict", "preprod_attempts", "review_attempts"):
+            it.pop(stale, None)
+        save(data)
+        print(it["status"])
+        return 0
     stage = args.stage.capitalize()
     rounds = int(it.get("fix_rounds", 0))
     why = "rounds" if rounds >= MAX_FIX_ROUNDS else "stuck" if args.unresolved and it.get("last_unresolved") else ""
@@ -423,7 +434,7 @@ def main() -> int:
     how.add_argument("--fresh-attempts", action="store_true")
     how.add_argument("--conflict", action="store_true")
     how.add_argument("--fix", action="store_true", help="a fix round (the validator's changes; needs --stage)")
-    p.add_argument("--stage", choices=("review", "preprod"))
+    p.add_argument("--stage", choices=("review", "preprod", "user"))
     p.add_argument("--unresolved", type=unresolved_list, default=[], help="JSON list: the validator's unresolved findings")
     p.set_defaults(fn=cmd_requeue)
     p = sub.add_parser("oldest")

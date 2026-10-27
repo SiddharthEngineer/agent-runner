@@ -931,3 +931,19 @@ def test_inbox_sweep_closes_notices_of_finished_items(fake_gh):
     closed = [c[2] for c in fake_gh.calls() if c[:2] == ["issue", "close"]]
     assert closed == ["1", "2", "6"]
     assert "engineerfamily/gone` is cancelled" in next(c for c in fake_gh.calls() if c[:3] == ["issue", "comment", "2"])[-1]
+
+
+def test_user_fix_uses_no_round_or_attempt_and_unblocks(q, monkeypatch):
+    monkeypatch.setenv("AGENT_MAX_FIX_ROUNDS", "1")
+    _ready_for_review(q)
+    q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x", "--unresolved", '["a"]')
+    assert q("requeue", "plan-a", "--fix", "--stage", "review", "--note", "x").stdout.strip() == "blocked"
+    assert q("requeue", "plan-a", "--fix", "--stage", "user", "--note", "sort by email").stdout.strip() == "queued"
+    assert "User /fix (" in q("get", "plan-a", "notes").stdout
+    for gone in ("last_unresolved", "blocked_why"):
+        assert q("get", "plan-a", gone).returncode == 1
+    assert q("get", "plan-a", "fix_rounds").stdout.strip() == "1"
+    assert q("next").stdout.strip() == "strelitzia/plan-a"
+    q("start", "plan-a")
+    assert q("get", "plan-a", "run_kind").stdout.strip() == "fix"
+    assert q("get", "plan-a", "attempts").stdout.strip() == "1"

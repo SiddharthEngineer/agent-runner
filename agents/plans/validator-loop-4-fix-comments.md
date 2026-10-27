@@ -39,7 +39,7 @@ logs one line and leaves the item alone. buildqueue gets `--stage user` as in Co
 **Validate:** `uv run --with pytest pytest tests/test_prcomments.py tests/test_runner.py -q` passes, with tests (fake `gh`): a new `/fix`
 re-queues once and a second scan does nothing; a comment that doesn't start with `/fix` is ignored; a `blocked` item goes back to
 `queued` with `fix_rounds` unchanged; a merged PR gets one reply; a `running` item is skipped.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: wire it in
 **Runs:** unattended
