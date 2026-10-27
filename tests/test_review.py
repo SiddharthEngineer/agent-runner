@@ -74,24 +74,17 @@ def test_mcp_config_without_storage_state(tmp_path):
     assert "storageState" not in json.loads(out.with_suffix(".playwright.json").read_text())["browser"]["contextOptions"]
 
 
-def test_triage_prompt_formats():
-    template = (ROOT / "prompts/triage.md").read_text()
+def test_resolve_prompt_formats():
+    template = (ROOT / "prompts/resolve.md").read_text()
     names = set(re.findall(r"(?<!\{)\{(\w+)\}(?!\})", template))
-    assert names == {"key", "log_paths", "result_json", "pr_url", "result_file"}
-    text = template.format(key="r/x", log_paths="/s/logs/a.log\n/s/logs/b.log", result_json='{"status": "blocked"}',
-                           pr_url="https://github.com/o/r/pull/9", result_file="/s/results/r/x.triage.json")
-    assert "/s/logs/b.log" in text and "https://github.com/o/r/pull/9" in text and "/s/results/r/x.triage.json" in text
-    assert '{"action": "requeue", "class": "transient"' in text
-    for cls in ("transient", "fixed-elsewhere", "plan-problem", "code-problem", "environment"):
-        assert f"`{cls}`" in text
-
-
-def test_triage_settings_are_read_only():
-    perms = json.loads((ROOT / "settings/triage.json").read_text())["permissions"]
-    assert {"Edit", "Write", "NotebookEdit", "Bash(git push:*)", "Bash(gh pr merge:*)", "Bash(*.config*)",
-            "Read(~/.config/agent-runner/**)"} <= set(perms["deny"])
-    for rule in perms["allow"]:
-        assert not re.search(r"push|merge|commit|rerun|Edit|Write", rule), rule
+    assert names == {"key", "plan", "pr_url", "stage", "block_title", "block_body", "result_json", "log_paths", "ci_log",
+                     "validate_full", "result_file"}
+    text = template.format(key="r/x", plan="agents/plans/x.md", pr_url="https://github.com/o/r/pull/9", stage="merge",
+                           block_title="PR #9 not merged", block_body="CI is red", result_json='{"status": "blocked"}',
+                           log_paths="/s/logs/a.log", ci_log="/s/results/r/x.ci-failed.log", validate_full="make check",
+                           result_file="/s/results/r/x.resolve.json")
+    assert "Stopped at stage: merge" in text and "/s/results/r/x.ci-failed.log" in text and "make check" in text
+    assert '{"action": "fixed|requeue|give-up"' in text and "/s/results/r/x.resolve.json" in text
 
 
 def test_rereview_prompt_formats():

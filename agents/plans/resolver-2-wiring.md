@@ -46,7 +46,7 @@ Anything else → `blocked` and one notice with the resolver's diagnosis. The us
 no notice; resolver `fixed` on a low item → merged; `fixed` on a review item → awaiting-review; `requeue` → queued with 0 attempts;
 `give-up` → blocked + one notice containing the diagnosis; a second block of the same item → blocked + notice, no resolver run;
 `AGENT_RESOLVE=0` → blocked + notice at once; config blocks still notify directly.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 c5ef81d
 
 ### Task 2: Retire triage; docs
 **Runs:** unattended
@@ -56,7 +56,7 @@ do, once per item, `AGENT_RESOLVE=0`, logs and result paths); tick list gains th
 AGENTS.md: the prompts row lists `resolve.md` instead of `triage.md`.
 **Validate:** `grep -rn "triage" README.md AGENTS.md run.sh` → only a mention that `AGENT_TRIAGE=0` still turns the resolver off;
 `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes.
