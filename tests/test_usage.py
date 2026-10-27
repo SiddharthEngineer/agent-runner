@@ -307,3 +307,16 @@ def test_report_without_runs(env, tmp_path, monkeypatch, capsys):
     assert usage.cmd_report([]) == 0
     assert "No runs." in capsys.readouterr().out
     assert usage.cmd_report(["--days", "x"]) == 2
+
+
+def test_day_pause_refuses_at_zero_usage_until_day_end():
+    s = strategy(AGENT_DAY_HOURS="08-22", AGENT_DAY_SESSION_USAGE="0", AGENT_DAY_PAUSE="1")  # NOW is 12:00
+    v = verdicts(win(five=0.0), s)["daytime reserve"]
+    assert not v.allowed and v.pause_hours == pytest.approx(10)
+
+
+def test_day_pause_allows_outside_day_hours_and_rejects_bad_value():
+    s = strategy(AGENT_DAY_HOURS="13-22", AGENT_DAY_PAUSE="1")
+    assert verdicts(win(five=0.0), s)["daytime reserve"].allowed
+    with pytest.raises(ValueError, match="AGENT_DAY_PAUSE"):
+        strategy(AGENT_DAY_PAUSE="yes")

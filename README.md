@@ -80,7 +80,7 @@ until S2 deletes it.
   | Rule | Setting (default) | Refuses when | Pauses until |
   |---|---|---|---|
   | Session cap | `AGENT_MAX_SESSION_USAGE` (70; `0` turns the whole gate off) | 5-hour use ≥ cap | the 5-hour reset |
-  | Daytime reserve | `AGENT_DAY_HOURS` (empty = off, e.g. `08-22`), `AGENT_DAY_SESSION_USAGE` (40) | inside day hours (VPS local time; `22-06` wraps past midnight) and 5-hour use ≥ day cap | the earlier of the 5-hour reset and the end of day hours |
+  | Daytime reserve | `AGENT_DAY_HOURS` (empty = off, e.g. `08-22`), `AGENT_DAY_SESSION_USAGE` (40) | inside day hours (VPS local time; `22-06` wraps past midnight) and 5-hour use ≥ day cap; `AGENT_DAY_PAUSE=1` refuses every start inside day hours at any usage (a day cap of `0` is "off") | the earlier of the 5-hour reset and the end of day hours |
   | Weekly cap | `AGENT_MAX_WEEKLY_USAGE` (90) | 7-day use ≥ cap | the 7-day reset |
   | Weekly pacing | `AGENT_WEEKLY_PACE` (`even`; or `off`), `AGENT_PACE_SLACK` (10) | 7-day use > cap × (fraction of the week gone) + slack | the time that allowance catches up with use (never after the 7-day reset) |
 

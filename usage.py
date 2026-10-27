@@ -9,6 +9,7 @@ Rules, each set in ~/.config/agent-runner/env (a cap of 0 turns its rule off):
   session cap      AGENT_MAX_SESSION_USAGE (70; 0 turns the whole gate off)   5-hour use >= cap
   daytime reserve  AGENT_DAY_HOURS (empty = off, e.g. 08-22, local time), AGENT_DAY_SESSION_USAGE (40)
                    inside day hours and 5-hour use >= day cap
+                   AGENT_DAY_PAUSE=1 refuses every start inside day hours, whatever the usage (a cap of 0 is "off")
   weekly cap       AGENT_MAX_WEEKLY_USAGE (90)                                 7-day use >= cap
   weekly pacing    AGENT_WEEKLY_PACE (even | off), AGENT_PACE_SLACK (10)
                    7-day use > cap x (fraction of the week gone) + slack
@@ -66,6 +67,7 @@ class Strategy:
     weekly_cap: float
     pace: str
     pace_slack: float
+    day_pause: bool = False  # inside day hours, refuse every start regardless of usage
 
 
 @dataclass(frozen=True)
@@ -157,7 +159,15 @@ def strategy_from_env(env: Mapping[str, str]) -> Strategy:
         weekly_cap=_percent(env, "AGENT_MAX_WEEKLY_USAGE", "90"),
         pace=pace,
         pace_slack=_percent(env, "AGENT_PACE_SLACK", "10"),
+        day_pause=_day_pause(env),
     )
+
+
+def _day_pause(env: Mapping[str, str]) -> bool:
+    raw = env.get("AGENT_DAY_PAUSE", "0").strip().lower() or "0"
+    if raw not in ("0", "1"):
+        raise ValueError(f"AGENT_DAY_PAUSE={raw!r} is not 0 or 1")
+    return raw == "1"
 
 
 def _hours_until(epoch: float, now: datetime) -> float:
@@ -206,10 +216,13 @@ def evaluate(win: dict[str, Window], s: Strategy, now: datetime) -> list[Verdict
             ok = used < s.session_cap
             verdicts.append(Verdict("session cap", ok, f"{used:.0f}% {'<' if ok else '≥'} {s.session_cap:.0f}%",
                                     None if ok else session_pause))
-        if s.day_hours is not None and s.day_cap > 0:
+        if s.day_hours is not None and (s.day_cap > 0 or s.day_pause):
             label = _hours_label(s.day_hours)
             if not _in_day(s.day_hours, now):
                 verdicts.append(Verdict("daytime reserve", True, f"outside day hours {label}", None))
+            elif s.day_pause:
+                end = _hours_until(_day_end(s.day_hours, now).timestamp(), now)
+                verdicts.append(Verdict("daytime reserve", False, f"paused during {label} (AGENT_DAY_PAUSE=1)", end))
             else:
                 ok = used < s.day_cap
                 end = _hours_until(_day_end(s.day_hours, now).timestamp(), now)
@@ -347,7 +360,7 @@ def cmd_status() -> int:
     verdicts = evaluate(win, strategy, now)
     by_rule = {v.rule: v for v in verdicts}
     off = dict(OFF)
-    if strategy.day_hours is not None:
+    if strategy.day_hours is not None and not strategy.day_pause:
         off["daytime reserve"] = "off (AGENT_DAY_SESSION_USAGE=0)"
     for rule in RULES:
         v = by_rule.get(rule)
