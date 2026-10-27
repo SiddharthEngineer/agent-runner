@@ -46,7 +46,7 @@ Anything else → `blocked` and one notice with the resolver's diagnosis. The us
 no notice; resolver `fixed` on a low item → merged; `fixed` on a review item → awaiting-review; `requeue` → queued with 0 attempts;
 `give-up` → blocked + one notice containing the diagnosis; a second block of the same item → blocked + notice, no resolver run;
 `AGENT_RESOLVE=0` → blocked + notice at once; config blocks still notify directly.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit)
 
 ### Task 2: Retire triage; docs
 **Runs:** unattended

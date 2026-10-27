@@ -6,6 +6,8 @@
 # 1. Upkeep: pick up your inbox replies, close notices of finished items, tag merged PRs (versions.py), move and merge
 #    components.toml pins (pins.py), release/advance the global preprod lock (preprod.sh tick).
 # 2. Health gate: while disk is critical (health.py gate), no Claude run starts; upkeep above still ran.
+#    Then one stage with work to do: preprod checks, validator review, or the resolver (one Opus try on an item that
+#    would have been blocked: `awaiting-resolve`), before any new implementer run.
 # 3. `buildqueue.py next` picks a due `<repo>/<slug>` (honours pause, optional daily cap, attempt limit) or we exit.
 #    Then usage.py checks Claude usage (one tiny Haiku probe; 5-hour and 7-day windows) against the session cap, daytime
 #    reserve, weekly cap and weekly pacing (`agent-runner usage status`); when one refuses, the queue pauses as long as it says.
@@ -220,6 +222,21 @@ usage_gate() {  # exits unless a Claude run may start now
     esac
 }
 
+# limit_pause: after a run stopped at the usage limit, pause the queue for as long as the usage gate says (a weekly-limit
+# stop waits for the weekly reset), or 5 h if the gate allows a start or can't tell.
+limit_pause() {
+    local gate hours
+    gate=$(python3 "$HERE/usage.py" check 2>&1)
+    if [ $? = 10 ]; then
+        hours=$(echo "$gate" | tail -n1)
+        "${Q[@]}" pause "$hours" >> "$STATE/runs.log"
+        say "$key: usage limit hit, $(echo "$gate" | head -n1); queue paused ${hours}h"
+    else
+        "${Q[@]}" pause 5 >> "$STATE/runs.log"
+        say "$key: usage limit hit, queue paused 5h (usage gate: $(echo "$gate" | head -n1))"
+    fi
+}
+
 # load_item: the item's repo, its config and the plan, all from origin/<base>. Blocks the item if any is missing or refused.
 load_item() {
     repo=${key%%/*}
@@ -260,80 +277,34 @@ pr_plan() {
     else echo "$plan"; fi
 }
 
-# notify_blocked <title> <body> [<result file>] [review]: the item is blocked. Once per item (no `triaged` flag yet,
-# AGENT_TRIAGE not 0, usage below the gate), a read-only Sonnet run triages it first: a transient or fixed-elsewhere cause
-# re-queues it with fresh attempts (`review`: back to the validator, the PR is unchanged) and a short notice; otherwise the
-# notice carries the diagnosis. If triage can't run, the plain notice.
-notify_blocked() {
-    local title=$1 body=$2 last=${3:-} stage=${4:-} pr tresult tlog prompt action class note diagnosis logs
-    if [ -n "$DRY" ] || [ "${AGENT_TRIAGE:-1}" = 0 ] || [ -n "$("${Q[@]}" get "$key" triaged 2>/dev/null)" ] \
-        || ! python3 "$HERE/usage.py" check >/dev/null 2>&1; then
-        notify "$title" "$body"
+# hold_or_notify <title> <body> <stage>: where the item would be blocked. `buildqueue.py hold` gives the resolver one try
+# first (status awaiting-resolve; the resolve stage runs it on a later tick, and the user hears nothing yet). Once the
+# resolver has tried (or AGENT_RESOLVE=0), the item is blocked with the notice, plus the resolver's diagnosis if it had one.
+hold_or_notify() {
+    local title=$1 body=$2 stage=$3 diagnosis class rlog
+    if [ -n "$DRY" ]; then
+        say "dry run: would hold $key for the resolver: $title"
         return 0
     fi
-    "${Q[@]}" set "$key" triaged=1
-    pr=$("${Q[@]}" get "$key" pr 2>/dev/null)
-    [ -z "$pr" ] && [ -f "$last" ] && pr=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pr") or "")' "$last" 2>/dev/null)
-    tresult=$STATE/results/$repo/$slug.triage.json
-    tlog=$STATE/logs/$(date -u +%Y%m%dT%H%MZ)-$repo-$slug.triage.log
-    mkdir -p "$(dirname "$tresult")"
-    rm -f "$tresult"
-    # This item's logs only (`<time>-<repo>-<slug>`): the newest validator log, then the two newest implementer logs.
-    logs=$(ls -t "$STATE/logs/"????????T????Z-"$repo-$slug.review.log" 2>/dev/null | head -n 1
-           ls -t "$STATE/logs/"????????T????Z-"$repo-$slug.log" 2>/dev/null | head -n 2)
-    prompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(key=sys.argv[2], log_paths=sys.argv[3],
-result_json=sys.argv[4], pr_url=sys.argv[5], result_file=sys.argv[6]))' "$HERE/prompts/triage.md" "$key" \
-        "${logs:-none}" \
-        "$(cat "$last" 2>/dev/null || echo none)" "${pr:+https://github.com/$GH_REPO/pull/$pr}" "$tresult")
-    say "$key: triage start (log $tlog)"
-    (
-        cd "$STATE" || exit 1
-        AGENT_SLUG=$key timeout --kill-after=1m 15m claude -p "$prompt" --model claude-sonnet-5-5 --max-turns 30 \
-            --settings "$HERE/settings/triage.json" --permission-mode dontAsk --output-format json
-    ) > "$tlog" 2>&1
-    say "$key: triage exit $?"
-    cost "$tlog" triage claude-sonnet-5-5 0
-    # The reply is the JSON object (the settings deny writes, so run.sh saves it). The last JSON line with one wins.
-    python3 -c '
-import json, sys
-for line in reversed(open(sys.argv[1], errors="replace").read().splitlines()):
-    try:
-        text = json.loads(line).get("result", "")
-        data = json.loads(text[text.index("{"):text.rindex("}") + 1])
-    except (ValueError, AttributeError, TypeError):
-        continue
-    if isinstance(data, dict):
-        json.dump(data, open(sys.argv[2], "w"))
-        break
-' "$tlog" "$tresult"
-    tfield() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2], ""))' "$tresult" "$1" 2>/dev/null; }
-    action=$(tfield action)
-    class=$(tfield class)
-    note=$(tfield note)
-    diagnosis=$(tfield diagnosis)
-    if [ "$action" = requeue ] && { [ "$class" = transient ] || [ "$class" = fixed-elsewhere ]; }; then
-        if [ "$stage" = review ]; then
-            "${Q[@]}" unset "$key" review_attempts
-            "${Q[@]}" set "$key" status=awaiting-review
-        else
-            "${Q[@]}" requeue "$key" --note "${note:-re-queued by triage ($class)}" --fresh-attempts >/dev/null
-        fi
-        say "$key: triage ($class), re-queued${stage:+ for the $stage}"
-        notify "re-queued after triage: $class" "${note:-no note}
-Was: $title. Triage log: $tlog (on the VPS)."
-    elif [ -n "$diagnosis" ]; then
-        say "$key: triage (${class:-no class}), notice with diagnosis"
-        notify "$title" "$body
-
-Triage (read-only Sonnet run, class \`${class:-unknown}\`):
-$diagnosis"
-    else
-        say "$key: triage wrote no verdict"
-        notify "$title" "$body"
+    if [ "$("${Q[@]}" hold "$key" --title "$title" --body "$body" --stage "$stage")" = awaiting-resolve ]; then
+        say "$key: held for the resolver ($title)"
+        return 0
     fi
+    say "$key: $title, blocked"
+    diagnosis=$("${Q[@]}" get "$key" resolve_diagnosis 2>/dev/null)
+    if [ -n "$diagnosis" ]; then
+        class=$("${Q[@]}" get "$key" resolve_class 2>/dev/null)
+        rlog=$("${Q[@]}" get "$key" resolve_log 2>/dev/null)
+        body="$body
+
+Resolver (tried once, class \`${class:-unknown}\`): $diagnosis
+Resolver log: ${rlog:-none} (on the VPS)."
+    fi
+    notify "$title" "$body"
 }
 
-# fix_blocked <pr> <text> [<result file>]: `requeue --fix` blocked the item (fix rounds used up, or the same findings came back unfixed).
+# fix_blocked <pr> <text> <stage>: `requeue --fix` blocked the item (fix rounds used up, or the same findings came back
+# unfixed), so it is held for the resolver.
 fix_blocked() {
     local why unresolved title
     why=$("${Q[@]}" get "$key" blocked_why 2>/dev/null)
@@ -344,8 +315,8 @@ fix_blocked() {
         title="blocked: validator still asks for changes after $("${Q[@]}" get "$key" fix_rounds 2>/dev/null || echo 0) rounds"
     fi
     say "$key: $title (PR #$1)"
-    notify_blocked "$title" "PR https://github.com/$GH_REPO/pull/$1. $2
-Unresolved: ${unresolved:-[]}" "${3:-}"
+    hold_or_notify "$title" "PR https://github.com/$GH_REPO/pull/$1. $2
+Unresolved: ${unresolved:-[]}" "$3"
 }
 
 # merge_pr <pr>: green CI, then merge with the repo's method. 1 = CI red or timed out, 2 = no checks, 3 = merge failed,
@@ -423,15 +394,15 @@ sync_base() {
     return "$rc"
 }
 # conflict_back <pr>: after merge_pr returned 4 (or sync_base 1), send the item back to the implementer for a conflict round
-# (no attempt used); once AGENT_MAX_CONFLICT_ROUNDS are used up it is blocked, with a notice. 1 = blocked.
+# (no attempt used); once AGENT_MAX_CONFLICT_ROUNDS are used up it is held for the resolver (hold_or_notify). 1 = held.
 conflict_back() {
     local why new
     why=$(merge_failure 4)
     new=$("${Q[@]}" requeue "$key" --conflict --note "PR #$1 $why")
     if [ "$new" = blocked ]; then
         gh pr comment "$1" --repo "$GH_REPO" --body "Not merged: $why, after ${AGENT_MAX_CONFLICT_ROUNDS:-2} conflict round(s)." >/dev/null 2>&1
-        say "$key: PR #$1 $why, out of conflict rounds, blocked"
-        notify "blocked: PR #$1 $why" "https://github.com/$GH_REPO/pull/$1 still $why after ${AGENT_MAX_CONFLICT_ROUNDS:-2} conflict round(s). Merge $BASE into it by hand, or re-queue $key."
+        say "$key: PR #$1 $why, out of conflict rounds"
+        hold_or_notify "blocked: PR #$1 $why" "https://github.com/$GH_REPO/pull/$1 still $why after ${AGENT_MAX_CONFLICT_ROUNDS:-2} conflict round(s). Merge $BASE into it by hand, or re-queue $key." merge
         return 1
     fi
     gh pr comment "$1" --repo "$GH_REPO" --body "Not merged yet: $why. Back to the implementer for a conflict round." >/dev/null 2>&1
@@ -492,7 +463,7 @@ closed_by_hand() {
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
     local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held pstart
-    local comment left_count since deployed
+    local comment left_count since deployed rc
     pr=$("${Q[@]}" get "$key" pr)
     url=$(cfg preprod.health | head -n1 | cut -f1)
     host=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url")
@@ -578,14 +549,17 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
 Left for you:
 ${left:-nothing left}"
                 [ -n "$notice_url" ] && "${Q[@]}" set "$key" "left_issue=$notice_url"
-            elif [ $? = 4 ]; then
-                # Back to the implementer: the conflict round's PR goes through the gate, review and preprod again.
-                "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
-                "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts review_verdict review_summary rerun reviewed_sha
-                gh pr edit "$pr" --repo "$GH_REPO" --remove-label awaiting-preprod >/dev/null 2>&1
-                conflict_back "$pr"
             else
-                notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
+                rc=$?
+                if [ "$rc" = 4 ]; then
+                    # Back to the implementer: the conflict round's PR goes through the gate, review and preprod again.
+                    "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
+                    "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts review_verdict review_summary rerun reviewed_sha
+                    gh pr edit "$pr" --repo "$GH_REPO" --remove-label awaiting-preprod >/dev/null 2>&1
+                    conflict_back "$pr"
+                else
+                    hold_or_notify "PR #$pr passed preprod but not merged" "$(merge_failure "$rc"): https://github.com/$GH_REPO/pull/$pr. $held" merge
+                fi
             fi ;;
         changes)
             "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
@@ -593,13 +567,12 @@ ${left:-nothing left}"
             if [ "$("${Q[@]}" requeue "$key" --fix --stage preprod --note "Preprod checks of PR #$pr failed: $summary
 Failed steps:
 $(field failed)")" = blocked ]; then
-                fix_blocked "$pr" "$summary $held"
+                fix_blocked "$pr" "$summary $held" preprod
             else
                 say "$key: preprod checks failed, back to the implementer (fix round)"
             fi ;;
         *)
-            "${Q[@]}" set "$key" status=blocked
-            notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr $held" ;;
+            hold_or_notify "preprod validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr $held" preprod ;;
     esac
 }
 
@@ -642,7 +615,7 @@ elif notes:
 }
 review_stage() {
     local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit role rstart
-    local label
+    local label rc
     pr=$("${Q[@]}" get "$key" pr)
     dry "run validator (review) for $key PR #$pr"
     usage_gate
@@ -708,7 +681,7 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
             say "$key: validator asks for changes on PR #$pr"
             if [ "$("${Q[@]}" requeue "$key" --fix --stage review --note "Validator review of PR #$pr asks for changes: $summary
 Findings: $(rfield findings)" --unresolved "$(rfield unresolved)")" = blocked ]; then
-                fix_blocked "$pr" "$summary" "$rresult"
+                fix_blocked "$pr" "$summary" review
             fi ;;
         approve)
             if [ -n "$(cfg preprod.deploy)" ]; then
@@ -720,23 +693,23 @@ Findings: $(rfield findings)" --unresolved "$(rfield unresolved)")" = blocked ];
                 say "$key: validator approved PR #$pr, merged"
                 preprod_follow "$repo" "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
-            elif [ $? = 4 ]; then
-                "${Q[@]}" unset "$key" review_attempts review_verdict review_summary rerun reviewed_sha
-                conflict_back "$pr"
             else
-                "${Q[@]}" set "$key" status=blocked
-                notify "PR #$pr approved but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr"
+                rc=$?
+                if [ "$rc" = 4 ]; then
+                    "${Q[@]}" unset "$key" review_attempts review_verdict review_summary rerun reviewed_sha
+                    conflict_back "$pr"
+                else
+                    hold_or_notify "PR #$pr approved but not merged" "$(merge_failure "$rc"): https://github.com/$GH_REPO/pull/$pr" merge
+                fi
             fi ;;
         blocked)
-            "${Q[@]}" set "$key" status=blocked
-            notify_blocked "validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" "$rresult" review ;;
+            hold_or_notify "validator blocked on PR #$pr" "$summary https://github.com/$GH_REPO/pull/$pr" review ;;
         *)  # no result: a failed validator attempt
             tries=$(( $("${Q[@]}" get "$key" review_attempts 2>/dev/null || echo 0) + 1 ))
             "${Q[@]}" set "$key" "review_attempts=$tries"
             say "$key: validator wrote no verdict (attempt $tries)"
             if [ "$tries" -ge "${AGENT_MAX_ATTEMPTS:-2}" ]; then
-                "${Q[@]}" set "$key" status=blocked
-                notify_blocked "validator failed $tries times on PR #$pr" "Log: $rlog (on the VPS)." "" review
+                hold_or_notify "validator failed $tries times on PR #$pr" "Log: $rlog (on the VPS)." review
             fi ;;
     esac
 }
@@ -744,6 +717,149 @@ Findings: $(rfield findings)" --unresolved "$(rfield unresolved)")" = blocked ];
 if key=$("${Q[@]}" oldest awaiting-review); then
     load_item
     closed_by_hand || review_stage
+    pr_status
+    exit 0
+fi
+
+# 3c. Resolve stage: the oldest item held for the resolver (hold_or_notify) gets its one try, before new implementer work.
+# resolve_logs: this item's logs (`<time>-<repo>-<slug>`): the newest validator and preprod logs, the two newest implementer logs.
+resolve_logs() {
+    ls -t "$STATE/logs/"????????T????Z-"$repo-$slug.review.log" 2>/dev/null | head -n 1
+    ls -t "$STATE/logs/"????????T????Z-"$repo-$slug.preprod.log" 2>/dev/null | head -n 1
+    ls -t "$STATE/logs/"????????T????Z-"$repo-$slug.log" 2>/dev/null | head -n 2
+}
+# resolve_ci_log <pr> <file>: the failed Actions run of the PR head (if one failed), its failing steps' log tail in <file>.
+resolve_ci_log() {
+    local sha id
+    sha=$(gh pr view "$1" --repo "$GH_REPO" --json headRefOid -q .headRefOid 2>/dev/null) && [ -n "$sha" ] || return 1
+    id=$(gh run list --repo "$GH_REPO" --commit "$sha" --json databaseId,conclusion \
+        -q '.[] | select(.conclusion == "failure") | .databaseId' 2>/dev/null | head -n1)
+    [ -n "$id" ] || return 1
+    gh run view "$id" --repo "$GH_REPO" --log-failed 2>/dev/null | tail -n 400 > "$2"
+    [ -s "$2" ]
+}
+resolve_stage() {
+    local pr stage title body rwt rbranch rresult rlog rstart last ci_log settings prompt code action class summary diagnosis
+    local verdict tier rc
+    local -a mcp=()
+    pr=$("${Q[@]}" get "$key" pr 2>/dev/null)
+    stage=$("${Q[@]}" get "$key" block_stage 2>/dev/null) || stage=implement  # set by hand: no hold fields
+    title=$("${Q[@]}" get "$key" block_title 2>/dev/null) || title=blocked
+    body=$("${Q[@]}" get "$key" block_body 2>/dev/null)
+    dry "run the resolver for $key"
+    usage_gate
+    rbranch=agent/$slug
+    rwt=$STATE/worktrees/$repo/$slug
+    git -C "$AGENT_REPO" fetch -q origin
+    if [ -d "$rwt" ]; then
+        git -C "$rwt" merge -q --ff-only "origin/$rbranch" >/dev/null 2>&1  # catch up with fix rounds pushed since
+    elif git -C "$AGENT_REPO" ls-remote --exit-code -q origin "$rbranch" >/dev/null; then
+        mkdir -p "$(dirname "$rwt")"
+        git -C "$AGENT_REPO" worktree add -q -B "$rbranch" "$rwt" "origin/$rbranch" >> "$STATE/runs.log" 2>&1
+    fi
+    "${Q[@]}" set "$key" resolve_tried=1
+    if [ ! -d "$rwt" ] || [ -z "$pr" ]; then
+        say "$key: nothing for the resolver to fix (no branch $rbranch or no PR)"
+        hold_or_notify "$title" "$body" "$stage"
+        return 0
+    fi
+    rresult=$STATE/results/$repo/$slug.resolve.json
+    rlog=$STATE/logs/$(date -u +%Y%m%dT%H%MZ)-$repo-$slug.resolve.log
+    mkdir -p "$(dirname "$rresult")"
+    rm -f "$rresult"
+    case $stage in
+        review|preprod) last=$STATE/results/$repo/$slug.$stage.json ;;
+        *) last=$STATE/results/$repo-$slug.json ;;
+    esac
+    ci_log=$STATE/results/$repo/$slug.ci-failed.log
+    rm -f "$ci_log"
+    resolve_ci_log "$pr" "$ci_log" || { rm -f "$ci_log"; ci_log=none; }
+    settings=$rwt/agents/settings/implement.json
+    [ -f "$settings" ] || settings=$rwt/scripts/agent/settings.json
+    for f in "$rwt/agents/mcp.json" "$rwt/scripts/agent/mcp.json"; do
+        [ -f "$f" ] && { mcp=(--mcp-config "$f"); break; }
+    done
+    prompt=$(python3 -c 'import sys; a = sys.argv; print(open(a[1]).read().format(key=a[2], plan=a[3], pr_url=a[4], stage=a[5],
+block_title=a[6], block_body=a[7], result_json=a[8], log_paths=a[9], ci_log=a[10], validate_full=a[11], result_file=a[12]))' \
+        "$HERE/prompts/resolve.md" "$key" "$(pr_plan "$rwt")" "https://github.com/$GH_REPO/pull/$pr" "${stage:-implement}" \
+        "$title" "$body" "$(cat "$last" 2>/dev/null || echo none)" "$(resolve_logs | grep . || echo none)" "$ci_log" \
+        "$VALIDATE_FULL" "$rresult")
+    "${Q[@]}" set "$key" "resolve_log=$rlog"
+    say "$key: resolver start for PR #$pr (stopped at ${stage:-implement}: $title) (log $rlog)"
+    rstart=$(size "$rlog")
+    (
+        cd "$rwt" || exit 1
+        AGENT_SLUG=$key AGENT_RESULT_FILE=$rresult timeout --kill-after=2m 60m claude -p "$prompt" --model claude-opus-5-5 \
+            --max-turns 120 --settings "$settings" "${mcp[@]}" --permission-mode auto --permission-prompts none \
+            --output-format json
+    ) >> "$rlog" 2>&1
+    code=$?
+    say "$key: resolver exit $code"
+    cost "$rlog" resolve claude-opus-5-5 "$rstart"
+    # A usage-limit stop isn't the item's fault: the try comes back, and the queue pauses.
+    if [ ! -f "$rresult" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$rlog"; then
+        "${Q[@]}" unset "$key" resolve_tried
+        limit_pause
+        return 0
+    fi
+    rfield() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]) or "")' "$rresult" "$1" 2>/dev/null; }
+    action=$(rfield action)
+    class=$(rfield class)
+    summary=$(rfield summary)
+    diagnosis=$(rfield diagnosis)
+    if [ "$action" = fixed ] && ! (cd "$rwt" && bash -c "$VALIDATE_FULL" >> "$rlog" 2>&1); then
+        action=give-up
+        diagnosis="The resolver said fixed, but \`$VALIDATE_FULL\` fails in its worktree. ${diagnosis:-$summary}"
+    fi
+    if [ -z "$action" ]; then
+        if [ "$code" = 124 ]; then diagnosis="The resolver timed out after 60 minutes."
+        else diagnosis="The resolver wrote no result (exit $code)."; fi
+    fi
+    "${Q[@]}" set "$key" "resolve_class=${class:-unknown}" "resolve_diagnosis=${diagnosis:-${summary:-no diagnosis}}"
+    case $action in
+        fixed)
+            say "$key: resolver fixed (${class:-no class}): $summary"
+            if [ "$stage" = review ] || [ "$stage" = preprod ]; then
+                tier=review
+            else
+                verdict=$(cd "$rwt" && python3 "$HERE/gate.py" "$plan" --config "$toml" --base "origin/$BASE")
+                tier=$(echo "$verdict" | python3 -c 'import json,sys; print(json.load(sys.stdin)["tier"])' 2>/dev/null)
+                "${Q[@]}" set "$key" "tier=${tier:-review}"
+            fi
+            if [ "$tier" = low ]; then
+                gh pr edit "$pr" --repo "$GH_REPO" --remove-label ci-failed >/dev/null 2>&1
+                sleep "${AGENT_CI_SETTLE:-30}"  # let the resolver's push register its checks before the CI wait
+                if merge_pr "$pr"; then
+                    "${Q[@]}" set "$key" status=done "merged_at=$(stamp)"
+                    say "$key: PR #$pr merged after the resolver's fix"
+                    notify "merged PR #$pr" "Merged to $BASE after green CI (gate tier low, after a resolver fix): https://github.com/$GH_REPO/pull/$pr"
+                    preprod_follow "$repo" "$pr"
+                    git -C "$AGENT_REPO" worktree remove --force "$rwt"
+                else
+                    rc=$?
+                    "${Q[@]}" set "$key" "resolve_diagnosis=$diagnosis
+After the fix: $(merge_failure "$rc")."
+                    hold_or_notify "PR #$pr not merged after the resolver's fix: $(merge_failure "$rc")" "$body" merge
+                fi
+            else
+                # Back to the validator (a fresh-context review of the fix); preprod follows an approval.
+                "${Q[@]}" unset "$key" review_attempts review_verdict review_summary preprod_verdict preprod_attempts
+                "${Q[@]}" set "$key" status=awaiting-review
+                say "$key: PR #$pr back to the validator after the resolver's fix"
+                git -C "$AGENT_REPO" worktree remove --force "$rwt"
+            fi ;;
+        requeue)
+            "${Q[@]}" requeue "$key" --fresh-attempts --note "${summary:-re-queued by the resolver (${class:-transient})}" >/dev/null
+            say "$key: resolver requeue (${class:-no class}): $summary" ;;
+        *)
+            say "$key: resolver give-up (${class:-no class})${summary:+: $summary}"
+            hold_or_notify "$title" "$body" "${stage:-implement}" ;;
+    esac
+}
+
+if key=$("${Q[@]}" oldest awaiting-resolve); then
+    load_item
+    closed_by_hand || resolve_stage
     pr_status
     exit 0
 fi
@@ -922,15 +1038,7 @@ if [ ! -f "$result" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$log"
     fi
     # Resume this session next time instead of redoing its work. An answer resume keeps `resume=1` (same session either way).
     [ -n "$session_id" ] && [ "$resume_why" != 1 ] && "${Q[@]}" set "$key" resume=limit
-    gate=$(python3 "$HERE/usage.py" check 2>&1)
-    if [ $? = 10 ]; then
-        hours=$(echo "$gate" | tail -n1)
-        "${Q[@]}" pause "$hours" >> "$STATE/runs.log"
-        say "$key: usage limit hit, $(echo "$gate" | head -n1); queue paused ${hours}h"
-    else
-        "${Q[@]}" pause 5 >> "$STATE/runs.log"
-        say "$key: usage limit hit, queue paused 5h (usage gate: $(echo "$gate" | head -n1))"
-    fi
+    limit_pause
     exit 0
 fi
 "${Q[@]}" unset "$key" resume
@@ -1011,11 +1119,11 @@ case "$new" in
         # Blocked at the implementer: an earlier stage's verdict no longer says where it is (the PR status block).
         [ -z "${not_merged:-}" ] && "${Q[@]}" unset "$key" rerun review_verdict review_summary
         if [ -n "$conflicted" ]; then
-            :  # conflict_back sent the notice
+            :  # conflict_back held it (or sent the notice)
         elif [ -n "${not_merged:-}" ]; then
-            notify "PR #$pr not merged: $not_merged" "https://github.com/$GH_REPO/pull/$pr stays open, labelled ci-failed. Fix it and merge by hand, or re-queue $key. Log: $log (on the VPS)."
+            hold_or_notify "PR #$pr not merged: $not_merged" "https://github.com/$GH_REPO/pull/$pr stays open, labelled ci-failed. Fix it and merge by hand, or re-queue $key. Log: $log (on the VPS)." merge
         else
-            notify_blocked "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" "$result"
+            hold_or_notify "blocked after $("${Q[@]}" get "$key" attempts) attempt(s)" "Log: $log (on the VPS). Last result: $(cat "$result" 2>/dev/null || echo none)" implement
         fi ;;
 esac
 pr_status
