@@ -19,6 +19,7 @@ import os
 import re
 import shlex
 import sys
+import time
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -277,6 +278,8 @@ def load_env() -> None:
     if path is not None:
         for key, value in parse_env(path).items():
             os.environ.setdefault(key, value)
+        if hasattr(time, "tzset"):
+            time.tzset()  # a TZ from the file only takes effect once the C library re-reads it
 
 
 def repo_env(name: str) -> dict[str, str]:
