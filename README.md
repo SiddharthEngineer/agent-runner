@@ -45,6 +45,7 @@ Agents never push tags or run `install.sh`.
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
 | `preprod` | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
 | `versions` | `versions.py` | Tags and GitHub releases for repos with `[release]`: `sync`, `promote`, `status` (see Versions and releases) |
+| `pins` | `pins.py` | `sync`/`tick [--repo PARENT] [--dry-run]`: "Pin <child> <tag>" PRs for a parent's `components.toml` (see Pins) |
 | `run` | `run.sh` | The cron entry (manager) |
 | `check-commands` | `commands_diff.py` | How the repos' `.claude/commands` differ once repo names, base branches and validate commands are swapped for placeholders |
 | `version` | | The installed tag |
@@ -172,8 +173,9 @@ nothing when preprod is free or still held; `agent-runner preprod status` still 
 Every 5 minutes, for every registered repo, with at most one Claude run at a time (a `flock` on `run.lock`):
 1. **Upkeep:** inbox replies (`inbox.py poll`), closing the notices of items that are `done` or `cancelled`
    (`inbox.py sweep`), queue intake for opted-in repos (`intake.py scan`, before the next-item pick so a plan pushed now
-   can start this tick), your `/fix` PR comments (`prcomments.py scan`, see Day to day), and the global preprod lock
-   (`preprod.sh tick`).
+   can start this tick), your `/fix` PR comments (`prcomments.py scan`, see Day to day), tags for merged PRs
+   (`versions.py sync`), pin bumps (`pins.py sync`, then `pins.py tick`, which merges green pin PRs; preprod follows each
+   merge, see Pins), and the global preprod lock (`preprod.sh tick`).
 2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran).
 3. **Next item:** `buildqueue.py next` gives a due `<repo>/<slug>`; then the usage gate.
 4. **The repo:** `AGENT_REPO` from `~/.config/agent-runner/repos/<repo>.env`. Its `agents/runner.toml` and the plan are read from
@@ -320,6 +322,29 @@ GitHub Releases show what is on prod and preprod, for a repo whose `agents/runne
   A release step that failed after its tag was pushed is repaired by the next sync. `agent-runner versions status <repo>`
   shows the newest tag, the open pre-release and the newest full release. `--dry-run` works on `sync` and `promote`.
 - Only this runner code pushes tags or edits releases. Claude sessions never do.
+
+## Pins (`pins.py`)
+A parent repo (engineerfamily) pins each child repo (Strelitzia, Wordle) at a tag in `components.toml`; the runner moves
+those pins forward after child merges are tagged, so preprod runs the pinned set and the next `make prod-release` ships it.
+
+- **Opt-in by the file:** a registered repo with `components.toml` at the root of `origin/<base>` is a parent. Each table
+  with a `tag` is a component named after the child's registered repo (`[strelitzia]`, `[wordle]`); an unregistered name
+  is skipped with one `runs.log` line.
+- **Only forward, to the newest tag:** every tick, `pins.py sync` compares each pin with the child's newest `vX.Y.Z` tag on
+  origin. Newer → a PR on branch `pin/<name>`, labelled `pin-bump`, titled `Pin <name> <tag>`: one commit on
+  `origin/<base>` that changes only that component's `tag = "…"` line (comments and order kept), listing the child PRs
+  since the old pin. An open PR at an older tag (or on an older base) is updated in place by a force-push to `pin/<name>`;
+  a pin that is already newest closes it. No state: hand merges and missed ticks catch up. A pin PR you close is not
+  reopened (the next tag opens a new one), and an open PR on `pin/<name>` without the label is left alone.
+- **`hold = "reason"`** on a component stops its bumps (an open pin PR is closed); `runs.log` says so once.
+- **Merges on green CI, with no review:** `pins.py tick` reads each open `pin-bump` PR's CI once (no waiting): green →
+  `gh pr merge --<merge> --delete-branch` (`runs.log`: `pins: merged <parent>#<n> <name> <tag>`); pending → the next tick;
+  red → one notice. A PR whose diff is anything but `tag` lines in `components.toml` moving forward is never merged,
+  whoever pushed it: one comment and one notice. The merge is pinned to the head that was checked (`--match-head-commit`);
+  after several merges in one tick, the parent is redeployed once.
+- **Preprod follows:** after each merge the parent is tagged (with `[release]`) and preprod is redeployed on its base,
+  unless another PR holds the preprod lock (its release does it).
+- Claude can still move a pin in an ordinary plan. `agent-runner pins sync --dry-run` shows what sync would do.
 
 ## Queue from anywhere (`intake.py`)
 A plan pushed to a repo's base branch (from a Claude cloud session, the GitHub web editor, anywhere) can queue itself:

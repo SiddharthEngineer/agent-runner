@@ -1,5 +1,5 @@
 # Plan: the runner opens and merges "Pin <child> <tag>" PRs in a parent repo's components.toml
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** review (new merge path in `run.sh`: PRs merged without a Claude review)
 **Depends on:** engineerfamily E12 [components-1-pins](https://github.com/SiddharthEngineer/engineerfamily/blob/main/agents/plans/components-1-pins.md)
 (`components.toml` and `scripts/components.py`); queue after A23 and A24 (they edit `run.sh` too)
@@ -37,7 +37,7 @@ that branch at an older tag is updated in place (force-push, new title). Pin alr
 PR with a comment. `hold` → one `runs.log` line per tick change, no PR. `pins.py tick` (Task 2) does merges.
 **Validate:** `uv run --with pytest pytest tests/test_pins.py -q`: new tag → PR created with exactly one changed line;
 older open PR → updated; up to date → no call; `hold` → no PR; unregistered component → skipped; comments in the file kept.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (9d13560)
 
 ### Task 2: merge on green CI, then preprod follows
 **Runs:** unattended
@@ -50,7 +50,7 @@ for each `merged` line, `versions_sync <parent>` and the `preprod_follow` logic 
 repo name; the lock rule is unchanged). Every failure is one `runs.log` line and never stops the tick.
 **Validate:** `uv run --with pytest pytest tests/test_pins.py tests/test_run.py -q`: green → merged and the parent's preprod
 redeployed; red → one notice; a PR that also edits another file → not merged; a dry run calls neither.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (8ccb481)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -59,7 +59,7 @@ redeployed; red → one notice; a PR that also edits another file → not merged
 no review, `hold`, only forward to the newest tag, preprod follows); the tick list in "How a tick works" gains the step;
 the CLI table gets `pins`. AGENTS.md Map row. ROADMAP: A29 row.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (e772f56)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
