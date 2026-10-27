@@ -334,12 +334,14 @@ those pins forward after child merges are tagged, so preprod runs the pinned set
   origin. Newer → a PR on branch `pin/<name>`, labelled `pin-bump`, titled `Pin <name> <tag>`: one commit on
   `origin/<base>` that changes only that component's `tag = "…"` line (comments and order kept), listing the child PRs
   since the old pin. An open PR at an older tag (or on an older base) is updated in place by a force-push to `pin/<name>`;
-  a pin that is already newest closes it. No state: hand merges and missed ticks catch up.
+  a pin that is already newest closes it. No state: hand merges and missed ticks catch up. A pin PR you close is not
+  reopened (the next tag opens a new one), and an open PR on `pin/<name>` without the label is left alone.
 - **`hold = "reason"`** on a component stops its bumps (an open pin PR is closed); `runs.log` says so once.
 - **Merges on green CI, with no review:** `pins.py tick` reads each open `pin-bump` PR's CI once (no waiting): green →
   `gh pr merge --<merge> --delete-branch` (`runs.log`: `pins: merged <parent>#<n> <name> <tag>`); pending → the next tick;
-  red → one notice. A PR whose diff is anything but `tag` lines in `components.toml` is never merged, whoever pushed it: one
-  comment and one notice.
+  red → one notice. A PR whose diff is anything but `tag` lines in `components.toml` moving forward is never merged,
+  whoever pushed it: one comment and one notice. The merge is pinned to the head that was checked (`--match-head-commit`);
+  after several merges in one tick, the parent is redeployed once.
 - **Preprod follows:** after each merge the parent is tagged (with `[release]`) and preprod is redeployed on its base,
   unless another PR holds the preprod lock (its release does it).
 - Claude can still move a pin in an ordinary plan. `agent-runner pins sync --dry-run` shows what sync would do.

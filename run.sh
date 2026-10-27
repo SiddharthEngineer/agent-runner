@@ -131,20 +131,24 @@ repo_toml() (
 # preprod follows its new base (preprod_follow). Each failure is one runs.log line; it never stops the tick.
 pins_upkeep() {
     local cmd out rc line parent pr
+    local -A merged=()  # parent → its last merged pin PR: one redeploy per parent, after all its merges
     for cmd in sync tick; do
         out=$(python3 "$HERE/pins.py" "$cmd" 2>&1)
         rc=$?
         while IFS= read -r line <&3; do
             [ -n "$line" ] && say "pins: $line"
             [ "$cmd" = tick ] && [[ $line =~ ^merged\ ([a-z0-9-]+)#([0-9]+)\  ]] || continue
-            parent=${BASH_REMATCH[1]} pr=${BASH_REMATCH[2]}
-            if repo_toml "$parent"; then
-                preprod_follow "$parent" "$pr"
-            else
-                say "pins: can't read $parent's runner.toml, so preprod doesn't follow its PR #$pr"
-            fi
+            merged[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
         done 3<<< "$out"
         [ "$rc" = 0 ] || say "pins $cmd: exit $rc"
+    done
+    for parent in "${!merged[@]}"; do
+        pr=${merged[$parent]}
+        if repo_toml "$parent"; then
+            preprod_follow "$parent" "$pr"
+        else
+            say "pins: can't read $parent's runner.toml, so preprod doesn't follow its PR #$pr"
+        fi
     done
     return 0
 }

@@ -374,6 +374,13 @@ def test_merged_pin_pr_is_tagged_and_preprod_follows(runner, lock, release):
         assert "pins: preprod redeployed on engineerfamily's main after PR #12" in log
 
 
+def test_several_pin_merges_redeploy_the_parent_once(runner):
+    runner.register("engineerfamily")
+    runner(STUB_PINS_TICK="merged engineerfamily#12 strelitzia v1.0.1\nmerged engineerfamily#13 wordle v2.0.1")
+    assert runner.calls().count("preprod release engineerfamily") == 1
+    assert "preprod redeployed on engineerfamily's main after PR #13" in runner.runs_log()
+
+
 def test_failed_pin_redeploy_notifies_the_parent(runner):
     runner.register("engineerfamily")
     runner(STUB_PINS_TICK="merged engineerfamily#12 strelitzia v1.0.1", STUB_RELEASE_EXIT="1")

@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import config  # noqa: E402
 import versions  # noqa: E402
-from versions import Fail, Repo, gh  # noqa: E402
+from versions import Fail, Repo, gh, say  # noqa: E402
 
 COMPONENTS = "components.toml"
 LABEL = "pin-bump"
@@ -105,8 +105,23 @@ class Skip(Exception):
     pass
 
 
+CHILDREN: dict[str, tuple[Repo, list[str]] | Exception] = {}  # opened once per run, however many parents pin it
+
+
 def open_child(name: str) -> tuple[Repo, list[str]]:
     """The child's clone (tags fetched) and its vX.Y.Z tags on origin, oldest first. Skip if it isn't registered."""
+    if name not in CHILDREN:
+        try:
+            CHILDREN[name] = _open_child(name)
+        except (Skip, Fail) as exc:
+            CHILDREN[name] = exc
+    found = CHILDREN[name]
+    if isinstance(found, Exception):
+        raise found
+    return found
+
+
+def _open_child(name: str) -> tuple[Repo, list[str]]:
     if not config.NAME_RE.match(name) or not config.repo_env(name).get("AGENT_REPO"):
         raise Skip("not a registered repo")
     try:
@@ -145,24 +160,22 @@ class State:
         self.data.setdefault("notes", {})
         self.data.setdefault("notices", {})
 
-    def note(self, key: str, text: str | None) -> None:
-        """Print <text> when it differs from what was printed for <key> last time; None forgets <key>."""
+    def note(self, key: str, text: str | None) -> bool:
+        """Print <text> when it differs from what was printed for <key> last time (True); None forgets <key>."""
         if text is None:
             self.data["notes"].pop(key, None)
-            return
-        if self.dry_run or self.data["notes"].get(key) != text:
+            return False
+        new = self.dry_run or self.data["notes"].get(key) != text
+        if new:
             print(text)
         self.data["notes"][key] = text
+        return new
 
     def save(self) -> None:
         if self.dry_run:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(json.dumps(self.data, indent=1, sort_keys=True) + "\n")
-
-
-def say(dry_run: bool, text: str) -> None:
-    print(("would " if dry_run else "") + text)
 
 
 def pin_prs(repo: Repo) -> dict[str, dict]:
@@ -206,6 +219,10 @@ def sync_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
         key, branch = f"{repo.name}/{name}", f"pin/{name}"
         pr = prs.get(branch)
         try:
+            if pr and LABEL not in {label.get("name") for label in pr.get("labels") or []}:
+                state.note(key, f"{name}: open PR {repo.name}#{pr['number']} on {branch} isn't labelled {LABEL}, "
+                                "so sync leaves it alone")
+                continue
             if isinstance(table.get("hold"), str):
                 state.note(key, f"{name}: held in {repo.name} ({table['hold']}), no bumps")
                 if pr:
@@ -235,6 +252,9 @@ def sync_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
             current = branch_current(repo, branch, tree)
             if pr and current and pr["title"] == title:
                 continue
+            if not pr and closed_by_hand(repo, branch, title):
+                state.note(f"{key} closed", f"{name}: {title} was closed by hand in {repo.name}, not reopened (the next tag opens one)")
+                continue
             if dry_run:
                 say(True, f"{'update' if pr else 'open'} {repo.name} PR {title} on {branch}")
                 continue
@@ -255,9 +275,17 @@ def sync_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
                          "--title", title, "--body", pr_body, "--label", LABEL).strip().splitlines()[-1]
                 print(f"opened {repo.name}#{url.rstrip('/').rpartition('/')[2]}: {title}")
         except (Fail, subprocess.CalledProcessError, ValueError, KeyError) as exc:
-            print(f"{repo.name} {name}: {exc}")
-            ok = False
+            ok = not state.note(f"{key}!", f"{repo.name} {name}: {exc}") and ok  # a known failure stays quiet
+        else:
+            state.note(f"{key}!", None)
     return ok
+
+
+def closed_by_hand(repo: Repo, branch: str, title: str) -> bool:
+    """A closed (not merged) PR with this title on <branch>: you turned this bump down, so it isn't reopened."""
+    prs = json.loads(gh("pr", "list", "--repo", repo.github, "--state", "closed", "--head", branch, "--limit", "20",
+                        "--json", "title,state") or "[]")
+    return any(pr.get("title") == title and pr.get("state") != "MERGED" for pr in prs)
 
 
 def close(repo: Repo, pr: dict, why: str, dry_run: bool) -> None:
@@ -274,8 +302,9 @@ def each_parent(step, only: str | None, dry_run: bool) -> int:
             if found is not None:
                 ok = step(*found, state, dry_run) and ok
         except Fail as exc:
-            print(f"{exc}")
-            ok = False
+            ok = not state.note(f"{name}!", str(exc)) and ok
+        else:
+            state.note(f"{name}!", None)
     state.save()
     return 0 if ok else 1
 
@@ -294,8 +323,12 @@ def diff_problem(diff: str) -> str | None:
     other = next((line for line in changed if not DIFF_TAG_RE.match(line)), None)
     if other is not None:
         return f"it changes more than tag lines in {COMPONENTS}: `{other[:80]}`"
-    if sum(line[0] == "+" for line in changed) != sum(line[0] == "-" for line in changed):
+    old = [DIFF_TAG_RE.match(line)[1] for line in changed if line[0] == "-"]
+    new = [DIFF_TAG_RE.match(line)[1] for line in changed if line[0] == "+"]
+    if len(old) != len(new):
         return f"it adds or removes tag lines in {COMPONENTS}"
+    if any(versions.version(b) <= versions.version(a) for a, b in zip(old, new)):
+        return "it doesn't move every pin forward"
     return None
 
 
@@ -340,7 +373,7 @@ def tick_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
     except tomllib.TOMLDecodeError as exc:
         raise Fail(f"{repo.name}: {COMPONENTS} on origin/{repo.base} doesn't parse: {exc}") from exc
     prs = json.loads(gh("pr", "list", "--repo", repo.github, "--state", "open", "--base", repo.base, "--label", LABEL,
-                        "--limit", "100", "--json", "number,headRefName,title") or "[]")
+                        "--limit", "100", "--json", "number,headRefName,headRefOid,title") or "[]")
     seen = state.data["notices"]
     for key in [k for k in seen if k.partition("#")[0] == repo.name
                 and int(k.partition("#")[2]) not in {pr["number"] for pr in prs}]:
@@ -350,6 +383,8 @@ def tick_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
         n, key = pr["number"], f"{repo.name}#{pr['number']}"
         url = f"https://github.com/{repo.github}/pull/{n}"
         name = pr["headRefName"].removeprefix("pin/")
+        if not pr["headRefName"].startswith("pin/"):
+            continue  # labelled by hand: not a runner pin PR
         if name in held:
             continue  # sync closes it
         try:
@@ -360,11 +395,11 @@ def tick_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
                 if seen.get(key) != cause:
                     say(dry_run, f"refuse {key} ({pr['title']}): {why}")
                     if not dry_run:
+                        seen[key] = cause  # the comment once, even if the notice below fails
                         gh("pr", "comment", str(n), "--repo", repo.github, "--body",
                            f"Not merged by the runner: {why}. A pin-bump PR merges with no review only when its "
                            f"diff is nothing but `tag` lines in `{COMPONENTS}`. Merge or close it by hand.")
-                        if notify(repo, f"pin PR {key} not merged: {why}", f"{url} ({pr['title']}): {why}."):
-                            seen[key] = cause
+                        notify(repo, f"pin PR {key} not merged: {why}", f"{url} ({pr['title']}): {why}.")
                 continue
             tag = next(m[1] for line in diff.splitlines() if line.startswith("+") and (m := DIFF_TAG_RE.match(line)))
             status = ci(repo, n)
@@ -381,7 +416,8 @@ def tick_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
                 say(True, f"merge {key} {name} {tag}")
                 continue
             try:
-                gh("pr", "merge", str(n), "--repo", repo.github, f"--{repo.merge}", "--delete-branch")
+                gh("pr", "merge", str(n), "--repo", repo.github, f"--{repo.merge}", "--delete-branch",
+                   "--match-head-commit", pr["headRefOid"])  # only the head whose diff and CI were checked
             except Fail as exc:
                 if seen.get(key) != "merge failed" and notify(
                         repo, f"pin PR {key} merge failed", f"{url} ({pr['title']}): CI is green but {exc}."):
@@ -390,8 +426,10 @@ def tick_parent(repo: Repo, text: str, state: State, dry_run: bool) -> bool:
             seen.pop(key, None)
             print(f"merged {key} {name} {tag}")
         except (Fail, ValueError, KeyError, StopIteration) as exc:
-            print(f"{key}: {type(exc).__name__ if isinstance(exc, StopIteration) else exc}")
-            ok = False
+            why = "no tag line in the diff" if isinstance(exc, StopIteration) else exc
+            ok = not state.note(f"{key}!", f"{key}: {why}") and ok  # a known failure stays quiet
+        else:
+            state.note(f"{key}!", None)
     return ok
 
 

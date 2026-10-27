@@ -46,10 +46,15 @@ def opt(name, default=None):
 def find(n):
     return next(pr for pr in state["prs"] if pr["number"] == int(n))
 if args[:2] == ["pr", "list"]:
-    prs = [pr for pr in state["prs"] if pr["state"] == "open"]
+    prs = [pr for pr in state["prs"] if (pr["state"] == "open") == (opt("--state") == "open")]
     if "--label" in args:
         prs = [pr for pr in prs if opt("--label") in pr["labels"]]
-    print(json.dumps([{**pr, "labels": [{"name": n} for n in pr["labels"]]} for pr in prs]))
+    if "--head" in args:
+        prs = [pr for pr in prs if pr["headRefName"] == opt("--head")]
+    oid = lambda b: subprocess.run(["git", "-C", os.environ["GH_ORIGIN"], "rev-parse", "-q", "--verify", b],
+                                   capture_output=True, text=True).stdout.strip()
+    print(json.dumps([{**pr, "labels": [{"name": n} for n in pr["labels"]], "state": pr["state"].upper(),
+                       "headRefOid": oid(pr["headRefName"])} for pr in prs]))
 elif args[:2] == ["pr", "create"]:
     n = 10 + len(state["prs"])
     state["prs"].append({"number": n, "headRefName": opt("--head"), "title": opt("--title"), "body": opt("--body"),
@@ -167,7 +172,7 @@ def test_new_tag_opens_a_pr_changing_one_line(tmp_path):
     [pr] = w.prs()
     assert pr["headRefName"] == "pin/kid" and pr["title"] == "Pin kid v1.0.1" and pr["labels"] == ["pin-bump"]
     assert "- v1.0.1 · o/kid#7 Fix the chart, o/kid#8 Faster load" in pr["body"]
-    assert ["label", "create", "pin-bump"] == w.calls()[1][:3]
+    assert ["label", "create", "pin-bump"] in [c[:3] for c in w.calls()]
     diff = w.origin("diff", "main", "pin/kid")
     changed = [line for line in diff.splitlines() if line[:1] in "+-" and line[:3] not in ("+++", "---")]
     assert changed == ['-tag = "v1.0.0"  # the dashboard', '+tag = "v1.0.1"  # the dashboard']
@@ -297,7 +302,7 @@ def test_green_pr_is_merged_with_the_parents_method(tmp_path):
     out = tick(w, code)
     assert out.returncode == 0, out.stdout + out.stderr
     assert out.stdout.strip() == "merged parent#10 kid v1.0.1"
-    assert ["pr", "merge", "10", "--repo", "o/parent", "--squash", "--delete-branch"] in w.calls()
+    assert ["pr", "merge", "10", "--repo", "o/parent", "--squash", "--delete-branch"] in [c[:7] for c in w.calls()]
     assert w.prs()[0]["state"] == "merged" and notices(tmp_path) == []
 
 
@@ -364,3 +369,57 @@ def test_diff_problem():
     assert "adds or removes" in pins.diff_problem(head + '+tag = "v1.0.1"\n')
     assert "mode" in pins.diff_problem("diff --git a/components.toml b/components.toml\nold mode 100644\nnew mode 100755\n")
     assert pins.diff_problem("") == "its diff is empty"
+
+
+def test_pr_closed_by_hand_is_not_reopened_until_the_next_tag(tmp_path):
+    w = World(tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    set_pr(w, 10, state="closed")
+    out = w.run("sync")
+    assert "Pin kid v1.0.1 was closed by hand in parent, not reopened" in out.stdout and len(w.prs()) == 1
+    assert w.run("sync").stdout == ""
+    w.tag("kid", "v1.0.2")
+    assert "opened parent#11: Pin kid v1.0.2" in w.run("sync").stdout
+
+
+def test_unlabelled_pin_branch_pr_is_left_alone(tmp_path):
+    w = World(tmp_path)
+    w.tag("kid", "v1.0.1")
+    data = json.loads(w.state.read_text())
+    data["prs"].append({"number": 3, "headRefName": "pin/kid", "title": "mine", "body": "", "labels": [],
+                        "state": "open", "comments": []})
+    w.state.write_text(json.dumps(data))
+    out = w.run("sync")
+    assert "isn't labelled pin-bump, so sync leaves it alone" in out.stdout
+    assert writes(w) == [] and "pin/kid" not in w.origin("branch")
+
+
+def test_merge_is_pinned_to_the_checked_head(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    set_pr(w, 10, checks=["SUCCESS"])
+    tick(w, code)
+    merge = next(c for c in w.calls() if c[:2] == ["pr", "merge"])
+    assert merge[-2:] == ["--match-head-commit", w.origin("rev-parse", "pin/kid")]
+
+
+def test_failing_merge_is_logged_and_notified_once(tmp_path):
+    w = World(tmp_path)
+    code = inbox_stub(w, tmp_path)
+    w.tag("kid", "v1.0.1")
+    w.run("sync")
+    set_pr(w, 10, checks=["SUCCESS"], merge_fails=True)
+    first, second = tick(w, code), tick(w, code)
+    assert first.returncode == 1 and "parent#10: gh pr merge failed" in first.stdout
+    assert second.returncode == 0 and second.stdout == ""
+    assert len(notices(tmp_path)) == 1 and "merge failed" in notices(tmp_path)[0]
+
+
+def test_backward_pin_is_refused():
+    sys.path.insert(0, str(ROOT))
+    import pins
+    head = "diff --git a/components.toml b/components.toml\n--- a/components.toml\n+++ b/components.toml\n"
+    assert pins.diff_problem(head + '-tag = "v1.2.0"\n+tag = "v1.1.9"\n') == "it doesn't move every pin forward"

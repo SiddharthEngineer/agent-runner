@@ -1,5 +1,5 @@
 # Plan: the runner opens and merges "Pin <child> <tag>" PRs in a parent repo's components.toml
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27
 **Risk:** review (new merge path in `run.sh`: PRs merged without a Claude review)
 **Depends on:** engineerfamily E12 [components-1-pins](https://github.com/SiddharthEngineer/engineerfamily/blob/main/agents/plans/components-1-pins.md)
 (`components.toml` and `scripts/components.py`); queue after A23 and A24 (they edit `run.sh` too)
@@ -59,7 +59,7 @@ redeployed; red → one notice; a PR that also edits another file → not merged
 no review, `hold`, only forward to the newest tag, preprod follows); the tick list in "How a tick works" gains the step;
 the CLI table gets `pins`. AGENTS.md Map row. ROADMAP: A29 row.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ✅ 2026-10-27 (this commit)
+**Status:** ✅ 2026-10-27 (e772f56)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
