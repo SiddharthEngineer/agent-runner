@@ -427,6 +427,21 @@ def test_conflict_round_with_a_clean_merge_skips_claude(runner):
     assert runner.status(key) == "done", runner.runs_log() + runner.out.stderr
 
 
+def test_conflict_round_without_a_result_stays_a_conflict_round(runner):
+    runner.register("agent-runner", merge="squash", deploy=None)
+    runner.pr_branch("agent-runner", conflict=True)
+    key = "agent-runner/x"
+    runner.queue("add", "x", "--repo", "agent-runner")
+    runner.queue("set", key, "pr=9")
+    runner.queue("requeue", key, "--conflict", "--note", "PR #9 conflicts with main in README.md")
+    runner(STUB_RESULT=" ")  # Claude writes no usable result: a failed attempt
+    assert runner.status(key) == "queued", runner.runs_log() + runner.out.stderr
+    assert runner.queue("get", key, "conflict").stdout.strip() == "1"
+    runner(STUB_MERGEABLE="CONFLICTING")
+    assert all("conflicts with origin/main" in c for c in claude_calls(runner))
+    assert len(claude_calls(runner)) == 2
+
+
 def test_no_checks_on_a_conflicting_pr_says_conflict(runner):
     runner.register("agent-runner", merge="squash", deploy=None)
     runner.queue("add", "x", "--repo", "agent-runner")

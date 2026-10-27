@@ -276,7 +276,7 @@ def cmd_requeue(args: argparse.Namespace) -> int:
         # Triage found a transient cause: one fresh set of attempts, and a fresh session (the old one is what went wrong).
         it["notes"].append(f"Triage ({iso(now())}): {args.note}")
         it.update(status="queued", attempts=0, not_before=iso(now()), updated=iso(now()))
-        for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts"):
+        for stale in ("resume", "review_attempts", "preprod_verdict", "preprod_attempts", "conflict", "conflict_rounds"):
             it.pop(stale, None)
         save(data)
         print("queued")

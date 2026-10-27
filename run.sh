@@ -501,7 +501,8 @@ ${left:-nothing left}"
             elif [ $? = 4 ]; then
                 # Back to the implementer: the conflict round's PR goes through the gate, review and preprod again.
                 "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
-                "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
+                "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts review_verdict review_summary rerun
+                gh pr edit "$pr" --repo "$GH_REPO" --remove-label awaiting-preprod >/dev/null 2>&1
                 conflict_back "$pr"
             else
                 notify "PR #$pr passed preprod but not merged" "CI isn't green (or the merge failed): https://github.com/$GH_REPO/pull/$pr. It stays on preprod."
@@ -578,7 +579,7 @@ Findings: $(python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.arg
                 preprod_follow "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
             elif [ $? = 4 ]; then
-                "${Q[@]}" unset "$key" review_attempts
+                "${Q[@]}" unset "$key" review_attempts review_verdict review_summary rerun
                 conflict_back "$pr"
             else
                 "${Q[@]}" set "$key" status=blocked
@@ -742,7 +743,11 @@ for line in reversed(open(sys.argv[1], errors="replace").read().splitlines()):
 ' "$log")
 [ -n "$session_id" ] && "${Q[@]}" set "$key" "session_id=$session_id"
 say "$key: claude exit $code"
-[ -n "$conflict_round" ] && "${Q[@]}" unset "$key" conflict
+# A conflict round that wrote no result (crashed, timed out, usage limit, failed push) stays one: the next run starts the
+# merge again rather than running /implement on a finished plan.
+if [ -n "$conflict_round" ] && python3 -c 'import json,sys; sys.exit(not json.load(open(sys.argv[1])).get("status"))' "$result" 2>/dev/null; then
+    "${Q[@]}" unset "$key" conflict
+fi
 
 # A usage-limit exit isn't the plan's fault: give the attempt back and pause the queue.
 if [ ! -f "$result" ] && grep -qiE 'usage limit|rate.limit|limit reached' "$log"; then

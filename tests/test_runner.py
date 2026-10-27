@@ -155,6 +155,15 @@ def test_conflict_rounds_give_the_attempt_back_then_block(q):
     assert "Conflict (" in q("get", "plan-a", "notes").stdout
 
 
+def test_fresh_attempts_requeue_resets_conflict_rounds(q):
+    q("add", "plan-a", "--repo", "strelitzia")
+    for _ in range(3):
+        q("requeue", "plan-a", "--conflict", "--note", "x")
+    q("requeue", "plan-a", "--fresh-attempts", "--note", "triage")
+    assert q("get", "plan-a", "conflict_rounds").returncode == 1
+    assert q("requeue", "plan-a", "--conflict", "--note", "x").stdout.strip() == "queued"
+
+
 def test_conflict_round_cap_from_env(q, monkeypatch):
     monkeypatch.setenv("AGENT_MAX_CONFLICT_ROUNDS", "0")
     q("add", "plan-a", "--repo", "strelitzia")

@@ -1,5 +1,5 @@
 # Plan: Conflicting PRs: catch them before CI, merge the base, or send the implementer back
-**Status:** ❌ Not started
+**Status:** ✅ Done 2026-10-27 (all 3 tasks)
 **Risk:** low (run.sh merge path and queue bookkeeping; goes live only on install; runner programme PRs auto-merge on green CI, user 2026-10-19)
 **Depends on:** intake-2-wiring (both edit run.sh and tests/test_run.py)
 
@@ -91,3 +91,6 @@ None (low risk). After `agent-runner release --install`, the next conflicting ru
 3. A clean base merge on an approved PR goes straight to CI and merge without another review: the gate already saw the PR's own diff,
    and a clean merge adds only what's already on the base. A conflict round goes back through the normal `ready` path (gate, review).
 4. validator-loop-1 (fix rounds) may later fold conflict rounds into its round counter; this plan keeps them separate so it can merge first.
+5. (Implementation, from the self-review) A conflict round that ends without a result (crash, timeout, usage limit, failed push)
+   keeps `conflict=1`, so the next run starts the merge again; only a run with a result clears it. A triage re-queue
+   (`--fresh-attempts`) resets `conflict_rounds`. An approved PR sent back for a conflict round loses its stale verdicts.
