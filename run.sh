@@ -37,6 +37,12 @@ mkdir -p "$STATE/logs" "$STATE/results" "$STATE/worktrees" "$STATE/configs"
 Q=(python3 "$HERE/buildqueue.py")
 stamp() { date -u +%FT%TZ; }
 say() { echo "$(stamp) $*" >> "$STATE/runs.log"; }
+# cost <log> <role> <model>: a `cost` line in runs.log for the last Claude run in <log> (turns, tokens, API-equivalent USD).
+cost() {
+    local line
+    line=$(python3 "$HERE/usage.py" cost "$1" --role "$2" --key "$key" --model "$3" 2>/dev/null) && [ -n "$line" ] && say "$line"
+    return 0
+}
 dry() {  # dry <what>: in a dry run, log "would <what>" and stop here
     [ -n "$DRY" ] || return 0
     say "dry run: would $*"
@@ -217,6 +223,7 @@ result_json=sys.argv[4], pr_url=sys.argv[5], result_file=sys.argv[6]))' "$HERE/p
             --settings "$HERE/settings/triage.json" --permission-mode dontAsk --output-format json
     ) > "$tlog" 2>&1
     say "$key: triage exit $?"
+    cost "$tlog" triage claude-sonnet-5-5
     # The reply is the JSON object (the settings deny writes, so run.sh saves it). The last JSON line with one wins.
     python3 -c '
 import json, sys
@@ -477,6 +484,7 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
             --permission-mode dontAsk --output-format json
     ) >> "$plog" 2>&1
     say "$key: validator (preprod) exit $?"
+    cost "$plog" preprod claude-sonnet-5-5
     rm -rf "$tmpd"  # it holds the basic-auth password
     deployed=$(git -C "$pwt" rev-parse HEAD)
     git -C "$AGENT_REPO" worktree remove --force "$pwt"
@@ -570,7 +578,7 @@ if notes:
     print("\n".join(found or [body]))' 2>/dev/null
 }
 review_stage() {
-    local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit
+    local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit role
     pr=$("${Q[@]}" get "$key" pr)
     dry "run validator (review) for $key PR #$pr"
     usage_gate
@@ -594,6 +602,7 @@ review_stage() {
         model=${AGENT_REREVIEW_MODEL:-claude-sonnet-5-5}
         model_name=${model#claude-}
         mode="re-review, round $n/$max, ${model_name%%-[0-9]*}"
+        role=rereview
         limit=30m
         vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
 result_file=sys.argv[5], validate_full=sys.argv[6], since_sha=sys.argv[7], round=sys.argv[8], max_rounds=sys.argv[9],
@@ -602,6 +611,7 @@ findings=sys.argv[10]))' "$HERE/prompts/rereview-pr.md" "$GH_REPO" "$pr" "$(pr_p
     else
         model=claude-opus-5-5
         mode="review, opus"
+        role=review
         limit=1h
         vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
 result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL")
@@ -613,6 +623,7 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
             --settings "$vsettings" --permission-mode dontAsk --output-format json
     ) >> "$rlog" 2>&1
     say "$key: validator exit $?"
+    cost "$rlog" "$role" "$model"
     git -C "$AGENT_REPO" worktree remove --force "$rwt"
     verdict=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("verdict",""))' "$rresult" 2>/dev/null)
     summary=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("summary",""))' "$rresult" 2>/dev/null)
@@ -723,6 +734,9 @@ run_claude() {
             --permission-mode auto --permission-prompts none \
             --output-format json
     ) >> "$log" 2>&1
+    local code=$?
+    cost "$log" implement claude-opus-5-5
+    return $code
 }
 
 : > "$log"

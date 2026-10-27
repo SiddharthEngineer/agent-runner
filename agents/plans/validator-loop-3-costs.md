@@ -32,7 +32,7 @@ calls and appends the line to `runs.log` with a timestamp. `usage.py report [--d
 and by repo: runs, turns, USD. Note in the help text that USD is the API-equivalent figure, not a subscription charge.
 **Validate:** `uv run --with pytest pytest tests/test_usage.py tests/test_run.py -q` passes; a run test asserts one `cost … review`
 line; a report test sums two fixture lines.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: preprod validator reads text first
 **Runs:** unattended

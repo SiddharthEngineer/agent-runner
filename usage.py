@@ -18,6 +18,12 @@ Usage:
                      exit 10: a rule refuses; stdout's first line names it, the last line is the hours to pause
                      exit 11: usage unknown (probe failed) or bad settings; skip this tick
   usage.py status    both windows, every rule's verdict and which one holds the queue
+  usage.py cost <log> --role R --key K --model M
+                     one `cost` line from the run's last `--output-format json` result (nothing if it has none);
+                     run.sh appends it to runs.log after each Claude run
+  usage.py report [--days N]
+                     the `cost` lines of runs.log over the last N days (7), summed by role and by repo: runs, turns, USD.
+                     USD is the API-equivalent cost Claude reports, not a subscription charge.
 Standard library only.
 """
 
@@ -357,13 +363,102 @@ def cmd_status() -> int:
     return 0
 
 
+COST_RE = re.compile(r"^(\S+) cost (\S+) (\S+) (\S+) turns=(\d+) .*\busd=([0-9.]+)\s*$")
+
+
+def cost_line(lines: list[str], role: str, key: str, model: str) -> str | None:
+    """The `cost` line for the last result line in a run log, or None when the log has none."""
+    for line in reversed(lines):
+        try:
+            data = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(data, dict) or data.get("type") != "result":
+            continue
+        u = data.get("usage") if isinstance(data.get("usage"), dict) else {}
+        tokens = {name: int(u.get(field) or 0) for name, field in (
+            ("in", "input_tokens"), ("cache_read", "cache_read_input_tokens"),
+            ("cache_write", "cache_creation_input_tokens"), ("out", "output_tokens"))}
+        return (f"cost {key} {role} {model} turns={int(data.get('num_turns') or 0)} "
+                + " ".join(f"{k}={v}" for k, v in tokens.items())
+                + f" usd={float(data.get('total_cost_usd') or 0):.2f}")
+    return None
+
+
+def cmd_cost(args: list[str]) -> int:
+    if len(args) != 7 or args[1::2] != ["--role", "--key", "--model"]:
+        return _usage()
+    try:
+        lines = Path(args[0]).read_text(errors="replace").splitlines()
+    except OSError:
+        return 0
+    line = cost_line(lines, role=args[2], key=args[4], model=args[6])
+    if line:
+        print(line)
+    return 0
+
+
+def report(lines: list[str], since: datetime) -> str:
+    """Sums the `cost` lines stamped at or after `since` by role and by repo."""
+    by: dict[str, dict[str, list[float]]] = {"role": {}, "repo": {}}
+    for line in lines:
+        m = COST_RE.match(line)
+        if not m:
+            continue
+        try:
+            when = datetime.fromisoformat(m[1].replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when < since:
+            continue
+        for kind, name in (("role", m[3]), ("repo", m[2].split("/")[0])):
+            row = by[kind].setdefault(name, [0, 0, 0.0])
+            row[0] += 1
+            row[1] += int(m[5])
+            row[2] += float(m[6])
+    out = [f"Claude runs since {since:%Y-%m-%d %H:%M UTC} (USD: the API-equivalent cost, not a subscription charge)"]
+    if not by["role"]:
+        return out[0] + "\nNo runs."
+    for kind in ("role", "repo"):
+        out.append(f"By {kind}:")
+        rows = sorted(by[kind].items(), key=lambda kv: -kv[1][2])
+        out += [f"  {name:<14} {n:>4} runs {t:>6} turns  ${usd:,.2f}" for name, (n, t, usd) in rows]
+    n, t, usd = (sum(r[i] for r in by["role"].values()) for i in range(3))
+    out.append(f"  {'total':<14} {n:>4} runs {t:>6} turns  ${usd:,.2f}")
+    return "\n".join(out)
+
+
+def cmd_report(args: list[str]) -> int:
+    days = 7.0
+    if args:
+        if len(args) != 2 or args[0] != "--days":
+            return _usage()
+        try:
+            days = float(args[1])
+        except ValueError:
+            return _usage()
+    log = config.state_dir() / "runs.log"
+    lines = log.read_text(errors="replace").splitlines() if log.exists() else []
+    print(report(lines, datetime.now().astimezone() - timedelta(days=days)))
+    return 0
+
+
+def _usage() -> int:
+    print(__doc__.split("Usage:")[1].split("Standard")[0].rstrip(), file=sys.stderr)
+    return 2
+
+
 def main() -> int:
     config.load_env()  # ~/.config/agent-runner/env, so a plain shell gets the same settings as cron
+    args = sys.argv[1:]
+    if args and args[0] == "cost":
+        return cmd_cost(args[1:])
+    if args and args[0] == "report":
+        return cmd_report(args[1:])
     commands = {"check": cmd_check, "status": cmd_status}
-    if len(sys.argv) != 2 or sys.argv[1] not in commands:
-        print(__doc__.split("Usage:")[1].split("Standard")[0].rstrip(), file=sys.stderr)
-        return 2
-    return commands[sys.argv[1]]()
+    if len(args) != 1 or args[0] not in commands:
+        return _usage()
+    return commands[args[0]]()
 
 
 if __name__ == "__main__":

@@ -66,7 +66,7 @@ def runner(tmp_path):
     bin_dir = home / ".local/bin"  # run.sh resets PATH, with $HOME/.local/bin first
     bin_dir.mkdir(parents=True)
     # claude: writes $STUB_RESULT (default ready, PR 9) to the result file (or with $STUB_LIMIT, prints a usage-limit
-    # message instead) and prints a session id; triage prints $STUB_TRIAGE.
+    # message instead) and prints a result line (session id, turns, tokens, cost); triage prints $STUB_TRIAGE.
     write_stub(bin_dir / "claude", "claude",
                'if [[ "$*" == *", preprod stage"* ]]; then\n'
                '  ls "$(dirname "$(echo "$*" | grep -o -- "--mcp-config [^ ]*" | cut -d" " -f2)")" >> "$STUB_LOG.mcpdir"\n'
@@ -83,7 +83,8 @@ def runner(tmp_path):
                '  if [ -n "${STUB_LIMIT:-}" ]; then echo "Claude usage limit reached"\n'
                '  else printf "%s" "${STUB_RESULT:-$ready}" > "$AGENT_RESULT_FILE"; fi\n'
                'fi\n'
-               'echo \'{"session_id": "s1"}\'\n')
+               'echo \'{"type": "result", "session_id": "s1", "num_turns": 12, "total_cost_usd": 1.234, "usage": {"input_tokens": 5,'
+               ' "cache_read_input_tokens": 900, "cache_creation_input_tokens": 80, "output_tokens": 40}}\'\n')
     # gh: `pr checks` fails with $STUB_CHECKS (red; none: "no checks reported"; denied: no access to the check rollup);
     # `pr merge` exits $STUB_MERGE_EXIT; `run list` prints the run ids in $STUB_RUNS, and `run watch` fails for those in
     # $STUB_RUNS_RED; `pr view --json state` prints $STUB_PR_STATE (default OPEN). prstatus.py's `pr view --json body,state`
@@ -547,6 +548,8 @@ def test_review_approve_with_preprod_waits_for_preprod(runner):
     assert f"--settings {runner.state.parent}/runner/settings/validate.json" in claude
     assert "--permission-mode dontAsk" in claude
     assert runner.status(key) == "awaiting-preprod"
+    costs = [line.split(" ", 1)[1] for line in runner.runs_log().splitlines() if " cost " in line]
+    assert costs == [f"cost {key} review claude-opus-5-5 turns=12 in=5 cache_read=900 cache_write=80 out=40 usd=1.23"]
     assert not any(c.startswith("gh pr merge") for c in runner.calls())
     assert not (runner.state / "worktrees/engineerfamily/review-9").exists()
 
@@ -922,7 +925,8 @@ def test_no_triage_when_turned_off(runner):
 
 def test_no_triage_when_usage_gate_refuses(runner):
     # usage.py check: the implementer's gate passes, the second check (triage's) is at the limit.
-    (runner.code / "usage.py").write_text("import os, sys\nf = os.environ['STUB_LOG'] + '.usage'\n"
+    (runner.code / "usage.py").write_text("import os, sys\nsys.argv[1] == 'check' or sys.exit(0)\n"
+                                          "f = os.environ['STUB_LOG'] + '.usage'\n"
                                           "n = len(open(f).read()) if os.path.exists(f) else 0\n"
                                           "open(f, 'a').write('x')\nsys.exit(10 if n else 0)\n")
     runner.register("engineerfamily")
@@ -937,10 +941,12 @@ def test_no_triage_when_usage_gate_refuses(runner):
 
 
 def usage_stub(runner, code: int, out: str, then: tuple[int, str] | None = None) -> None:
-    """usage.py check: prints `out` and exits `code`; with `then`, only the first call does, and later calls use `then`."""
+    """usage.py check: prints `out` and exits `code`; with `then`, only the first call does, and later calls use `then`.
+    Other subcommands (`cost`) print nothing."""
     later = then or (code, out)
     (runner.code / "usage.py").write_text(
-        "import os, sys\nf = os.environ['STUB_LOG'] + '.usage'\nn = os.path.exists(f)\nopen(f, 'a').write('x')\n"
+        "import os, sys\nsys.argv[1] == 'check' or sys.exit(0)\n"
+        "f = os.environ['STUB_LOG'] + '.usage'\nn = os.path.exists(f)\nopen(f, 'a').write('x')\n"
         f"code, out = {later!r} if n else {(code, out)!r}\nprint(out)\nsys.exit(code)\n")
 
 
