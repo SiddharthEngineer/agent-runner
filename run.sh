@@ -431,7 +431,7 @@ closed_by_hand() {
 STORAGE_STATE=$HOME/.config/agent-runner/preprod-storage-state.json  # the dev test account's session (ROADMAP AM3)
 preprod_stage() {
     local pr url host base_url netrc_env netrc signed tmpd pwt presult plog vsettings vprompt verdict summary left tries held
-    local comment left_count since
+    local comment left_count since deployed
     pr=$("${Q[@]}" get "$key" pr)
     url=$(cfg preprod.health | head -n1 | cut -f1)
     host=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).hostname or "")' "$url")
@@ -478,6 +478,7 @@ base_url=sys.argv[5], result_file=sys.argv[6], signed_in=sys.argv[7], netrc_file
     ) >> "$plog" 2>&1
     say "$key: validator (preprod) exit $?"
     rm -rf "$tmpd"  # it holds the basic-auth password
+    deployed=$(git -C "$pwt" rev-parse HEAD)
     git -C "$AGENT_REPO" worktree remove --force "$pwt"
     field() { python3 -c 'import json,sys; v = json.load(open(sys.argv[1])).get(sys.argv[2], ""); print("\n".join(f"- {x}" for x in v) if isinstance(v, list) else v)' "$presult" "$1" 2>/dev/null; }
     verdict=$(field verdict)
@@ -516,7 +517,7 @@ ${left:-nothing left}"
             elif [ $? = 4 ]; then
                 # Back to the implementer: the conflict round's PR goes through the gate, review and preprod again.
                 "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1
-                "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts review_verdict review_summary rerun
+                "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts review_verdict review_summary rerun reviewed_sha
                 gh pr edit "$pr" --repo "$GH_REPO" --remove-label awaiting-preprod >/dev/null 2>&1
                 conflict_back "$pr"
             else
@@ -524,7 +525,7 @@ ${left:-nothing left}"
             fi ;;
         changes)
             "${Q[@]}" unset "$key" preprod_verdict preprod_attempts review_attempts
-            "${Q[@]}" set "$key" rerun=preprod
+            "${Q[@]}" set "$key" rerun=preprod "reviewed_sha=$deployed"  # the next review is a re-review of the fix
             if [ "$("${Q[@]}" requeue "$key" --fix --stage preprod --note "Preprod checks of PR #$pr failed: $summary
 Failed steps:
 $(field failed)")" = blocked ]; then
@@ -546,8 +547,30 @@ if key=$("${Q[@]}" oldest on-preprod --without preprod_verdict); then
 fi
 
 # 3b. Review stage (design D3): a `review` PR the implementer called ready gets a fresh-context validator run first.
+# last_round: the newest fix-round note of the item: its round, its max rounds, then its findings one per line
+# (a review round's findings list, or a preprod round's failed steps). Nothing when there is no round note.
+last_round() {
+    "${Q[@]}" get "$key" notes 2>/dev/null | python3 -c '
+import json, re, sys
+notes = [n for n in json.load(sys.stdin) if re.match(r"(Review|Preprod) validator, round \d+/\d+", n)]
+if notes:
+    note = notes[-1]
+    m = re.match(r"(Review|Preprod) validator, round (\d+)/(\d+) \([^)]*\): ", note)
+    body = note[m.end():] if m else note
+    found = []
+    if "\nFindings: " in body:
+        try:
+            found = [str(x) for x in json.loads(body.split("\nFindings: ", 1)[1])]
+        except ValueError:
+            pass
+    elif "\nFailed steps:\n" in body:
+        found = [line.removeprefix("- ") for line in body.split("\nFailed steps:\n", 1)[1].splitlines() if line.strip()]
+    r = re.match(r"\S+ validator, round (\d+)/(\d+)", note)
+    print(r[1], r[2], sep="\n")
+    print("\n".join(found or [body]))' 2>/dev/null
+}
 review_stage() {
-    local pr rwt rresult rlog vsettings vprompt verdict summary tries
+    local pr rwt rresult rlog vsettings vprompt verdict summary tries head since round n max findings model model_name mode limit
     pr=$("${Q[@]}" get "$key" pr)
     dry "run validator (review) for $key PR #$pr"
     usage_gate
@@ -560,13 +583,34 @@ review_stage() {
         || { say "$key: can't check out PR #$pr for review"; return 0; }
     vsettings=$rwt/agents/settings/validate.json
     [ -f "$vsettings" ] || vsettings=$HERE/settings/validate.json
-    vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
+    head=$(git -C "$rwt" rev-parse HEAD)
+    since=$("${Q[@]}" get "$key" reviewed_sha 2>/dev/null)
+    round=$(last_round)
+    { read -r n; read -r max; findings=$(cat); } <<< "$round"
+    # After a fix round, a scoped re-review (on Sonnet) of the fix since the reviewed sha, with the newest round's findings;
+    # else (the first review, a force-push, no sha) the full review on Opus.
+    if [ "$("${Q[@]}" get "$key" fix_rounds 2>/dev/null || echo 0)" -gt 0 ] && [ -n "$since" ] && [ -n "$round" ] \
+        && git -C "$rwt" merge-base --is-ancestor "$since" HEAD 2>/dev/null; then
+        model=${AGENT_REREVIEW_MODEL:-claude-sonnet-5-5}
+        model_name=${model#claude-}
+        mode="re-review, round $n/$max, ${model_name%%-[0-9]*}"
+        limit=30m
+        vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
+result_file=sys.argv[5], validate_full=sys.argv[6], since_sha=sys.argv[7], round=sys.argv[8], max_rounds=sys.argv[9],
+findings=sys.argv[10]))' "$HERE/prompts/rereview-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL" \
+            "$since" "$n" "$max" "$findings")
+    else
+        model=claude-opus-5-5
+        mode="review, opus"
+        limit=1h
+        vprompt=$(python3 -c 'import sys; print(open(sys.argv[1]).read().format(repo=sys.argv[2], pr=sys.argv[3], plan_path=sys.argv[4],
 result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.md" "$GH_REPO" "$pr" "$(pr_plan "$rwt")" "$rresult" "$VALIDATE_FULL")
-    say "$key: validator (review) start for PR #$pr (log $rlog)"
+    fi
+    say "$key: validator ($mode) start for PR #$pr (log $rlog)"
     (
         cd "$rwt" || exit 1
-        AGENT_SLUG=$key AGENT_RESULT_FILE=$rresult timeout --kill-after=2m 1h claude -p "$vprompt" --model claude-opus-5-5 --settings "$vsettings" \
-            --permission-mode dontAsk --output-format json
+        AGENT_SLUG=$key AGENT_RESULT_FILE=$rresult timeout --kill-after=2m "$limit" claude -p "$vprompt" --model "$model" \
+            --settings "$vsettings" --permission-mode dontAsk --output-format json
     ) >> "$rlog" 2>&1
     say "$key: validator exit $?"
     git -C "$AGENT_REPO" worktree remove --force "$rwt"
@@ -575,7 +619,8 @@ result_file=sys.argv[5], validate_full=sys.argv[6]))' "$HERE/prompts/review-pr.m
     # A list field of the review result as JSON ([] when missing, empty or not a list).
     rfield() { python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print(json.dumps(v if isinstance(v, list) else []))' "$rresult" "$1" 2>/dev/null || echo '[]'; }
     case $verdict in
-        changes|approve|blocked) "${Q[@]}" set "$key" "review_verdict=$verdict" "review_summary=$summary" ;;
+        # reviewed_sha: what the next re-review diffs from (a run without a verdict keeps the previous one)
+        changes|approve|blocked) "${Q[@]}" set "$key" "review_verdict=$verdict" "review_summary=$summary" "reviewed_sha=$head" ;;
     esac
     [ "$verdict" = approve ] && "${Q[@]}" unset "$key" rerun
     case $verdict in
@@ -597,7 +642,7 @@ Findings: $(rfield findings)" --unresolved "$(rfield unresolved)")" = blocked ];
                 preprod_follow "$pr"
                 notify "merged PR #$pr after review" "The validator approved it and CI is green: https://github.com/$GH_REPO/pull/$pr"
             elif [ $? = 4 ]; then
-                "${Q[@]}" unset "$key" review_attempts review_verdict review_summary rerun
+                "${Q[@]}" unset "$key" review_attempts review_verdict review_summary rerun reviewed_sha
                 conflict_back "$pr"
             else
                 "${Q[@]}" set "$key" status=blocked

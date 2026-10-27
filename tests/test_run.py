@@ -652,6 +652,89 @@ def test_resume_after_changes_is_a_fix_round(runner):
     assert runner.queue("get", key, "attempts").stdout.strip() == "1"
 
 
+def push_pr_head(tmp_path, amend=False, name="engineerfamily"):
+    """A new head for PR #9: a fix commit on top (the implementer's fix round), or with amend, a rewritten one (a force-push)."""
+    work, origin = tmp_path / f"{name}-work", tmp_path / f"{name}.git"
+    git = ["git", "-C", str(work), "-c", "user.email=t@e", "-c", "user.name=t"]
+    (work / "fix.py").write_text("fixed\n")
+    subprocess.run([*git, "add", "fix.py"], check=True)
+    subprocess.run([*git, "commit", "-q", *(["--amend", "--no-edit"] if amend else ["-m", "fix"])], check=True)
+    subprocess.run([*git, "push", "-qf", str(origin), "HEAD:refs/pull/9/head"], check=True)
+    return subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+
+
+def pr_head_sha(tmp_path, name="engineerfamily"):
+    return subprocess.run(["git", "-C", str(tmp_path / f"{name}.git"), "rev-parse", "refs/pull/9/head"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_first_review_is_opus_with_the_full_prompt(runner, tmp_path):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("changes"))
+    [claude] = claude_calls(runner)
+    assert "--model claude-opus-5-5" in claude and "Run the `/code-review` skill" in claude and "Re-review" not in claude
+    assert "validator (review, opus) start for PR #9" in runner.runs_log()
+    assert runner.queue("get", key, "reviewed_sha").stdout.strip() == pr_head_sha(tmp_path)
+
+
+def test_review_after_a_fix_is_a_scoped_sonnet_rereview(runner, tmp_path):
+    key = awaiting_review(runner)
+    reviewed = pr_head_sha(tmp_path)
+    runner(STUB_REVIEW=verdict("changes", "fix the bug"))
+    push_pr_head(tmp_path)
+    runner.queue("set", key, "status=awaiting-review")
+    runner(STUB_REVIEW=json.dumps({"verdict": "approve", "summary": "s", "findings": [], "unresolved": []}))
+    rereview = claude_calls(runner)[-1]
+    assert "--model claude-sonnet-5-5" in rereview and "Re-review (round 1 of 3)" in rereview
+    assert f"git diff {reviewed}..HEAD" in rereview and "a.py:1: bug" in rereview and "/code-review` skill" not in rereview
+    assert "validator (re-review, round 1/3, sonnet) start for PR #9" in runner.runs_log()
+    assert runner.status(key) == "awaiting-preprod"
+
+
+def test_rereview_model_can_be_overridden(runner, tmp_path):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("changes"))
+    push_pr_head(tmp_path)
+    runner.queue("set", key, "status=awaiting-review")
+    runner(STUB_REVIEW=verdict("approve"), AGENT_REREVIEW_MODEL="claude-haiku-5-5")
+    assert "--model claude-haiku-5-5" in claude_calls(runner)[-1]
+    assert "validator (re-review, round 1/3, haiku)" in runner.runs_log()
+
+
+def test_review_after_preprod_changes_rereviews_the_failed_steps(runner, tmp_path):
+    key = on_preprod(runner, fix_rounds=0)
+    deployed = pr_head_sha(tmp_path)
+    runner(STUB_PREPROD=preprod_verdict("changes", failed=["3. the page is blank"]))
+    assert runner.queue("get", key, "reviewed_sha").stdout.strip() == deployed
+    push_pr_head(tmp_path)
+    runner.queue("set", key, "status=awaiting-review")
+    runner(STUB_REVIEW=verdict("approve"))
+    rereview = claude_calls(runner)[-1]
+    assert "--model claude-sonnet-5-5" in rereview and "Re-review (round 1 of 3)" in rereview
+    assert f"git diff {deployed}..HEAD" in rereview and "3. the page is blank" in rereview
+
+
+def test_review_after_a_force_push_falls_back_to_opus(runner, tmp_path):
+    key = awaiting_review(runner)
+    runner(STUB_REVIEW=verdict("changes"))
+    push_pr_head(tmp_path, amend=True)
+    runner.queue("set", key, "status=awaiting-review")
+    runner(STUB_REVIEW=verdict("approve"))
+    review = claude_calls(runner)[-1]
+    assert "--model claude-opus-5-5" in review and "Re-review" not in review
+    assert runner.runs_log().count("validator (review, opus) start") == 2
+
+
+def test_review_without_a_verdict_keeps_the_reviewed_sha(runner, tmp_path):
+    key = awaiting_review(runner)
+    reviewed = pr_head_sha(tmp_path)
+    runner(STUB_REVIEW=verdict("changes"))
+    push_pr_head(tmp_path)
+    runner.queue("set", key, "status=awaiting-review")
+    runner()  # no result file
+    assert runner.queue("get", key, "reviewed_sha").stdout.strip() == reviewed
+
+
 def test_review_missing_result_twice_blocks(runner):
     key = awaiting_review(runner)
     runner()
