@@ -40,7 +40,7 @@ GitHub runs no `pull_request` CI on a PR that conflicts with its base, so today 
 Over `AGENT_MAX_CONFLICT_ROUNDS` (default 2) it sets `blocked` instead and prints `blocked`. Otherwise prints `queued`.
 **Validate:** `uv run --with pytest pytest tests/test_runner.py -q` → passes with tests for: round 1 and 2 queued with attempts unchanged
 after the next `start`; round 3 blocked; `--conflict` and `--fresh-attempts` together is a usage error.
-**Status:** ❌
+**Status:** ✅ 2026-10-27
 
 ### Task 2: run.sh: detect, merge the base, conflict rounds
 **Runs:** unattended
