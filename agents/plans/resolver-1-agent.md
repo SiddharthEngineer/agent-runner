@@ -55,7 +55,7 @@ and the PR status line. resolver-2 wires it into run.sh.
 **What:** `awaiting-resolve` renders a first line `🔁 Resolver is trying one fix: <block_title>` and marks the stage it stopped at
 (`block_stage`) 🔁. A `blocked` item with `resolve_tried=1` adds "the resolver tried once" to the blocked line.
 **Validate:** `uv run --with pytest pytest tests/test_prstatus.py -q` → passes with one test per case.
-**Status:** ❌
+**Status:** ✅ 2026-10-27 (this commit: prstatus awaiting-resolve)
 
 ## Validation
 - `scripts/validate.sh` passes.
