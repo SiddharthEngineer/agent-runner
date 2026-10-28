@@ -1,5 +1,5 @@
 # Plan: preprod deploys name a tag or a branch; the runner stops opening pin PRs
-**Status:** ❌ Not started
+**Status:** 🟡 In progress
 **Risk:** low (runner code only; goes live when the user installs a release)
 **Depends on:** A29 [runner-16-pins](plans/done/runner-16-pins.md) (the code this removes)
 **Queue:** after strelitzia/job-edit-delete (queued by hand 2026-10-28; intake isn't on, AM10)
@@ -38,7 +38,7 @@ User, 2026-10-28: prod is pinned in Git, preprod floats. A pin-bump PR plus an e
 **What:** `git log --oneline origin/main -- pins.py` shows A29's commits; `grep -n pins_upkeep run.sh` finds it. If either is
 missing, stop and report (someone already changed this area).
 **Validate:** both found.
-**Status:** ❌
+**Status:** ✅ 2026-10-28 (no commit: checks only)
 
 ### Task 1: preprod deploys by branch or tag
 **Runs:** unattended
@@ -57,7 +57,7 @@ missing, stop and report (someone already changed this area).
 **Validate:** `uv run --with pytest pytest tests/test_preprod.py -q`: a PR deploy fetches `refs/heads/<branch>` and passes the
 branch name to `{branch}`; a moved branch fails the deploy and restores the base; a release with a tagged base checks out
 the tag; an untagged base checks out the branch; `{sha}` still expands.
-**Status:** ❌
+**Status:** ✅ 2026-10-28 (this commit)
 
 ### Task 2: remove the pin PRs
 **Runs:** unattended

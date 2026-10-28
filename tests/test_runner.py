@@ -464,17 +464,20 @@ deploy = "{deploy}"
 def preprod(tmp_path):
     """preprod.sh against temp repos: an origin with agents/runner.toml on trunk, a dev clone (AGENT_REPO), a stub gh.
 
-    pp.config(name, deploy, extra) writes that repo's runner.toml and repos/<name>.env; pp(script) sources preprod.sh with
-    sleep and health_check stubbed, then runs the script. Commands write to pp.log.
+    pp.config(name, deploy, extra) writes that repo's runner.toml and repos/<name>.env, and points the origin's `feature`
+    branch (the PR's head, as the stub gh reports it from <name>-pr) at it; pp(script) sources preprod.sh with sleep and
+    health_check stubbed, then runs the script. Commands write to pp.log.
     """
     log = tmp_path / "log"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     gh = bin_dir / "gh"
     gh.write_text(
-        "#!/usr/bin/env python3\nimport sys\n"
+        "#!/usr/bin/env python3\nimport pathlib, sys\n"
         f"open({str(log)!r}, 'a').write('gh ' + ' '.join(sys.argv[1:]) + '\\n')\n"
-        "if 'headRefOid' in sys.argv: print('abc123')\n"
+        "if 'headRefOid,headRefName' in sys.argv:\n"
+        f"    pr = pathlib.Path({str(tmp_path)!r}, sys.argv[sys.argv.index('--repo') + 1].split('/')[1] + '-pr')\n"
+        "    print(pr.read_text().strip() if pr.exists() else 'abc123 feature')\n"
         "if '.state' in sys.argv: print('OPEN')\n"
     )
     gh.chmod(0o755)
@@ -493,6 +496,8 @@ def preprod(tmp_path):
         (origin / "agents" / "runner.toml").write_text(text)
         git("-C", str(origin), "add", "-A")
         git("-C", str(origin), "commit", "-qm", "config")
+        git("-C", str(origin), "branch", "-f", "feature", "HEAD")
+        (tmp_path / f"{name}-pr").write_text(git("-C", str(origin), "rev-parse", "HEAD") + " feature\n")
         if not clone.exists():
             git("clone", "-q", str(origin), str(clone))
         repos = tmp_path / ".config/agent-runner/repos"
@@ -533,11 +538,13 @@ def test_preprod_busy_names_the_holder(preprod):
 
 
 def test_preprod_deploy_uses_runner_toml_from_base(preprod):
-    preprod.config("strelitzia", "echo deploy {sha} >> LOG", 'seed = "echo seeded >> LOG"')
+    origin = preprod.config("strelitzia", "echo deploy {branch} {sha} >> LOG", 'seed = "echo seeded >> LOG"')
+    sha = preprod.git("-C", str(origin), "rev-parse", "HEAD")
     out = preprod("cmd_deploy strelitzia 7")
     assert out.returncode == 0, out.stdout + out.stderr
-    assert "deploy abc123" in preprod.log() and "seeded" in preprod.log()
-    assert preprod.lock.read_text().startswith("strelitzia\t7\tabc123\t")
+    assert f"deploy feature {sha}" in preprod.log() and "seeded" in preprod.log()
+    assert f"deploying strelitzia#7: branch feature at {sha}" in out.stdout
+    assert preprod.lock.read_text().startswith(f"strelitzia\t7\t{sha}\t")
     assert "gh pr comment 7 --repo o/strelitzia" in preprod.log()
 
 
@@ -553,7 +560,7 @@ def test_preprod_deploy_output_goes_to_its_own_log(preprod, tmp_path):
 
 def test_preprod_failed_deploy_command_shows_the_log_tail(preprod):
     preprod.config("strelitzia", "seq 1 30; echo 'ERROR: build broke'; false")
-    out = preprod("load_repo strelitzia && deploy_ref pull/7/head abc123")
+    out = preprod("load_repo strelitzia && deploy_ref branch feature $(git -C \"$AGENT_REPO\" rev-parse origin/feature)")
     assert out.returncode == 1
     assert "deploy command failed; last lines of" in out.stderr
     assert "    ERROR: build broke" in out.stderr and "    17\n" in out.stderr and "    16\n" not in out.stderr
@@ -570,22 +577,85 @@ def test_preprod_tick_is_quiet_when_nothing_changes(preprod, tmp_path, lock):
     assert preprod("cmd_status").stdout.startswith("preprod: held by" if lock else "preprod: free")
 
 
-def test_preprod_app_dir_checks_out_the_sha(preprod, tmp_path):
+def pr_commit(preprod, origin, tmp_path, name: str, text: str = "pr change") -> str:
+    """A commit on the origin's `feature` branch only (the PR head, as the stub gh reports it); trunk stays put."""
+    (origin / "x").write_text(text + "\n")
+    preprod.git("-C", str(origin), "add", "-A")
+    preprod.git("-C", str(origin), "commit", "-qm", "pr")
+    sha = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    preprod.git("-C", str(origin), "branch", "-f", "feature", sha)
+    preprod.git("-C", str(origin), "reset", "-q", "--hard", "HEAD~1")
+    (tmp_path / f"{name}-pr").write_text(f"{sha} feature\n")
+    return sha
+
+
+def test_preprod_app_dir_checks_out_the_branch(preprod, tmp_path):
     origin = preprod.config("strelitzia", "true")
     app = tmp_path / "app"
     preprod.git("clone", "-q", str(origin), str(app))
     head = preprod.git("-C", str(origin), "rev-parse", "HEAD")
-    preprod.config("strelitzia", f"git -C {app} rev-parse HEAD >> LOG", f'app_dir = "{app}"')
-    (origin / "x").write_text("pr change\n")
-    preprod.git("-C", str(origin), "add", "-A")
-    preprod.git("-C", str(origin), "commit", "-qm", "pr")
-    pr_sha = preprod.git("-C", str(origin), "rev-parse", "HEAD")
-    preprod.git("-C", str(origin), "update-ref", "refs/pull/7/head", pr_sha)
-    preprod.git("-C", str(origin), "reset", "-q", "--hard", "HEAD~1")
+    preprod.config("strelitzia", f"echo {{branch}} $(git -C {app} rev-parse HEAD) >> LOG", f'app_dir = "{app}"')
+    pr_sha = pr_commit(preprod, origin, tmp_path, "strelitzia")
     assert head != pr_sha
-    out = preprod(f'load_repo strelitzia && deploy_ref pull/7/head {pr_sha}')
+    out = preprod("cmd_deploy strelitzia 7")
     assert out.returncode == 0, out.stdout + out.stderr
-    assert [line for line in preprod.log().split() if line != "slept"] == [pr_sha]
+    assert [line for line in preprod.log().splitlines() if not line.startswith(("slept", "gh "))] == [f"feature {pr_sha}"]
+
+
+def test_preprod_branch_moved_since_approval_fails_and_restores_base(preprod, tmp_path):
+    origin = preprod.config("strelitzia", "echo deploy {branch} {sha} >> LOG")
+    base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    approved = pr_commit(preprod, origin, tmp_path, "strelitzia")
+    moved = pr_commit(preprod, origin, tmp_path, "strelitzia", "pushed after review")
+    (tmp_path / "strelitzia-pr").write_text(f"{approved} feature\n")
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    items = {"strelitzia/a": {"repo": "strelitzia", "status": "awaiting-preprod", "pr": 7,
+                              "updated": "2026-10-19T01:00:00+00:00"}}
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
+    out = preprod("cmd_deploy strelitzia 7")
+    assert out.returncode == 1, out.stdout + out.stderr
+    assert f"preprod: feature moved since it was approved ({approved} → {moved})" in out.stdout
+    assert "deploy of strelitzia#7 failed; restoring trunk" in out.stdout
+    assert "deploy feature" not in preprod.log() and f"deploy trunk {base}" in preprod.log()
+    item = json.loads((state / "queue.json").read_text())["items"]["strelitzia/a"]
+    assert item["status"] == "blocked" and item["deploy_failed"].startswith("preprod: feature moved since it was approved")
+    assert not preprod.lock.exists()
+
+
+def test_preprod_release_with_tags_deploys_the_newest_tag_on_base(preprod, tmp_path):
+    origin = preprod.config("strelitzia", "true")
+    app = tmp_path / "app"
+    preprod.git("clone", "-q", str(origin), str(app))
+    preprod.config("strelitzia", f"echo {{branch}} {{sha}} $(git -C {app} describe --tags --exact-match) >> LOG",
+                   f'app_dir = "{app}"\n[release]\ntags = true')
+    base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    for tag in ("v1.2.9", "v1.2.10"):
+        preprod.git("-C", str(origin), "tag", "-a", tag, "-m", tag)
+    out = preprod("cmd_release strelitzia")
+    assert out.returncode == 0 and "preprod reset to strelitzia v1.2.10" in out.stdout, out.stdout + out.stderr
+    assert f"v1.2.10 {base} v1.2.10" in preprod.log()
+
+
+def test_preprod_release_with_tags_but_untagged_base_deploys_the_branch(preprod):
+    origin = preprod.config("strelitzia", "echo deploy {branch} {sha} >> LOG", "[release]\ntags = true")
+    preprod.git("-C", str(origin), "tag", "v1.0.0")
+    preprod.git("-C", str(origin), "commit", "-q", "--allow-empty", "-m", "untagged")
+    base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    out = preprod("cmd_release strelitzia")
+    assert out.returncode == 0 and "preprod reset to strelitzia trunk" in out.stdout, out.stdout + out.stderr
+    assert f"deploy trunk {base}" in preprod.log()
+    assert f"preprod: strelitzia's trunk ({base}) has no vX.Y.Z tag yet, so preprod gets the branch" in out.stderr
+
+
+def test_preprod_release_command_gets_the_tag_and_sha(preprod):
+    origin = preprod.config("engineerfamily", "echo deploy {branch} >> LOG",
+                            'release = "echo release ref={branch} sha={sha} >> LOG"\n[release]\ntags = true')
+    base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    preprod.git("-C", str(origin), "tag", "v2.0.1")
+    out = preprod("cmd_release engineerfamily")
+    assert out.returncode == 0 and "preprod reset to engineerfamily v2.0.1" in out.stdout, out.stdout + out.stderr
+    assert preprod.log().strip() == f"release ref=v2.0.1 sha={base}"
 
 
 def test_preprod_refuses_prod_command(preprod):
@@ -597,13 +667,13 @@ def test_preprod_refuses_prod_command(preprod):
 
 
 def test_preprod_release_defaults_to_deploy_at_base(preprod):
-    origin = preprod.config("engineerfamily", "echo deploy {sha} >> LOG")
+    origin = preprod.config("engineerfamily", "echo deploy {branch} {sha} >> LOG")
     base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
     preprod.lock.parent.mkdir(parents=True, exist_ok=True)
     preprod.lock.write_text("engineerfamily\t5\tabc123\t2026-10-19T00:00:00Z\n")
     out = preprod("cmd_release")
     assert out.returncode == 0 and "preprod reset to engineerfamily trunk" in out.stdout
-    assert f"deploy {base}" in preprod.log() and not preprod.lock.exists()
+    assert f"deploy trunk {base}" in preprod.log() and not preprod.lock.exists()
 
 
 def test_preprod_tick_picks_oldest_across_repos(preprod, tmp_path):
