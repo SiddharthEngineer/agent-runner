@@ -77,11 +77,11 @@ class Health:
 
 @dataclass(frozen=True)
 class Preprod:
-    deploy: str  # may contain {sha}
-    release: str | None = None  # default: deploy again at origin/<repo.base>
+    deploy: str  # may contain {branch} (the PR branch; on a release the tag or base) and {sha} (the commit it must be at)
+    release: str | None = None  # default: deploy again on the base's tag or branch (preprod.sh cmd_release)
     seed: str | None = None
     health: list[Health] = field(default_factory=list)
-    app_dir: str | None = None  # a checkout to fetch and check out at the sha before `deploy`
+    app_dir: str | None = None  # a checkout to fetch the branch or tag into and check out before `deploy`
     netrc_env: str = "PREPROD_NETRC"  # the repos/<name>.env variable holding the health checks' netrc path
 
 

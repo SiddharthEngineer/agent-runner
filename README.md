@@ -160,7 +160,7 @@ guard before anything runs:
 [preprod]
 app_dir = "/srv/Strelitzia-preprod"   # optional: the branch or tag is fetched and checked out here before deploy
 deploy = "make -C /srv/engineerfamily-preprod preprod-deploy ref={branch}"   # {branch}: the PR branch, or on release the tag or base
-release = "make -C /srv/engineerfamily-preprod preprod-deploy ref=main"     # optional; default: deploy again, on the tag or base
+release = "make -C /srv/engineerfamily-preprod preprod-deploy ref={branch}" # optional; default: deploy again, on the tag or base
 seed = "…"                            # optional: runs after every deploy
 netrc_env = "PREPROD_NETRC"           # the repos/<repo>.env variable with the netrc for basic auth (the default)
 health = [{ url = "https://preprod.engineerfamily.net/", status = 200 },
@@ -168,9 +168,13 @@ health = [{ url = "https://preprod.engineerfamily.net/", status = 200 },
 ```
 A preprod deploy always names a branch or a tag, never a bare sha. In `deploy` and `release`, `{branch}` is the PR's branch
 or, on a release, the base tip's newest `vX.Y.Z` tag (with `[release] tags = true`; no tag yet → the base branch, and one
-log line says so), and `{sha}` the commit it must be at. Before deploying, the branch or tag is fetched (into `app_dir`, else
-the dev clone) and its tip compared with that sha: a PR branch pushed to after it was approved fails the deploy
-(`preprod: <branch> moved since it was approved (<sha> → <tip>)`), like a failed health check.
+log line says so), and `{sha}` the commit it is at. Before deploying, the branch or tag is fetched (into `app_dir`, else
+the dev clone). A PR's tip must be the sha the validator approved (the item's `reviewed_sha`; a PR the validator never saw:
+the head GitHub reports): a branch pushed to after approval fails the deploy
+(`preprod: <branch> moved since it was approved (<sha> → <tip>)`), like a failed health check. A `/fix` comment sends it
+back for a re-review; `agent-runner queue unset <key> reviewed_sha` deploys the new head as it is. A command that fetches
+`{branch}` itself (no `app_dir`) fetches it again, a few seconds after the check. Branch names with anything but
+letters, digits and `._/-` are refused, since `{branch}` goes into a shell command.
 Health checks go through Cloudflare with the netrc, so they prove the public host routes to the right nginx. Each URL gets
 6 tries, 10 s apart; a failure prints the URL, the HTTP code and at most 300 characters of the body, and the deploy is rolled back.
 The deploy and seed commands' output (docker build logs) goes to `logs/<time>-<repo>.preprod-deploy.log` in the state

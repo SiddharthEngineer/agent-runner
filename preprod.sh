@@ -80,21 +80,25 @@ with_ref() {  # with_ref <command> <branch or tag> <sha>: the command with {bran
     echo "${cmd//\{sha\}/$3}"
 }
 
-# deploy_ref branch|tag <name> <sha>: fetch refs/heads/<name> (or refs/tags/<name>) into APP_DIR (or, without one, the
-# dev clone), refuse it unless its tip is <sha> (what was approved), check it out in APP_DIR, run the deploy and seed.
+# deploy_ref branch|tag <name> [<sha>]: fetch refs/heads/<name> (or refs/tags/<name>) into APP_DIR (or, without one, the
+# dev clone), refuse it unless its tip is <sha> (what was approved; empty: any tip), check it out in APP_DIR, then run the
+# deploy and seed. The tip goes to refs/preprod/deploy, not FETCH_HEAD, which another fetch in the dev clone could replace.
 deploy_ref() {
-    local kind=$1 name=$2 sha=$3 dir=${APP_DIR:-$AGENT_REPO} ref spec tip
+    local kind=$1 name=$2 sha=${3:-} dir=${APP_DIR:-$AGENT_REPO} ref specs tip
+    # The name goes into a bash -c command line ({branch}), so only plain ref characters.
+    [[ $name =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ ]] || { echo "preprod: refusing ref name '$name'"; return 1; }
     case "$kind" in
-        branch) ref=refs/heads/$name spec=$ref ;;
-        tag) ref=refs/tags/$name spec=+$ref:$ref ;;  # a local tag too, so `git describe --tags` names it
+        branch) ref=refs/heads/$name specs=("+$ref:refs/preprod/deploy") ;;
+        tag) ref=refs/tags/$name specs=("+$ref:refs/preprod/deploy" "+$ref:$ref") ;;  # a local tag too, for `git describe`
         *) echo "deploy_ref: bad kind $kind"; return 1 ;;
     esac
-    git -C "$dir" fetch -q origin "$spec" || { echo "preprod: can't fetch $ref"; return 1; }
-    tip=$(git -C "$dir" rev-parse 'FETCH_HEAD^{commit}') || return 1
-    if [ "$tip" != "$sha" ]; then
+    git -C "$dir" fetch -q origin "${specs[@]}" || { echo "preprod: can't fetch $ref"; return 1; }
+    tip=$(git -C "$dir" rev-parse 'refs/preprod/deploy^{commit}') || return 1
+    if [ -n "$sha" ] && [ "$tip" != "$sha" ]; then
         echo "preprod: $name moved since it was approved ($sha → $tip)"
         return 1
     fi
+    sha=$tip
     if [ -n "$APP_DIR" ]; then
         git -C "$APP_DIR" checkout -q --detach "$tip" || return 1
     fi
@@ -171,20 +175,24 @@ cmd_status() {
 }
 
 cmd_deploy() {
-    local repo=$1 pr=$2 cur sha branch key out why
+    local repo=$1 pr=$2 cur sha head branch key out why
     if cur=$(holder) && [ "$cur" != "$repo $pr" ]; then
         echo "preprod busy: ${cur/ /#}"
         return 4
     fi
     load_repo "$repo" || return 3
-    read -r sha branch < <(gh pr view "$pr" --repo "$GH_REPO" --json headRefOid,headRefName -q '.headRefOid + " " + .headRefName')
-    [ -n "$sha" ] && [ -n "$branch" ] || { echo "can't read $repo#$pr"; return 1; }
+    read -r head branch < <(gh pr view "$pr" --repo "$GH_REPO" --json headRefOid,headRefName -q '.headRefOid + " " + .headRefName')
+    [ -n "$head" ] && [ -n "$branch" ] || { echo "can't read $repo#$pr"; return 1; }
+    # What the validator approved (the item's reviewed_sha); a PR it never saw deploys at the head gh reports.
+    key=$(key_for_pr "$repo" "$pr")
+    sha=$([ -n "$key" ] && "${Q[@]}" get "$key" reviewed_sha 2>/dev/null)
+    sha=${sha:-$head}
     printf '%s\t%s\t%s\t%s\n' "$repo" "$pr" "$sha" "$(date -u +%FT%TZ)" > "$LOCK"
     out=$(mktemp)
     echo "deploying $repo#$pr: branch $branch at $sha"
     deploy_ref branch "$branch" "$sha" | tee "$out"
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-        why=$(grep -m1 -o -e '^health failed: [^ ]* returned [0-9]*' -e '^preprod: .* moved since it was approved.*' "$out")
+        why=$(grep -m1 -o -e '^health failed: [^ ]* returned [0-9]*' -e '^preprod: .*' "$out")
         rm -f "$out"
         echo "deploy of $repo#$pr failed; restoring $BASE"
         cmd_release "$repo"
@@ -194,7 +202,6 @@ cmd_deploy() {
     rm -f "$out"
     gh pr edit "$pr" --repo "$GH_REPO" --add-label on-preprod --remove-label awaiting-preprod >/dev/null 2>&1
     gh pr comment "$pr" --repo "$GH_REPO" --body "Deployed to preprod (health checks passed). Test steps are in the PR description." >/dev/null
-    key=$(key_for_pr "$repo" "$pr")
     [ -n "$key" ] && "${Q[@]}" set "$key" status=on-preprod && "${Q[@]}" unset "$key" deploy_failed
     python3 "$HERE/inbox.py" notify --title "$repo#$pr is on preprod, ready for you to test" --project "$repo" \
         --body "https://github.com/$GH_REPO/pull/$pr. Test steps are in the PR description." ${key:+--slug "$key"} >/dev/null
@@ -247,7 +254,7 @@ cmd_release() {
     if [ -n "$RELEASE" ]; then
         bash -c "$(with_ref "$RELEASE" "$name" "$sha")" >/dev/null && echo "preprod reset to $repo $name"
     else
-        deploy_ref "$kind" "$name" "$sha" >/dev/null && echo "preprod reset to $repo $name"
+        deploy_ref "$kind" "$name" >/dev/null && echo "preprod reset to $repo $name"
     fi
 }
 

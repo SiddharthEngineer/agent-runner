@@ -44,13 +44,13 @@ def env(monkeypatch):
     """A private os.environ with none of the strategy variables set, so `load_env()` can't leak into other tests.
 
     Local time is UTC, so the fixed NOW is 12:00 to `.astimezone()` too (the runner's env sets a TZ)."""
-    monkeypatch.setenv("TZ", "UTC")
-    time.tzset()
-    clean = {k: v for k, v in usage.os.environ.items() if not k.startswith("AGENT_")}
-    monkeypatch.setattr(usage.os, "environ", clean)
-    monkeypatch.setattr(usage, "datetime", type("FixedNow", (datetime,), {"now": classmethod(lambda cls, tz=None: NOW)}))
-    yield clean
-    monkeypatch.undo()
+    with pytest.MonkeyPatch.context() as tz:
+        tz.setenv("TZ", "UTC")
+        time.tzset()
+        clean = {k: v for k, v in usage.os.environ.items() if not k.startswith("AGENT_")}
+        monkeypatch.setattr(usage.os, "environ", clean)
+        monkeypatch.setattr(usage, "datetime", type("FixedNow", (datetime,), {"now": classmethod(lambda cls, tz=None: NOW)}))
+        yield clean
     time.tzset()
 
 

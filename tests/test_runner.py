@@ -606,11 +606,10 @@ def test_preprod_branch_moved_since_approval_fails_and_restores_base(preprod, tm
     origin = preprod.config("strelitzia", "echo deploy {branch} {sha} >> LOG")
     base = preprod.git("-C", str(origin), "rev-parse", "HEAD")
     approved = pr_commit(preprod, origin, tmp_path, "strelitzia")
-    moved = pr_commit(preprod, origin, tmp_path, "strelitzia", "pushed after review")
-    (tmp_path / "strelitzia-pr").write_text(f"{approved} feature\n")
+    moved = pr_commit(preprod, origin, tmp_path, "strelitzia", "pushed after review")  # gh now reports this head
     state = tmp_path / "state"
     state.mkdir(exist_ok=True)
-    items = {"strelitzia/a": {"repo": "strelitzia", "status": "awaiting-preprod", "pr": 7,
+    items = {"strelitzia/a": {"repo": "strelitzia", "status": "awaiting-preprod", "pr": 7, "reviewed_sha": approved,
                               "updated": "2026-10-19T01:00:00+00:00"}}
     (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
     out = preprod("cmd_deploy strelitzia 7")
@@ -621,6 +620,28 @@ def test_preprod_branch_moved_since_approval_fails_and_restores_base(preprod, tm
     item = json.loads((state / "queue.json").read_text())["items"]["strelitzia/a"]
     assert item["status"] == "blocked" and item["deploy_failed"].startswith("preprod: feature moved since it was approved")
     assert not preprod.lock.exists()
+
+
+def test_preprod_deploys_the_approved_sha_of_the_item(preprod, tmp_path):
+    origin = preprod.config("strelitzia", "echo deploy {branch} {sha} >> LOG")
+    approved = pr_commit(preprod, origin, tmp_path, "strelitzia")
+    state = tmp_path / "state"
+    state.mkdir(exist_ok=True)
+    items = {"strelitzia/a": {"repo": "strelitzia", "status": "awaiting-preprod", "pr": 7, "reviewed_sha": approved,
+                              "updated": "2026-10-19T01:00:00+00:00"}}
+    (state / "queue.json").write_text(json.dumps({"paused_until": None, "items": items}))
+    out = preprod("cmd_deploy strelitzia 7")
+    assert out.returncode == 0, out.stdout + out.stderr
+    assert f"deploy feature {approved}" in preprod.log() and preprod.lock.read_text().startswith(f"strelitzia\t7\t{approved}\t")
+
+
+def test_preprod_refuses_a_branch_name_with_shell_characters(preprod, tmp_path):
+    origin = preprod.config("strelitzia", "echo deploy {branch} >> LOG")
+    sha = preprod.git("-C", str(origin), "rev-parse", "HEAD")
+    (tmp_path / "strelitzia-pr").write_text(f"{sha} x;touch${{IFS}}pwned\n")
+    out = preprod("cmd_deploy strelitzia 7")
+    assert out.returncode == 1 and "preprod: refusing ref name 'x;touch${IFS}pwned'" in out.stdout, out.stdout + out.stderr
+    assert "deploy x" not in preprod.log() and not (tmp_path / "pwned").exists()
 
 
 def test_preprod_release_with_tags_deploys_the_newest_tag_on_base(preprod, tmp_path):
