@@ -53,6 +53,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A30 | Conflicting PRs: detected before the CI wait; the runner merges the base (clean) or sends the implementer a conflict round (no attempt used, 2 at most); notices name the conflict, not "no CI checks" (from #127) | [runner-17-conflicts](plans/done/runner-17-conflicts.md) | agent-runner | ✅ | A23; A24 and A28 queue after it |
 | A31 | Resolver, part 1: `awaiting-resolve` status and `queue hold`, `prompts/resolve.md`, PR status line | [resolver-1-agent](plans/done/resolver-1-agent.md) | agent-runner | ✅ | A29 |
 | A32 | Resolver, part 2: every block with fixable work goes to a one-shot Opus resolver first (replaces triage); the user hears only if it fails | [resolver-2-wiring](plans/done/resolver-2-wiring.md) | agent-runner | ✅ | A31 |
+| A33 | Preprod deploys name a tag or a branch (a PR by its branch, checked against the approved sha; a merge by its newest tag); the runner stops opening pin PRs (prod pins move only with engineerfamily `make prod-release`, E15) | [runner-18-float-pins](plans/runner-18-float-pins.md) | agent-runner | ⏳ queued after strelitzia/job-edit-delete | A29 |
 
 ## Manual steps (you)
 
@@ -70,8 +71,10 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | AM8 | After A20 and A21 merge: `agent-runner release --install`. Until then PRs show no status block and nothing is tagged. Done: A20 and A21 shipped in v0.2.6; v0.2.8 is installed. | ☑ |
 | AM9 | Once, after AM8 and engineerfamily E11 merge: `agent-runner versions promote engineerfamily v1.3.3` (what prod runs). The next tick tags main `v1.4.0` and opens the `v1.4` pre-release. Done 2026-10-23: `v1.4` is the Latest release (on v1.4.3), and the `v1.5` pre-release opened 2026-10-26. | ☑ |
 | AM10 | After A23 merges: `agent-runner release --install`, then opt each repo in by adding `[intake]` with `enabled = true` to its `agents/runner.toml` on the base branch (agent-runner first, for the Human test steps in [intake-2-wiring](plans/done/intake-2-wiring.md); then engineerfamily and Strelitzia). | ☐ |
+| AM11 | After A33 merges: `agent-runner release --install`, then on engineerfamily main set `agents/runner.toml` `[preprod]` to `deploy = "make -C /srv/engineerfamily-preprod preprod-deploy ref={branch}"` and `release = "make -C /srv/engineerfamily-preprod preprod-deploy ref=main"` (agents can't edit runner.toml). engineerfamily E15 checks this in its Task 0 and waits for it. | ☐ |
 
 ## Decisions (current)
+- 2026-10-28 (user): prod is pinned in Git (`components.toml`, moved only by `make prod-release`), preprod floats on each child's newest tag, and every preprod deploy names a tag or a branch. A33 + engineerfamily E15; the per-merge pin PRs (A29) go away.
 - 2026-10-22 (user): status visible without Claude or the VPS: a stage checklist on every runner PR (A20), and per-merge patch tags with a `vX.Y` pre-release promoted to a full release on each prod deploy (A21, engineerfamily E11). The runner tags; prod stays manual (`make prod-release`).
 - 2026-10-21 (user): close AM6 now instead of waiting the full week; there are no live users, so a break is acceptable.
 - 2026-10-19 (user): Everything left in the queue builds with no manual approval: the implementer and validator merge to the base
