@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -40,11 +41,17 @@ def event(five=0.15, five_reset=T + 2 * H, week=0.32, week_reset=T + 3.5 * 86400
 
 @pytest.fixture
 def env(monkeypatch):
-    """A private os.environ with none of the strategy variables set, so `load_env()` can't leak into other tests."""
+    """A private os.environ with none of the strategy variables set, so `load_env()` can't leak into other tests.
+
+    Local time is UTC, so the fixed NOW is 12:00 to `.astimezone()` too (the runner's env sets a TZ)."""
+    monkeypatch.setenv("TZ", "UTC")
+    time.tzset()
     clean = {k: v for k, v in usage.os.environ.items() if not k.startswith("AGENT_")}
     monkeypatch.setattr(usage.os, "environ", clean)
     monkeypatch.setattr(usage, "datetime", type("FixedNow", (datetime,), {"now": classmethod(lambda cls, tz=None: NOW)}))
-    return clean
+    yield clean
+    monkeypatch.undo()
+    time.tzset()
 
 
 # windows / strategy_from_env
