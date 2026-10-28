@@ -7,7 +7,7 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 ## Map
 | Path | What |
 |---|---|
-| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `intake`, `usage`, `config`, `health`, `preprod`, `versions`, `pins`, `run`, `version`, `release`, `install` (the last two are the user's) |
+| `agent-runner` | The CLI (`~/.local/bin/agent-runner` links to the installed copy): `queue`, `gate`, `inbox`, `intake`, `usage`, `config`, `health`, `preprod`, `versions`, `run`, `version`, `release`, `install` (the last two are the user's) |
 | `install.sh` | `install.sh [<tag>]` (`agent-runner install`): mirror, release worktree, validate, switch `current` atomically (the user runs it) |
 | `release.sh` | `agent-runner release [vX.Y.Z]`: tag `origin/main` as the next version and push it (the user runs it) |
 | `ci.sh` | Shared by both: CI verdict on a commit, newest `vX.Y.Z` tag, version compare |
@@ -23,7 +23,6 @@ the agent inbox: questions and notices that agents send the user (`inbox.py`, la
 | `settings/` | Headless Claude settings per role: `health-diagnose.json` (read-only diagnosis), `validate.json` (validator default) |
 | `prompts/` | Prompts for headless runs: `health-diagnose.md`, `review-pr.md` (validator, first review), `rereview-pr.md` (validator, re-review after a fix round), `preprod-check.md` (validator, preprod stage), `resolve.md` (resolver, one fix try before a block) |
 | `versions.py` | Repos with `[release]`: `sync` gives each merged PR the next patch tag and keeps a `vX.Y` pre-release; `promote` (the user's, on prod deploy) makes it full; `status` |
-| `pins.py` | `sync` (every tick): a `Pin <child> <tag>` PR (branch `pin/<name>`, label `pin-bump`) when a child of a parent's `components.toml` has a newer tag; `tick`: merge them on green CI (no review), preprod follows |
 | `prcomments.py` | `scan` (every tick): a `/fix <change>` comment by the user on a runner PR re-queues it as a user fix round (no round, no attempt) |
 | `prstatus.py` | The status block at the top of every runner PR: `update <key>` after a transition, `sync` each tick |
 | `mcp_config.py` | Per-run Playwright MCP config for the preprod stage (basic auth, storage state; 0600, deleted after) |

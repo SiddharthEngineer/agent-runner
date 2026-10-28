@@ -1,7 +1,7 @@
 # Plan: preprod deploys name a tag or a branch; the runner stops opening pin PRs
-**Status:** 🟡 In progress
+**Status:** ✅ 2026-10-28 (every task done; AM11 is the user's)
 **Risk:** low (runner code only; goes live when the user installs a release)
-**Depends on:** A29 [runner-16-pins](plans/done/runner-16-pins.md) (the code this removes)
+**Depends on:** A29 [runner-16-pins](runner-16-pins.md) (the code this removes)
 **Queue:** after strelitzia/job-edit-delete (queued by hand 2026-10-28; intake isn't on, AM10)
 
 ## Goal
@@ -57,7 +57,7 @@ missing, stop and report (someone already changed this area).
 **Validate:** `uv run --with pytest pytest tests/test_preprod.py -q`: a PR deploy fetches `refs/heads/<branch>` and passes the
 branch name to `{branch}`; a moved branch fails the deploy and restores the base; a release with a tagged base checks out
 the tag; an untagged base checks out the branch; `{sha}` still expands.
-**Status:** ✅ 2026-10-28 (this commit)
+**Status:** ✅ 2026-10-28 (124ec96)
 
 ### Task 2: remove the pin PRs
 **Runs:** unattended
@@ -66,7 +66,7 @@ the tag; an untagged base checks out the branch; `{sha}` still expands.
 `preprod_follow <child> <pr>`, which (after Task 1) puts the child's new tag on preprod; nothing replaces the pin step.
 Leave the `pin-bump` label on GitHub alone.
 **Validate:** `uv run --with pytest pytest tests -q` passes; `grep -rn "pins.py\|pins_upkeep" --exclude-dir=agents .` → nothing.
-**Status:** ✅ 2026-10-28 (this commit)
+**Status:** ✅ 2026-10-28 (b3b55ef)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
@@ -75,7 +75,7 @@ Leave the `pin-bump` label on GitHub alone.
 or base) next to `{sha}`, and say a preprod deploy is always a branch or a tag; "How a tick works" loses the pin step.
 AGENTS.md: drop the `pins.py` row and `pins` from the CLI row. ROADMAP: A33 ✅, and AM11 stays for the user.
 **Validate:** `scripts/validate.sh` passes.
-**Status:** ❌
+**Status:** ✅ 2026-10-28 (this commit)
 
 ## Validation
 - `scripts/validate.sh` passes; CI is green.
