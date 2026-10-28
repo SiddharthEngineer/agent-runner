@@ -3,8 +3,8 @@
 #   */5 * * * * $HOME/.local/bin/agent-runner run
 # Everything before `claude -p` is plain bash/Python, so an empty queue costs no Claude usage.
 #
-# 1. Upkeep: pick up your inbox replies, close notices of finished items, tag merged PRs (versions.py), move and merge
-#    components.toml pins (pins.py), release/advance the global preprod lock (preprod.sh tick).
+# 1. Upkeep: pick up your inbox replies, close notices of finished items, tag merged PRs (versions.py), release/advance
+#    the global preprod lock (preprod.sh tick).
 # 2. Health gate: while disk is critical (health.py gate), no Claude run starts; upkeep above still ran.
 #    Then one stage with work to do: preprod checks, validator review, or the resolver (one Opus try on an item that
 #    would have been blocked: `awaiting-resolve`), before any new implementer run.
@@ -94,70 +94,29 @@ Merged PRs are tagged on the next tick after this is fixed. \`agent-runner versi
     return 0
 }
 
-# preprod_follow <repo> <pr>: after merging <pr> in <repo>, tag it (with [release]) and put preprod on <repo>'s new base,
-# unless another PR holds the lock (its release does it). Reads $STATE/configs/<repo>.toml (load_item or repo_toml wrote it).
+# preprod_follow <repo> <pr>: after merging <pr> in <repo>, tag it (with [release]) and put preprod on <repo>'s new tag (or
+# base), unless another PR holds the lock (its release does it). Reads $STATE/configs/<repo>.toml (load_item wrote it).
 preprod_follow() {
-    local repo=$1 pr=$2 rtoml=$STATE/configs/$1.toml who=${key:-pins} holder rbase rgh title body
+    local repo=$1 pr=$2 rtoml=$STATE/configs/$1.toml holder rbase rgh
     [ "$("${CFG[@]}" get "$rtoml" release.tags 2>/dev/null)" = True ] && versions_sync "$repo"  # the tag first: preprod shows it
     [ -n "$("${CFG[@]}" get "$rtoml" preprod.deploy 2>/dev/null)" ] || return 0
     rbase=$("${CFG[@]}" get "$rtoml" repo.base 2>/dev/null)
     rgh=$("${CFG[@]}" get "$rtoml" repo.github 2>/dev/null)
     holder=$(cut -f1,2 "$STATE/preprod.lock" 2>/dev/null)
     if [ -n "$holder" ] && [ "$holder" != "$repo"$'\t'"$pr" ]; then
-        say "$who: preprod is held by ${holder/$'\t'/#}, so it stays; its release puts $repo's $rbase back"
+        say "$key: preprod is held by ${holder/$'\t'/#}, so it stays; its release puts $repo's $rbase back"
     elif "$HERE/preprod.sh" release "$repo" >> "$STATE/runs.log" 2>&1; then
-        say "$who: preprod redeployed on $repo's $rbase after PR #$pr"
+        say "$key: preprod redeployed on $repo's $rbase after PR #$pr"
     else
-        say "$who: preprod redeploy of $repo's $rbase failed after PR #$pr"
-        title="preprod redeploy failed after PR #$pr"
-        body="PR https://github.com/$rgh/pull/$pr is merged, but putting preprod on $repo's $rbase failed. See runs.log (on the VPS), then run \`agent-runner preprod release $repo\`."
-        if [ -n "${key:-}" ]; then
-            notify "$title" "$body"
-        elif [ -n "${AGENT_INBOX_REPO:-}" ]; then
-            python3 "$HERE/inbox.py" notify --project "$repo" --title "$title" --body "$body" >> "$STATE/runs.log" 2>&1
-        fi
+        say "$key: preprod redeploy of $repo's $rbase failed after PR #$pr"
+        notify "preprod redeploy failed after PR #$pr" "PR https://github.com/$rgh/pull/$pr is merged, but putting preprod on $repo's $rbase failed. See runs.log (on the VPS), then run \`agent-runner preprod release $repo\`."
     fi
-    return 0
-}
-# repo_toml <repo>: its agents/runner.toml from origin/HEAD (as load_item reads it) to $STATE/configs/<repo>.toml.
-repo_toml() (
-    unset AGENT_REPO AGENT_BASE
-    eval "$("${CFG[@]}" repo-env "$1")"
-    [ -n "${AGENT_REPO:-}" ] && [ -d "$AGENT_REPO" ] || exit 1
-    ref=$(git -C "$AGENT_REPO" rev-parse --abbrev-ref origin/HEAD 2>/dev/null) || ref=origin/${AGENT_BASE:-main}
-    git -C "$AGENT_REPO" show "$ref:agents/runner.toml" > "$STATE/configs/$1.toml" 2>/dev/null
-)
-
-# pins_upkeep: pins.py sync opens or moves the "Pin <child> <tag>" PRs of every parent repo (components.toml), then
-# pins.py tick merges the green ones with no review. After each `merged <parent>#<n> …` line, the parent is tagged and
-# preprod follows its new base (preprod_follow). Each failure is one runs.log line; it never stops the tick.
-pins_upkeep() {
-    local cmd out rc line parent pr
-    local -A merged=()  # parent → its last merged pin PR: one redeploy per parent, after all its merges
-    for cmd in sync tick; do
-        out=$(python3 "$HERE/pins.py" "$cmd" 2>&1)
-        rc=$?
-        while IFS= read -r line <&3; do
-            [ -n "$line" ] && say "pins: $line"
-            [ "$cmd" = tick ] && [[ $line =~ ^merged\ ([a-z0-9-]+)#([0-9]+)\  ]] || continue
-            merged[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
-        done 3<<< "$out"
-        [ "$rc" = 0 ] || say "pins $cmd: exit $rc"
-    done
-    for parent in "${!merged[@]}"; do
-        pr=${merged[$parent]}
-        if repo_toml "$parent"; then
-            preprod_follow "$parent" "$pr"
-        else
-            say "pins: can't read $parent's runner.toml, so preprod doesn't follow its PR #$pr"
-        fi
-    done
     return 0
 }
 
 # 1. Upkeep
 if [ -n "$DRY" ]; then
-    say "dry run: would poll the inbox, sync versions, sync pins and tick preprod"
+    say "dry run: would poll the inbox, sync versions and tick preprod"
     python3 "$HERE/intake.py" scan --dry-run >> "$STATE/runs.log" 2>&1 || true  # writes nothing
     python3 "$HERE/prcomments.py" scan --dry-run >> "$STATE/runs.log" 2>&1 || true
 else
@@ -171,7 +130,6 @@ else
     for repo_file in "$HOME"/.config/agent-runner/repos/*.env; do
         [ -e "$repo_file" ] && versions_sync "$(basename "$repo_file" .env)"
     done
-    pins_upkeep  # after the versions loop: a merged pin PR is tagged and preprod follows, before preprod.sh tick
     "$HERE/preprod.sh" tick >> "$STATE/runs.log" 2>&1
 fi
 # Every runner PR's status block, from queue state (catches up PRs a missed update left stale). A dry run only logs.

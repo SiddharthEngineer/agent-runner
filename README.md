@@ -45,7 +45,6 @@ Agents never push tags or run `install.sh`.
 | `health` | `health.py` | VPS health `check` and fixed-rule `clean` |
 | `preprod` | `preprod.sh` | Single-occupant preprod lock: deploy a PR, health-check it, release it |
 | `versions` | `versions.py` | Tags and GitHub releases for repos with `[release]`: `sync`, `promote`, `status` (see Versions and releases) |
-| `pins` | `pins.py` | `sync`/`tick [--repo PARENT] [--dry-run]`: "Pin <child> <tag>" PRs for a parent's `components.toml` (see Pins) |
 | `run` | `run.sh` | The cron entry (manager) |
 | `check-commands` | `commands_diff.py` | How the repos' `.claude/commands` differ once repo names, base branches and validate commands are swapped for placeholders |
 | `version` | | The installed tag |
@@ -115,7 +114,7 @@ until S2 deletes it.
   (`gh run list --commit <sha>`, then `gh run watch --exit-status` each): all green merges, one red is "CI is red", and no
   run within 30 min (`AGENT_CI_WAIT`, seconds) is "no CI checks".
 - Preprod follows each merge: after any merge (low, or after the validator), a repo with `[preprod]` gets
-  `preprod.sh release <repo>`, so preprod runs the new base, unless another PR holds the lock (its release puts the base back
+  `preprod.sh release <repo>`, so preprod runs the new tag (or base), unless another PR holds the lock (its release puts the base back
   later). One `runs.log` line either way; a failed redeploy sends a notice and leaves the item `done`.
 - Failed preprod deploy: when a PR's deploy or its health checks fail, preprod goes back on the base and the item is
   `blocked` (`deploy_failed` says why), with one notice. Tick doesn't retry it; re-queue with
@@ -149,8 +148,8 @@ Preprod is one environment for every repo (the `engineerfamily-preprod` compose 
 any repo holds it at a time:
 ```
 agent-runner preprod status                     # the holder; releases the lock when its PR was merged or closed
-agent-runner preprod deploy engineerfamily 41   # take the lock, deploy the PR head, health-check it (exit 4 if busy)
-agent-runner preprod release [<repo>]           # drop the lock, put preprod back on the repo's base branch
+agent-runner preprod deploy engineerfamily 41   # take the lock, deploy the PR branch, health-check it (exit 4 if busy)
+agent-runner preprod release [<repo>]           # drop the lock, put preprod back on the repo's newest tag or base branch
 agent-runner preprod tick                       # status, then deploy the oldest awaiting-preprod item of any repo
 ```
 The lock (`preprod.lock` in the state dir) is `repo<TAB>pr<TAB>sha<TAB>time`; a 3-column line from the old runner is read as
@@ -159,14 +158,23 @@ the dev clone named in `~/.config/agent-runner/repos/<repo>.env` (`AGENT_REPO`),
 guard before anything runs:
 ```toml
 [preprod]
-app_dir = "/srv/Strelitzia-preprod"   # optional: fetched and checked out at the PR sha before deploy
-deploy = "make -C /srv/engineerfamily-preprod preprod-deploy ref={sha}"   # {sha} = the PR head (or the base, on release)
-release = "make -C /srv/engineerfamily-preprod preprod-deploy"           # optional; default: deploy again at origin/<base>
+app_dir = "/srv/Strelitzia-preprod"   # optional: the branch or tag is fetched and checked out here before deploy
+deploy = "make -C /srv/engineerfamily-preprod preprod-deploy ref={branch}"   # {branch}: the PR branch, or on release the tag or base
+release = "make -C /srv/engineerfamily-preprod preprod-deploy ref={branch}" # optional; default: deploy again, on the tag or base
 seed = "…"                            # optional: runs after every deploy
 netrc_env = "PREPROD_NETRC"           # the repos/<repo>.env variable with the netrc for basic auth (the default)
 health = [{ url = "https://preprod.engineerfamily.net/", status = 200 },
           { url = "https://preprod.engineerfamily.net/strelitzia/dashboard/api/health", json_ok = true }]
 ```
+A preprod deploy always names a branch or a tag, never a bare sha. In `deploy` and `release`, `{branch}` is the PR's branch
+or, on a release, the base tip's newest `vX.Y.Z` tag (with `[release] tags = true`; no tag yet → the base branch, and one
+log line says so), and `{sha}` the commit it is at. Before deploying, the branch or tag is fetched (into `app_dir`, else
+the dev clone). A PR's tip must be the sha the validator approved (the item's `reviewed_sha`; a PR the validator never saw:
+the head GitHub reports): a branch pushed to after approval fails the deploy
+(`preprod: <branch> moved since it was approved (<sha> → <tip>)`), like a failed health check. A `/fix` comment sends it
+back for a re-review; `agent-runner queue unset <key> reviewed_sha` deploys the new head as it is. A command that fetches
+`{branch}` itself (no `app_dir`) fetches it again, a few seconds after the check. Branch names with anything but
+letters, digits and `._/-` are refused, since `{branch}` goes into a shell command.
 Health checks go through Cloudflare with the netrc, so they prove the public host routes to the right nginx. Each URL gets
 6 tries, 10 s apart; a failure prints the URL, the HTTP code and at most 300 characters of the body, and the deploy is rolled back.
 The deploy and seed commands' output (docker build logs) goes to `logs/<time>-<repo>.preprod-deploy.log` in the state
@@ -178,8 +186,7 @@ Every 5 minutes, for every registered repo, with at most one Claude run at a tim
 1. **Upkeep:** inbox replies (`inbox.py poll`), closing the notices of items that are `done` or `cancelled`
    (`inbox.py sweep`), queue intake for opted-in repos (`intake.py scan`, before the next-item pick so a plan pushed now
    can start this tick), your `/fix` PR comments (`prcomments.py scan`, see Day to day), tags for merged PRs
-   (`versions.py sync`), pin bumps (`pins.py sync`, then `pins.py tick`, which merges green pin PRs; preprod follows each
-   merge, see Pins), and the global preprod lock (`preprod.sh tick`).
+   (`versions.py sync`), and the global preprod lock (`preprod.sh tick`).
 2. **Health gate:** while `health.py gate` says disk is critical, no Claude run starts (upkeep above still ran). Then the
    first stage with work runs, and the tick ends: the preprod stage (`on-preprod`), the review stage (`awaiting-review`),
    the resolve stage (`awaiting-resolve`, see Limits, Resolver).
@@ -329,29 +336,6 @@ GitHub Releases show what is on prod and preprod, for a repo whose `agents/runne
   A release step that failed after its tag was pushed is repaired by the next sync. `agent-runner versions status <repo>`
   shows the newest tag, the open pre-release and the newest full release. `--dry-run` works on `sync` and `promote`.
 - Only this runner code pushes tags or edits releases. Claude sessions never do.
-
-## Pins (`pins.py`)
-A parent repo (engineerfamily) pins each child repo (Strelitzia, Wordle) at a tag in `components.toml`; the runner moves
-those pins forward after child merges are tagged, so preprod runs the pinned set and the next `make prod-release` ships it.
-
-- **Opt-in by the file:** a registered repo with `components.toml` at the root of `origin/<base>` is a parent. Each table
-  with a `tag` is a component named after the child's registered repo (`[strelitzia]`, `[wordle]`); an unregistered name
-  is skipped with one `runs.log` line.
-- **Only forward, to the newest tag:** every tick, `pins.py sync` compares each pin with the child's newest `vX.Y.Z` tag on
-  origin. Newer → a PR on branch `pin/<name>`, labelled `pin-bump`, titled `Pin <name> <tag>`: one commit on
-  `origin/<base>` that changes only that component's `tag = "…"` line (comments and order kept), listing the child PRs
-  since the old pin. An open PR at an older tag (or on an older base) is updated in place by a force-push to `pin/<name>`;
-  a pin that is already newest closes it. No state: hand merges and missed ticks catch up. A pin PR you close is not
-  reopened (the next tag opens a new one), and an open PR on `pin/<name>` without the label is left alone.
-- **`hold = "reason"`** on a component stops its bumps (an open pin PR is closed); `runs.log` says so once.
-- **Merges on green CI, with no review:** `pins.py tick` reads each open `pin-bump` PR's CI once (no waiting): green →
-  `gh pr merge --<merge> --delete-branch` (`runs.log`: `pins: merged <parent>#<n> <name> <tag>`); pending → the next tick;
-  red → one notice. A PR whose diff is anything but `tag` lines in `components.toml` moving forward is never merged,
-  whoever pushed it: one comment and one notice. The merge is pinned to the head that was checked (`--match-head-commit`);
-  after several merges in one tick, the parent is redeployed once.
-- **Preprod follows:** after each merge the parent is tagged (with `[release]`) and preprod is redeployed on its base,
-  unless another PR holds the preprod lock (its release does it).
-- Claude can still move a pin in an ordinary plan. `agent-runner pins sync --dry-run` shows what sync would do.
 
 ## Queue from anywhere (`intake.py`)
 A plan pushed to a repo's base branch (from a Claude cloud session, the GitHub web editor, anywhere) can queue itself:

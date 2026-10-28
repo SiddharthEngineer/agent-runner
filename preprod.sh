@@ -2,11 +2,14 @@
 # One preprod for every repo, held by one PR at a time; the rest wait as `awaiting-preprod`.
 #
 #   preprod.sh status              print the holder; release the lock if its PR was merged or closed
-#   preprod.sh deploy <repo> <pr>  take the lock (free, or already held by <repo> <pr>), deploy the PR head, health-check it
-#   preprod.sh release [<repo>]    drop the lock and put preprod back on <repo>'s base (default: the holder's repo)
+#   preprod.sh deploy <repo> <pr>  take the lock (free, or already held by <repo> <pr>), deploy the PR branch, health-check it
+#   preprod.sh release [<repo>]    drop the lock and put preprod back on <repo>'s base (default: the holder's repo): its
+#                                  newest vX.Y.Z tag with [release] tags = true, else the base branch
 #   preprod.sh tick                status, then deploy the oldest awaiting-preprod item of any repo if the lock is free
 #
 # Preprod is one environment: the engineerfamily-preprod compose project also builds Strelitzia, so the lock is global.
+# A deploy always names a branch or a tag, never a bare sha: in [preprod] deploy/release, {branch} is the PR branch (on a
+# release: the tag, or the base) and {sha} the commit it must be at. A branch that moved since approval fails the deploy.
 # Lock file: repo<TAB>pr<TAB>sha<TAB>time (a 3-column line from the old runner is read as strelitzia).
 # Each repo's commands come from the [preprod] section of its agents/runner.toml on origin/<base>, never from a PR branch,
 # and pass config.py's prod guard first. ~/.config/agent-runner/repos/<repo>.env gives AGENT_REPO (the dev clone) and the
@@ -72,13 +75,32 @@ log_tail() {  # log_tail <what failed> <log>: one line, then the log's last 15 l
     { echo "$1; last lines of $2:"; tail -n 15 "$2" | sed 's/^/    /'; } >&2
 }
 
-with_sha() { echo "${1//\{sha\}/$2}"; }  # with_sha <command> <sha>
+with_ref() {  # with_ref <command> <branch or tag> <sha>: the command with {branch} and {sha} filled in
+    local cmd=${1//\{branch\}/$2}
+    echo "${cmd//\{sha\}/$3}"
+}
 
-deploy_ref() {  # deploy_ref <ref to fetch into APP_DIR> <sha>
-    local ref=$1 sha=$2
+# deploy_ref branch|tag <name> [<sha>]: fetch refs/heads/<name> (or refs/tags/<name>) into APP_DIR (or, without one, the
+# dev clone), refuse it unless its tip is <sha> (what was approved; empty: any tip), check it out in APP_DIR, then run the
+# deploy and seed. The tip goes to refs/preprod/deploy, not FETCH_HEAD, which another fetch in the dev clone could replace.
+deploy_ref() {
+    local kind=$1 name=$2 sha=${3:-} dir=${APP_DIR:-$AGENT_REPO} ref specs tip
+    # The name goes into a bash -c command line ({branch}), so only plain ref characters.
+    [[ $name =~ ^[A-Za-z0-9._][A-Za-z0-9._/-]*$ ]] || { echo "preprod: refusing ref name '$name'"; return 1; }
+    case "$kind" in
+        branch) ref=refs/heads/$name specs=("+$ref:refs/preprod/deploy") ;;
+        tag) ref=refs/tags/$name specs=("+$ref:refs/preprod/deploy" "+$ref:$ref") ;;  # a local tag too, for `git describe`
+        *) echo "deploy_ref: bad kind $kind"; return 1 ;;
+    esac
+    git -C "$dir" fetch -q origin "${specs[@]}" || { echo "preprod: can't fetch $ref"; return 1; }
+    tip=$(git -C "$dir" rev-parse 'refs/preprod/deploy^{commit}') || return 1
+    if [ -n "$sha" ] && [ "$tip" != "$sha" ]; then
+        echo "preprod: $name moved since it was approved ($sha → $tip)"
+        return 1
+    fi
+    sha=$tip
     if [ -n "$APP_DIR" ]; then
-        git -C "$APP_DIR" fetch -q origin "$ref" || return 1
-        git -C "$APP_DIR" checkout -q --detach "$sha" || return 1
+        git -C "$APP_DIR" checkout -q --detach "$tip" || return 1
     fi
     # Deploy and seed output (docker build logs) goes to its own file, not runs.log. Lines about it go to stderr, so they
     # reach runs.log even when cmd_release silences stdout; a failure adds the log's last lines.
@@ -86,7 +108,7 @@ deploy_ref() {  # deploy_ref <ref to fetch into APP_DIR> <sha>
     mkdir -p "$STATE/logs"
     dlog=$STATE/logs/$(date -u +%Y%m%dT%H%M%SZ)-${LOADED:-preprod}.preprod-deploy.log
     echo "preprod deploy output: $dlog" >&2
-    bash -c "$(with_sha "$DEPLOY" "$sha")" >> "$dlog" 2>&1 || { log_tail "deploy command failed" "$dlog"; return 1; }
+    bash -c "$(with_ref "$DEPLOY" "$name" "$sha")" >> "$dlog" 2>&1 || { log_tail "deploy command failed" "$dlog"; return 1; }
     if [ -n "$SEED" ]; then
         bash -c "$SEED" >> "$dlog" 2>&1 || { log_tail "seed command failed" "$dlog"; return 1; }
     fi
@@ -153,18 +175,24 @@ cmd_status() {
 }
 
 cmd_deploy() {
-    local repo=$1 pr=$2 cur sha key out why
+    local repo=$1 pr=$2 cur sha head branch key out why
     if cur=$(holder) && [ "$cur" != "$repo $pr" ]; then
         echo "preprod busy: ${cur/ /#}"
         return 4
     fi
     load_repo "$repo" || return 3
-    sha=$(gh pr view "$pr" --repo "$GH_REPO" --json headRefOid -q .headRefOid) || { echo "can't read $repo#$pr"; return 1; }
+    read -r head branch < <(gh pr view "$pr" --repo "$GH_REPO" --json headRefOid,headRefName -q '.headRefOid + " " + .headRefName')
+    [ -n "$head" ] && [ -n "$branch" ] || { echo "can't read $repo#$pr"; return 1; }
+    # What the validator approved (the item's reviewed_sha); a PR it never saw deploys at the head gh reports.
+    key=$(key_for_pr "$repo" "$pr")
+    sha=$([ -n "$key" ] && "${Q[@]}" get "$key" reviewed_sha 2>/dev/null)
+    sha=${sha:-$head}
     printf '%s\t%s\t%s\t%s\n' "$repo" "$pr" "$sha" "$(date -u +%FT%TZ)" > "$LOCK"
     out=$(mktemp)
-    deploy_ref "pull/$pr/head" "$sha" | tee "$out"
+    echo "deploying $repo#$pr: branch $branch at $sha"
+    deploy_ref branch "$branch" "$sha" | tee "$out"
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
-        why=$(grep -m1 -o '^health failed: [^ ]* returned [0-9]*' "$out")
+        why=$(grep -m1 -o -e '^health failed: [^ ]* returned [0-9]*' -e '^preprod: .*' "$out")
         rm -f "$out"
         echo "deploy of $repo#$pr failed; restoring $BASE"
         cmd_release "$repo"
@@ -174,7 +202,6 @@ cmd_deploy() {
     rm -f "$out"
     gh pr edit "$pr" --repo "$GH_REPO" --add-label on-preprod --remove-label awaiting-preprod >/dev/null 2>&1
     gh pr comment "$pr" --repo "$GH_REPO" --body "Deployed to preprod (health checks passed). Test steps are in the PR description." >/dev/null
-    key=$(key_for_pr "$repo" "$pr")
     [ -n "$key" ] && "${Q[@]}" set "$key" status=on-preprod && "${Q[@]}" unset "$key" deploy_failed
     python3 "$HERE/inbox.py" notify --title "$repo#$pr is on preprod, ready for you to test" --project "$repo" \
         --body "https://github.com/$GH_REPO/pull/$pr. Test steps are in the PR description." ${key:+--slug "$key"} >/dev/null
@@ -199,7 +226,7 @@ agent-runner queue set $key status=awaiting-preprod" 2>/dev/null | tail -n1)
 }
 
 cmd_release() {
-    local repo=${1:-} cur pr sha
+    local repo=${1:-} cur pr sha kind=branch name tag
     if cur=$(holder); then
         [ -n "$repo" ] || repo=${cur%% *}
         pr=${cur##* }
@@ -213,10 +240,21 @@ cmd_release() {
     [ -n "${pr:-}" ] && gh pr edit "$pr" --repo "$GH_REPO" --remove-label on-preprod >/dev/null 2>&1
     rm -f "$LOCK"
     sha=$(git -C "$AGENT_REPO" rev-parse "origin/$BASE")
+    name=$BASE
+    # With [release] tags = true, the newest vX.Y.Z tag on the base tip (versions sync made it); else the base branch.
+    if [ "$("${CFG[@]}" get "$RTOML" release.tags 2>/dev/null)" = True ]; then
+        git -C "$AGENT_REPO" fetch -q --tags origin 2>/dev/null
+        tag=$(git -C "$AGENT_REPO" tag -l 'v*' --points-at "$sha" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)
+        if [ -n "$tag" ]; then
+            kind=tag name=$tag
+        else
+            echo "preprod: $repo's $BASE ($sha) has no vX.Y.Z tag yet, so preprod gets the branch" >&2
+        fi
+    fi
     if [ -n "$RELEASE" ]; then
-        bash -c "$(with_sha "$RELEASE" "$sha")" >/dev/null && echo "preprod reset to $repo $BASE"
+        bash -c "$(with_ref "$RELEASE" "$name" "$sha")" >/dev/null && echo "preprod reset to $repo $name"
     else
-        deploy_ref "$BASE" "$sha" >/dev/null && echo "preprod reset to $repo $BASE"
+        deploy_ref "$kind" "$name" >/dev/null && echo "preprod reset to $repo $name"
     fi
 }
 

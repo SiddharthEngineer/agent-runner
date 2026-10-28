@@ -53,7 +53,7 @@ Later plans cite the planned interfaces of earlier ones, and each has a Task 0 c
 | A30 | Conflicting PRs: detected before the CI wait; the runner merges the base (clean) or sends the implementer a conflict round (no attempt used, 2 at most); notices name the conflict, not "no CI checks" (from #127) | [runner-17-conflicts](plans/done/runner-17-conflicts.md) | agent-runner | ✅ | A23; A24 and A28 queue after it |
 | A31 | Resolver, part 1: `awaiting-resolve` status and `queue hold`, `prompts/resolve.md`, PR status line | [resolver-1-agent](plans/done/resolver-1-agent.md) | agent-runner | ✅ | A29 |
 | A32 | Resolver, part 2: every block with fixable work goes to a one-shot Opus resolver first (replaces triage); the user hears only if it fails | [resolver-2-wiring](plans/done/resolver-2-wiring.md) | agent-runner | ✅ | A31 |
-| A33 | Preprod deploys name a tag or a branch (a PR by its branch, checked against the approved sha; a merge by its newest tag); the runner stops opening pin PRs (prod pins move only with engineerfamily `make prod-release`, E15) | [runner-18-float-pins](plans/runner-18-float-pins.md) | agent-runner | ⏳ queued after strelitzia/job-edit-delete | A29 |
+| A33 | Preprod deploys name a tag or a branch (a PR by its branch, checked against the approved sha; a merge by its newest tag); the runner stops opening pin PRs (prod pins move only with engineerfamily `make prod-release`, E15) | [runner-18-float-pins](plans/done/runner-18-float-pins.md) | agent-runner | ✅ | A29 |
 
 ## Manual steps (you)
 
