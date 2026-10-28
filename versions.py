@@ -56,7 +56,7 @@ class Repo:
     base: str
     release: config.Release | None
     remote: set[str] | None = None  # the tags on origin; a tag only in the local clone doesn't count
-    merge: str = "merge"  # the repo's merge method (pins.py merges with it)
+    merge: str = "merge"
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
@@ -112,13 +112,13 @@ def open_repo(name: str) -> Repo:
         except config.ConfigError as exc:
             raise Fail(f"{name}: runner.toml refused: {exc}", OFF) from exc
     if cfg.release is None:  # not opted in: a failed fetch is none of our business
-        return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, None, merge=cfg.repo.merge)
+        return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, None)
     if fetched.returncode != 0:
         err = fetched.stderr.strip().splitlines()
         raise Fail(f"{name}: git fetch failed: {err[-1] if err else f'exit {fetched.returncode}'}")
     remote = {line.rpartition("refs/tags/")[2] for line in
               git(probe, "ls-remote", "--tags", "--refs", "origin", "v*").stdout.splitlines()}
-    return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, cfg.release, remote, cfg.repo.merge)
+    return Repo(name, Path(path), cfg.repo.github, cfg.repo.base, cfg.release, remote)
 
 
 def tags(repo: Repo) -> list[str]:

@@ -66,7 +66,7 @@ the tag; an untagged base checks out the branch; `{sha}` still expands.
 `preprod_follow <child> <pr>`, which (after Task 1) puts the child's new tag on preprod; nothing replaces the pin step.
 Leave the `pin-bump` label on GitHub alone.
 **Validate:** `uv run --with pytest pytest tests -q` passes; `grep -rn "pins.py\|pins_upkeep" --exclude-dir=agents .` → nothing.
-**Status:** ❌
+**Status:** ✅ 2026-10-28 (this commit)
 
 ### Task 3: docs and tracking
 **Runs:** unattended
